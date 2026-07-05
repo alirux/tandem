@@ -6,6 +6,8 @@
 
 **Reliable, causally-ordered event delivery from your database to Apache Kafka — no CDC, no Kafka Connect, no two-phase commit.**
 
+[![CI](https://github.com/alirux/tandem/actions/workflows/ci.yml/badge.svg)](https://github.com/alirux/tandem/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/alirux/tandem/graph/badge.svg)](https://codecov.io/gh/alirux/tandem)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#)
 [![Status](https://img.shields.io/badge/status-basic%20round%20implemented-brightgreen.svg)](docs/IMPLEMENTATION-PLAN-basic-round.md)
