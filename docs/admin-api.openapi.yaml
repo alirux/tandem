@@ -1,0 +1,925 @@
+openapi: 3.0.3
+info:
+  title: Tandem Admin API
+  version: 1.0.0
+  description: >
+    Operational REST API for the Tandem transactional-outbox library. Exposes read access
+    to outbox state and the send-attempt archive, plus operational actions (replay, discard,
+    relay pause/resume) useful to operators.
+
+
+    This contract is the source of truth (API-first): the implementation must conform to
+    it, and any API change starts here. The API is optional and off by default; when
+    enabled it MUST be secured by the host application - Tandem ships the endpoints, not the
+    authentication.
+
+
+    Compatibility. Within a major version (/v1) the contract evolves ADDITIVELY for
+    BACKWARD compatibility: only new optional fields, endpoints, or operations are added;
+    fields are never removed, renamed, retyped, or made required, value ranges are never
+    narrowed, and error `type` slugs never change. Breaking changes ship under a new major
+    version (/v2) alongside /v1. For FORWARD compatibility, consumers MUST be tolerant
+    readers: ignore unknown response fields and unknown enum values, and never reject a
+    payload for containing extra properties. Response schemas are intentionally open (no
+    `additionalProperties: false`); do NOT configure strict validation that rejects unknown
+    fields - it breaks consumers as soon as the provider adds a field.
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: '{basePath}/v1'
+    description: >
+      Configurable base path + fixed major-version segment. Default effective URL:
+      /tandem/admin/v1. A breaking change ships under /v2 alongside /v1.
+    variables:
+      basePath:
+        default: /tandem/admin
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+tags:
+  - name: Outbox
+    description: Inspect and act on outbox messages (the sends)
+  - name: Attempts
+    description: Inspect the send-attempt archive (the trace of attempts)
+  - name: Relay
+    description: Inspect and control the relay
+
+paths:
+  /outbox/summary:
+    get:
+      tags:
+        - Outbox
+      summary: Outbox health summary
+      description: Counts per status plus overall lag metrics. Per-bucket lag is at GET /relay/buckets.
+      operationId: getOutboxSummary
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /outbox/messages:
+    get:
+      tags:
+        - Outbox
+      summary: Search outbox messages
+      operationId: searchOutboxMessages
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OutboxStatus'
+        - name: aggregateId
+          in: query
+          schema:
+            type: string
+        - name: aggregateType
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          description: CloudEvents event type, e.g. com.acme.order.placed
+          schema:
+            type: string
+        - name: createdFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: createdTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 500
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous page (afterId)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Page of messages (payload omitted in list view)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxMessagePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /outbox/messages/{id}:
+    get:
+      tags:
+        - Outbox
+      summary: Get a single outbox message (full detail incl. payload and headers)
+      operationId: getOutboxMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /outbox/messages/{id}/replay:
+    post:
+      tags:
+        - Outbox
+      summary: Replay a single message
+      description: Resets a DONE or FAILED message to PENDING so the relay re-publishes it.
+      operationId: replayMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Replayed; returns the updated message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Message is not in a replayable state (must be DONE or FAILED)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: https://tandem.codingful.com/problems/message-not-replayable
+                title: Message is not in a replayable state
+                status: 409
+
+  /outbox/messages/{id}/discard:
+    post:
+      tags:
+        - Outbox
+      summary: Discard a message (abandon delivery)
+      description: >
+        Marks a FAILED message as permanently discarded so the relay stops blocking the
+        aggregate. WARNING: discarding skips an event and therefore breaks per-aggregate
+        happens-before ordering for that aggregate - acknowledgeOrderingBreak must be true.
+      operationId: discardMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscardRequest'
+      responses:
+        '200':
+          description: Discarded; returns the updated message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxMessage'
+        '400':
+          description: acknowledgeOrderingBreak not set
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: https://tandem.codingful.com/problems/ordering-break-not-acknowledged
+                title: Ordering-break acknowledgement is required to discard
+                status: 400
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /outbox/replay:
+    post:
+      tags:
+        - Outbox
+      summary: Bulk replay by criteria
+      description: >
+        Replays all DONE/FAILED messages matching the criteria. Supports dryRun to preview
+        the matched count without changing anything. At least one selector is required.
+      operationId: replayBulk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayRequest'
+      responses:
+        '200':
+          description: Replay result (or dry-run preview)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayResult'
+        '400':
+          description: No selector provided
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: https://tandem.codingful.com/problems/replay-no-selector
+                title: At least one replay selector is required
+                status: 400
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /outbox/messages/{id}/attempts:
+    get:
+      tags:
+        - Attempts
+      summary: Attempt history (timeline) of one message
+      description: Requires the attempt archive to be enabled; otherwise returns an empty list.
+      operationId: getMessageAttempts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Attempts in chronological order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AttemptRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /outbox/attempts:
+    get:
+      tags:
+        - Attempts
+      summary: Search the attempt archive
+      description: Requires the attempt archive to be enabled.
+      operationId: searchAttempts
+      parameters:
+        - name: aggregateId
+          in: query
+          schema:
+            type: string
+        - name: aggregateType
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AttemptStatus'
+        - name: traceId
+          in: query
+          schema:
+            type: string
+        - name: correlationId
+          in: query
+          schema:
+            type: string
+        - name: createdFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: createdTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 500
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Page of attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: Attempt archive is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: https://tandem.codingful.com/problems/attempt-archive-disabled
+                title: The attempt archive is disabled
+                status: 503
+
+  /relay/status:
+    get:
+      tags:
+        - Relay
+      summary: Relay running state, bucket coverage, and worker count
+      operationId: getRelayStatus
+      responses:
+        '200':
+          description: Relay status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /relay/pause:
+    post:
+      tags:
+        - Relay
+      summary: Pause the relay (optionally a single bucket)
+      operationId: pauseRelay
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BucketSelector'
+      responses:
+        '200':
+          description: Updated relay status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /relay/resume:
+    post:
+      tags:
+        - Relay
+      summary: Resume the relay (optionally a single bucket)
+      operationId: resumeRelay
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BucketSelector'
+      responses:
+        '200':
+          description: Updated relay status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /relay/buckets:
+    get:
+      tags:
+        - Relay
+      summary: Per-bucket ownership and lag
+      description: >
+        Owner, lease, and lag for each virtual bucket (LEASE coordination mode — standalone
+        or embedded-multi-replica). Use to spot uncovered (stalled) buckets and hot buckets.
+      operationId: getRelayBuckets
+      parameters:
+        - name: uncoveredOnly
+          in: query
+          description: Return only buckets that have PENDING rows but no live owner
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Bucket statuses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BucketStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /relay/buckets/{bucket}/release:
+    post:
+      tags:
+        - Relay
+      summary: Force-release a bucket for reassignment
+      description: >
+        Clears the bucket's ownership lease so another worker can claim it. Use when an owner
+        is a zombie (stale heartbeat) and the bucket is stalled.
+      operationId: releaseBucket
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Updated bucket status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /relay/workers:
+    get:
+      tags:
+        - Relay
+      summary: Active relay workers
+      operationId: getRelayWorkers
+      responses:
+        '200':
+          description: Active workers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkerInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://tandem.codingful.com/problems/unauthorized
+            title: Missing or invalid credentials
+            status: 401
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://tandem.codingful.com/problems/not-found
+            title: Resource not found
+            status: 404
+    InternalServerError:
+      description: Unexpected internal error
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://tandem.codingful.com/problems/internal-error
+            title: Unexpected internal error
+            status: 500
+
+  schemas:
+    OutboxStatus:
+      type: string
+      enum:
+        - PENDING
+        - IN_FLIGHT
+        - DONE
+        - FAILED
+        - DISCARDED
+
+    AttemptStatus:
+      type: string
+      enum:
+        - SUCCESS
+        - FAILED
+
+    OutboxMessage:
+      type: object
+      required:
+        - id
+        - aggregateId
+        - aggregateType
+        - seq
+        - status
+        - attempts
+        - createdAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        aggregateId:
+          type: string
+        aggregateType:
+          type: string
+        type:
+          type: string
+          nullable: true
+          description: CloudEvents event type, e.g. com.acme.order.placed (nullable; HLD §5.1)
+        seq:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/OutboxStatus'
+        attempts:
+          type: integer
+        lastError:
+          type: string
+          nullable: true
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        lockedBy:
+          type: string
+          nullable: true
+        lockedUntil:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+        payload:
+          description: Present only in single-message detail, omitted in list view
+          nullable: true
+          oneOf:
+            - type: object
+            - type: string
+
+    OutboxMessagePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxMessage'
+        nextCursor:
+          type: string
+          nullable: true
+          description: Pass as cursor to fetch the next page; null when no more
+
+    OutboxSummary:
+      type: object
+      required:
+        - counts
+        - lagCount
+        - lagAgeSeconds
+      properties:
+        counts:
+          type: object
+          description: Row count per status
+          properties:
+            PENDING:
+              type: integer
+              format: int64
+            IN_FLIGHT:
+              type: integer
+              format: int64
+            DONE:
+              type: integer
+              format: int64
+            FAILED:
+              type: integer
+              format: int64
+            DISCARDED:
+              type: integer
+              format: int64
+        lagCount:
+          type: integer
+          format: int64
+          description: Number of PENDING rows
+        lagAgeSeconds:
+          type: number
+          description: Age of the oldest PENDING row, in seconds
+
+    AttemptRecord:
+      type: object
+      required:
+        - id
+        - outboxId
+        - aggregateId
+        - aggregateType
+        - attemptNumber
+        - status
+        - startedAt
+        - finishedAt
+        - createdAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        outboxId:
+          type: integer
+          format: int64
+        aggregateId:
+          type: string
+        aggregateType:
+          type: string
+        attemptNumber:
+          type: integer
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        latencyMs:
+          type: integer
+          nullable: true
+        workerId:
+          type: string
+          nullable: true
+        topic:
+          type: string
+          nullable: true
+        partition:
+          type: integer
+          nullable: true
+        offset:
+          type: integer
+          format: int64
+          nullable: true
+        errorClass:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        errorDetail:
+          type: string
+          nullable: true
+        traceId:
+          type: string
+          nullable: true
+        correlationId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    AttemptPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttemptRecord'
+        nextCursor:
+          type: string
+          nullable: true
+
+    ReplayRequest:
+      type: object
+      description: At least one of aggregateId / aggregateType / id range must be present.
+      properties:
+        aggregateId:
+          type: string
+        aggregateType:
+          type: string
+        fromId:
+          type: integer
+          format: int64
+        toId:
+          type: integer
+          format: int64
+        statuses:
+          type: array
+          description: Which statuses are eligible for replay (only DONE/FAILED are valid)
+          default:
+            - FAILED
+          items:
+            $ref: '#/components/schemas/OutboxStatus'
+        dryRun:
+          type: boolean
+          default: false
+          description: When true, returns the matched count without modifying anything
+
+    ReplayResult:
+      type: object
+      required:
+        - matched
+        - replayed
+        - dryRun
+      properties:
+        matched:
+          type: integer
+          format: int64
+          description: Rows matching the criteria
+        replayed:
+          type: integer
+          format: int64
+          description: Rows reset to PENDING (0 on dryRun)
+        dryRun:
+          type: boolean
+
+    DiscardRequest:
+      type: object
+      required:
+        - acknowledgeOrderingBreak
+      properties:
+        acknowledgeOrderingBreak:
+          type: boolean
+          description: Must be true - confirms the operator accepts the per-aggregate ordering break
+        reason:
+          type: string
+          description: Free-text reason, recorded for audit
+
+    BucketSelector:
+      type: object
+      properties:
+        bucket:
+          type: integer
+          nullable: true
+          description: When omitted, the action applies to the whole relay
+
+    BucketStatus:
+      type: object
+      required:
+        - bucket
+        - covered
+        - pendingCount
+      properties:
+        bucket:
+          type: integer
+        owner:
+          type: string
+          nullable: true
+          description: Worker id holding the bucket lease; null when unowned
+        leaseUntil:
+          type: string
+          format: date-time
+          nullable: true
+        covered:
+          type: boolean
+          description: Whether the bucket has a live owner
+        pendingCount:
+          type: integer
+          format: int64
+        lagAgeSeconds:
+          type: number
+          nullable: true
+          description: Age of the oldest PENDING row in this bucket, in seconds
+
+    WorkerInfo:
+      type: object
+      required:
+        - workerId
+        - bucketCount
+      properties:
+        workerId:
+          type: string
+        lastHeartbeat:
+          type: string
+          format: date-time
+        bucketCount:
+          type: integer
+
+    RelayStatus:
+      type: object
+      required:
+        - state
+        - bucketCount
+        - uncoveredBuckets
+        - workers
+      properties:
+        state:
+          type: string
+          enum:
+            - RUNNING
+            - PAUSED
+        bucketCount:
+          type: integer
+          description: Total virtual buckets B (fixed)
+        uncoveredBuckets:
+          type: integer
+          description: Buckets with PENDING rows but no live owner (coverage stall)
+        workers:
+          type: integer
+          description: Number of active relay workers
+
+    ProblemDetail:
+      type: object
+      description: >
+        RFC 9457 Problem Details. Returned as media type application/problem+json. Extension
+        members beyond the standard fields are permitted.
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: >
+            Canonical problem-type URI. Tandem always sets a stable
+            https://tandem.codingful.com/problems/{slug} URL — never about:blank. The {slug}
+            (kebab-case) is the stable machine identifier consumers match on; it never changes
+            once published. The URL may or may not be dereferenceable to docs.
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type
+        status:
+          type: integer
+          description: HTTP status code
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying the specific occurrence

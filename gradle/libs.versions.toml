@@ -1,0 +1,36 @@
+[versions]
+junit = "6.1.1"
+assertj = "3.27.7"
+postgresql = "42.7.12"
+# kafka-clients aligned to the version cloudevents-kafka targets (binding compatibility).
+kafka = "3.9.2"
+cloudevents = "4.1.1"
+testcontainers = "1.21.4"
+# Benchmark-only (leaf app, not part of any published library footprint).
+hdrhistogram = "2.2.2"
+hikaricp = "5.1.0"
+# slf4j-api is already a runtime-scope transitive of kafka-clients (1.7.36); declaring it
+# explicitly at a current version only makes it visible at compile time (HLD-logging.md §2.2)
+# and does not add a new dependency to the relay-side footprint.
+slf4j = "2.0.16"
+
+[libraries]
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
+cloudevents-core = { module = "io.cloudevents:cloudevents-core", version.ref = "cloudevents" }
+cloudevents-kafka = { module = "io.cloudevents:cloudevents-kafka", version.ref = "cloudevents" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql" }
+testcontainers-kafka = { module = "org.testcontainers:kafka" }
+
+hdrhistogram = { module = "org.hdrhistogram:HdrHistogram", version.ref = "hdrhistogram" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
