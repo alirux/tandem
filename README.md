@@ -162,6 +162,7 @@ demo is running. Containers stay alive until you press ENTER.
 | `tandem-test` | In-memory outbox/dispatcher + Testcontainers helper | ✅ basic round |
 | `tandem-sample` | Runnable end-to-end tutorial — self-contained, not published to Maven Central | ✅ basic round |
 | `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
+| `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
 | `tandem-spring-producer` / `tandem-spring-relay` / `tandem-spring` | Spring Boot autoconfig (write-side / relay / all-in-one) | 🔜 planned |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
@@ -208,7 +209,16 @@ Gradle (Kotlin DSL), Java 17 toolchain (auto-provisioned). Use the wrapper:
 
 Integration tests spin up real PostgreSQL and Kafka via Testcontainers, so they need a running
 Docker daemon (Docker Desktop or Colima); without one, run `./gradlew check -x integrationTest`.
-Coverage is written to `build/reports/jacoco/test/jacocoTestReport.xml`.
+Per-module coverage is written to each module's `build/reports/jacoco/test/jacocoTestReport.xml`.
+For a single project-wide report that also credits cross-module coverage (e.g. a `tandem-jdbc`
+integration test exercising a `tandem-core` class) to the class that owns it, run:
+
+```bash
+./gradlew :tandem-coverage:aggregatedCoverageReport   # unit + integration + e2e, all modules
+```
+
+It lands in `tandem-coverage/build/reports/jacoco/aggregated/` (HTML + XML) and is the report CI
+uploads to Codecov.
 
 ## Build & license
 

@@ -22,9 +22,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Build, test and verify coverage
-        run: ./gradlew check
+        run: ./gradlew check :tandem-coverage:aggregatedCoverageReport
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          # Upload only the single project-wide aggregated report. It re-maps every module's execution
+          # data (unit + integration + e2e) against every module's sources, so cross-module coverage is
+          # attributed to the owning class. disable_search stops Codecov from also picking up the
+          # per-module reports, which scope coverage to their own sources and would reintroduce
+          # mis-attributed 0% entries (e.g. tandem-core's ReplayResult).
+          files: ./tandem-coverage/build/reports/jacoco/aggregated/aggregated.xml
+          disable_search: true

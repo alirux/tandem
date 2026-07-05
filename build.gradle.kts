@@ -16,10 +16,11 @@ val junitJupiter = libs.junit.jupiter
 val assertjCore = libs.assertj.core
 val junitLauncher = libs.junit.platform.launcher
 
-// Runnable-but-unpublished modules: each configures its own plugins/toolchain/tests directly
-// (tandem-sample is a Java 17 tutorial app; tandem-benchmark needs a newer JDK for virtual threads —
-// LLD-benchmark §2) rather than the shared java-library/publishing convention below.
-val unpublishedModules = setOf("tandem-sample", "tandem-benchmark")
+// Unpublished modules that configure their own plugins/toolchain/tests directly rather than the shared
+// java-library/publishing convention below: tandem-sample is a Java 17 tutorial app; tandem-benchmark
+// needs a newer JDK for virtual threads (LLD-benchmark §2); tandem-coverage is a build-only module that
+// only produces the aggregated JaCoCo report (no Java sources, no artifact to publish).
+val unpublishedModules = setOf("tandem-sample", "tandem-benchmark", "tandem-coverage")
 
 subprojects {
     if (name !in unpublishedModules) {

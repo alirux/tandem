@@ -19,4 +19,5 @@ include(
     "tandem-test",
     "tandem-sample",
     "tandem-benchmark",
+    "tandem-coverage",
 )
