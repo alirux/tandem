@@ -20,7 +20,8 @@
 > `tandem-kafka`, and the `tandem-test` helpers — is built and tested end-to-end on PostgreSQL +
 > Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md)). The Spring tiers,
 > the standalone relay, the Admin API, MySQL support, and the optional adapters are **not yet
-> implemented**; not released to Maven Central yet. Start with the [HLD](docs/HLD.md) for the full
+> implemented**. The basic-round modules are **available on Maven Central** under `com.codingful`
+> (see [Add the dependency](#add-the-dependency)). Start with the [HLD](docs/HLD.md) for the full
 > design.
 
 ## What is Tandem?
@@ -89,6 +90,53 @@ If the relay crashes after publishing but before marking the row done, it republ
 
 Only the **write-side** must run in the client; the relay, housekeeping, and Admin API are
 DB-coordinated and can be deployed independently. See [HLD §3.2](docs/HLD.md).
+
+## Add the dependency
+
+Tandem is published to Maven Central under the `com.codingful` group. Import the
+[BOM](#modules) to keep module versions aligned, then declare only the modules you need
+(no per-module version).
+
+**Gradle (Kotlin DSL)**
+
+```kotlin
+dependencies {
+    implementation(platform("com.codingful:tandem-bom:0.1.1"))
+    implementation("com.codingful:tandem-jdbc")     // write-side + relay engine (PostgreSQL)
+    implementation("com.codingful:tandem-kafka")    // Kafka publish + CloudEvents binding
+    testImplementation("com.codingful:tandem-test") // in-memory doubles + Testcontainers helper
+}
+```
+
+**Maven**
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.codingful</groupId>
+      <artifactId>tandem-bom</artifactId>
+      <version>0.1.1</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+
+<dependencies>
+  <dependency>
+    <groupId>com.codingful</groupId>
+    <artifactId>tandem-jdbc</artifactId>
+  </dependency>
+  <dependency>
+    <groupId>com.codingful</groupId>
+    <artifactId>tandem-kafka</artifactId>
+  </dependency>
+</dependencies>
+```
+
+The write-side alone (`tandem-jdbc`) pulls no Kafka dependency; add `tandem-kafka` only where the
+relay runs. See [Modules](#modules) for the full list.
 
 ## Usage
 
@@ -222,7 +270,7 @@ uploads to Codecov.
 
 ## Build & license
 
-- **Build:** Gradle · **Java:** 17+ · **Publication target:** Maven Central (`com.codingful`)
+- **Build:** Gradle · **Java:** 17+ · **Published to:** Maven Central (`com.codingful`)
 - **License:** Apache 2.0
 
 Contributor conventions are in [AGENTS.md](AGENTS.md).
