@@ -15,37 +15,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # -------------------------------------------------------------------------
-      # Maven Central publishing — DISABLED for now (phase 2, not yet set up).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Uploads all published modules to the Central Portal as a *staged* deployment
+      # and stops. Publishing to Maven Central is irreversible (a released version can
+      # never be deleted or overwritten), so the final "Publish" is done manually from
+      # https://central.sonatype.com/publishing after inspecting the deployment.
+      # Switch to `publishAndReleaseToMavenCentral` here to release automatically.
       #
-      # To re-enable: uncomment the steps below, register the `com.codingful`
-      # namespace on the Central Portal, publish a GPG key, and add the repo
-      # secrets. NOTE: before re-enabling, verify the env-var names actually match
-      # what the com.vanniktech.maven.publish plugin reads (it typically expects
-      # ORG_GRADLE_PROJECT_mavenCentralUsername / ...Password and
-      # ORG_GRADLE_PROJECT_signingInMemoryKey / ...Password, not the names below).
-      #
-      # - uses: actions/setup-java@v5
-      #   with:
-      #     distribution: temurin
-      #     java-version: 17
-      #
-      # - name: Setup Gradle
-      #   uses: gradle/actions/setup-gradle@v5
-      #
-      # - name: Extract version from tag
-      #   id: version
-      #   run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      #
-      # - name: Publish to Maven Central
-      #   run: ./gradlew publishToMavenCentral
-      #   env:
-      #     VERSION: ${{ steps.version.outputs.VERSION }}
-      #     MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-      #     MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-      #     GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-      #     GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      # -------------------------------------------------------------------------
+      # The com.vanniktech.maven.publish plugin reads credentials/signing from Gradle
+      # properties, injected here via their ORG_GRADLE_PROJECT_ env-var form.
+      - name: Publish to Maven Central (staged)
+        run: ./gradlew publishToMavenCentral --no-configuration-cache
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
