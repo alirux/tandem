@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,3 +38,9 @@ jobs:
           # mis-attributed 0% entries (e.g. tandem-core's ReplayResult).
           files: ./tandem-coverage/build/reports/jacoco/aggregated/aggregated.xml
           disable_search: true
+
+      - name: Submit dependency graph
+        # Only on push to main: fork PRs don't get a token with contents:write, and the
+        # dependency graph only needs to track the default branch anyway.
+        if: github.event_name == 'push'
+        uses: gradle/actions/dependency-submission@v5
