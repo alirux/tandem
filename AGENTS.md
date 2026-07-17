@@ -81,6 +81,12 @@ tier). Anything needing an external dependency belongs on the relay/optional sid
 the client path. Where the write-side needs a library, prefer the client's existing one
 (`provided`/optional) or a pluggable SPI with no forced default. See [docs/HLD.md](docs/HLD.md) §1.3.
 
+When you change a **redistributed compile/runtime dependency** — add or remove an `api`/
+`implementation` dependency, or bump the version of one, in any published module (`tandem-core`,
+`tandem-jdbc`, `tandem-kafka`) — update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) in the same
+change: keep its per-module table, dependency list (name, version, license), and license-text
+sections in sync. Test-only and benchmark-only dependencies are excluded and need no update.
+
 ## Logging
 
 **Logging API is per-module, tied to the minimal-client-footprint boundary (§1.3), not a

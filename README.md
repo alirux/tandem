@@ -273,4 +273,8 @@ uploads to Codecov.
 - **Build:** Gradle · **Java:** 17+ · **Published to:** Maven Central (`com.codingful`)
 - **License:** Apache 2.0
 
+Tandem publishes standard, non-shaded JARs — third-party libraries are not bundled and
+are resolved separately from Maven Central under their own licenses. The runtime footprint
+is listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 Contributor conventions are in [AGENTS.md](AGENTS.md).
