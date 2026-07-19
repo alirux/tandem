@@ -60,23 +60,31 @@ If the relay crashes after publishing but before marking the row done, it republ
   backoff, and poison-message isolation (a stuck event blocks only its aggregate).
 - **CloudEvents by default** — messages are published using the CNCF CloudEvents envelope
   (binary mode), interoperable with the wider ecosystem.
-- **First-class, per-aggregate replay** — re-publish a single aggregate's history as an API.
-- **Micrometer-native monitoring** — lag age, per-shard lag, failure/retry metrics out of the box.
-- **Optional, opt-in capabilities** (off by default): cross-aggregate causal ordering via Lamport
-  clocks, a forensic per-attempt archive, W3C trace/correlation propagation, and an API-first
-  REST Admin API.
-- **Embedded or standalone, single or multi-instance** — the relay runs in your app or as its own
-  deployable (deployment location), and coordinates one or many concurrent instances via a declared
-  mode: `SINGLE` (one instance owns all buckets, zero cost) or `LEASE` (lease-partitioned ownership
-  for a horizontally-scaled client or multiple relay processes). Only the outbox INSERT must live in
-  the client, which stays dependency-light.
-- **Framework-agnostic core** with optional Spring Boot (3.x and 4.x) autoconfiguration.
+- **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
+  programmatic Java API (`ReplayService`); a REST equivalent arrives with the Admin API.
+- **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published, failed and retried
+  counts, plus config-validation failures, with a no-op default. The Micrometer adapter is 🔜 planned,
+  and the lag, active-worker and uncovered-bucket signals are declared on the port but **not yet
+  emitted** by the relay.
+- **Optional, opt-in capabilities, designed but 🔜 not yet implemented** — cross-aggregate causal
+  ordering via Lamport clocks, a forensic per-attempt archive, W3C trace/correlation propagation and
+  an API-first REST Admin API each have a design document and, where relevant, a port in
+  `tandem-core`; all resolve to no-op defaults today. They are off by default *by design*, so
+  adopting them will stay a per-capability opt-in with zero cost when unused.
+- **Embedded or standalone, single or multi-instance** — the relay runs in your app or in a separate
+  process you assemble yourself (a prebuilt `tandem-relay` deployable is 🔜 planned), and coordinates
+  one or many concurrent instances via a declared mode: `SINGLE` (one instance owns all buckets, zero
+  cost) or `LEASE` (lease-partitioned ownership for a horizontally-scaled client or multiple relay
+  processes). Both modes are implemented and tested. Only the outbox INSERT must live in the client,
+  which stays dependency-light.
+- **Framework-agnostic core** — works with plain Java and no container; Spring Boot (3.x and 4.x)
+  autoconfiguration is 🔜 planned, so wiring is manual for now (see [Usage](#usage)).
 
 ## Architecture at a glance
 
 ```
 ┌───────────────────── Client application ──────────────────────┐
-│  Domain TX --same TX--> INSERT outbox row (PostgreSQL/MySQL)  │
+│  Domain TX --same TX--> INSERT outbox row (PostgreSQL)        │
 └───────────────────────────────┬───────────────────────────────┘
                                 │  the DB is the only coordination point
                                 ▼
@@ -250,7 +258,12 @@ demo is running. Containers stay alive until you press ENTER.
 | `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |
 | `tandem-kafka-streams` / `tandem-flink` / `tandem-tracing-otel` | Optional adapters | 🔜 planned |
 
-> The basic round targets **PostgreSQL** only; MySQL DDL/engine support is planned. Optional
+> **Database support: PostgreSQL only today.** The shipped schema, the claim/lease SQL, and every
+> integration test target PostgreSQL — there is no MySQL baseline DDL and no MySQL engine variant in
+> any released version. MySQL is a **planned future addition**, not a supported option you can
+> configure: the design keeps the claim strategy portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
+> supported by MySQL 8.0+), so it is a deliberate roadmap item rather than an architectural
+> obstacle — but until it lands, running Tandem on MySQL is not possible. Optional
 > capabilities (causal ordering, attempt archive, tracing, Micrometer) have their ports in
 > `tandem-core` but resolve to no-op defaults until their adapters land.
 
