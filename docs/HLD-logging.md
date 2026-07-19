@@ -1,7 +1,7 @@
 # Tandem — Logging Strategy (Design Note)
 
-**Version:** 1.0
-**Status:** Draft
+**Version:** 1.1
+**Status:** Reviewed
 **Companion to:** AGENTS.md, [docs/HLD-tracing.md](HLD-tracing.md)
 
 Give Tandem's published modules (`tandem-core`, `tandem-jdbc`, `tandem-kafka`, `tandem-test`)
@@ -52,7 +52,7 @@ sees relay and Kafka-client logs through one pipeline.
 
 **2.3 — Leaf applications are not libraries.** `tandem-sample` and `tandem-benchmark` are
 end-user-facing CLI programs, not something another project depends on. They may take a full
-logging stack (SLF4J + Logback) as a `runtimeOnly`/`implementation` dependency without
+logging backend (both use SLF4J + `slf4j-simple`, §10) as a `runtimeOnly` dependency without
 violating §1.3 — but see §8 for what should stay as plain console output versus what should be
 a log line.
 
@@ -68,7 +68,7 @@ as leaf apps, own a concrete logging config.
 | `tandem-jdbc` | `System.Logger` | Carries the client write-side; must stay dependency-free (§2.1) |
 | `tandem-kafka` | SLF4J (`org.slf4j.Logger`) | Relay-only; `slf4j-api` already transitive via `kafka-clients` (§2.2) |
 | `tandem-test` | `System.Logger` or none | Test-support scaffolding, not production logging |
-| `tandem-sample`, `tandem-benchmark` | SLF4J + Logback (or any backend) | Leaf apps, free to pick a full stack (§2.3) |
+| `tandem-sample`, `tandem-benchmark` | SLF4J + `slf4j-simple` binding | Leaf apps, free to pick a backend (§2.3); zero-config is enough since their real output is report text (§7, §10) |
 
 ---
 
@@ -234,20 +234,28 @@ This is documentation work, not a code change — track it alongside §9 item 6.
    publish/ack/retry. **Done** for `KafkaRelay`'s dispatch path (encode/send failures); no
    retry logic exists in `tandem-kafka` itself (retry is `tandem-jdbc`'s `RelayWorker`, which
    stays on `System.Logger`).
-6. **Write the consumer-facing "how to see Tandem's logs" doc** (§8) — README or a
-   troubleshooting page. Not started.
+6. ~~**Write the consumer-facing "how to see Tandem's logs" doc** (§8) — README or a
+   troubleshooting page.~~ **Done** — README "Logging" section: per-module logging API table,
+   the `slf4j-jdk-platform-logging` bridge as the recommended route, the `jul-to-slf4j`
+   fallback, the `LoggerFinder`-singleton caveat, and the logger names to set levels on. The
+   README carries the consumer-facing subset; this document stays the full policy and is now
+   linked from the README's Documentation table.
 7. **Audit new logging as it's added against §5** — no payload bodies, no credentials. Ongoing.
 
-Items 1–2 close the most acute correctness/debuggability gaps and should land first,
-independent of the rest of this plan.
+**Plan closed 2026-07-19.** Items 1–6 are done; item 7 is a standing rule, not a task — every
+new log statement is reviewed against §5 as it is written. Further logging work is now driven by
+the features that need it (trace/MDC correlation with HLD-tracing.md §8, and whatever
+`tandem-spring`/`tandem-admin` add), not by this plan.
 
 ---
 
-## 10. Open decisions
+## 10. Decisions
 
-| Area | Options | Recommendation |
+Resolved 2026-07-19; each was previously an open question with a recommendation, now ratified.
+
+| Area | Decision | Rationale |
 |---|---|---|
-| `tandem-core` logging | Keep silent (pure domain logic, no I/O to report) vs. add `System.Logger` for the few validation/branch points | Keep silent unless a specific need arises — `tandem-core` has no I/O and its errors already surface as exceptions to the caller |
-| MDC population scope | Populate MDC only around the publish call (narrow, precise) vs. for the whole relay cycle (broader, cheaper to wire, more stale-context risk) | Narrow — around the publish call only, tied to the row being sent |
-| `tandem-jdbc` future SLF4J migration | Stay on `System.Logger` permanently vs. revisit if the module is ever split so the relay engine no longer shares a jar with the write-side | Stay on `System.Logger` unless/until the module split happens — revisit then, don't split the module just for logging |
-| Sample/benchmark logging backend | Logback (matches Kafka's own default expectation) vs. `slf4j-simple` (zero-config, less flexible) | Logback, since `tandem-benchmark` already depends on `slf4j-nop` at runtime today and swapping to `logback-classic` is a one-line change |
+| `tandem-core` logging | **Keep silent.** No logging API in `tandem-core` (nor `tandem-test`). | It has no I/O to report and its errors already surface as exceptions to the caller; adding a logger there buys nothing and puts a log surface on the write path. Revisit only if a concrete diagnostic need appears. |
+| MDC population scope | **Narrow** — populate MDC only around the publish call in `tandem-kafka`, tied to the row being sent, and only when trace propagation is enabled. | Broader per-cycle population is cheaper to wire but carries stale-context risk across rows, which is exactly the failure mode that makes correlated logs untrustworthy. Forward-looking: no MDC code exists yet — trace propagation (HLD-tracing.md) is unimplemented, so this binds the implementation when it lands. |
+| `tandem-jdbc` future SLF4J migration | **Stay on `System.Logger`.** | `tandem-jdbc` ships the client-imported write path and the relay engine in one jar, so any dependency added there lands on the client's classpath (§2.1). Do not split the module just for logging; if it is ever split for another reason, revisit then. Consumers bridge to their own backend with zero Tandem-side change (§8). |
+| Sample/benchmark logging backend | **`slf4j-simple`** — already in place in both modules (`tandem-sample/build.gradle.kts`, `tandem-benchmark/build.gradle.kts`), ratified rather than changed. | The earlier recommendation of Logback assumed these modules were on `slf4j-nop`; they are not. Their real deliverable is `System.out` report output (§7) and the logger only carries incidental diagnostics, so a zero-config backend is the right weight — Logback would add a `logback.xml` per module to maintain for no gain. Both must keep tracking `tandem-kafka`'s slf4j-api major version (a 1.x binding is not loadable against a 2.x provider). |

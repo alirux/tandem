@@ -71,8 +71,10 @@ convention block), with the toolchain set to Java 25 for this module only, and a
 `integrationTest` task (the shared convention block's version isn't available to an opted-out module).
 Dependency coordinates are hardcoded literals (`org.hdrhistogram:HdrHistogram:2.2.2`,
 `com.zaxxer:HikariCP:5.1.0`, `org.junit:junit-bom:6.1.1`, `org.assertj:assertj-core:3.27.7`) rather
-than the root version catalog, matching how `tandem-sample` hardcodes its `slf4j-nop` coordinate — the
-generated `libs` accessor only resolves in the root build script. CI needs a **JDK 25**; the existing
+than the root version catalog, matching how `tandem-sample` declares its own dependencies. The one
+deliberate exception in both modules is the SLF4J binding, taken from the catalog as
+`libs.slf4j.simple` so it can never drift from `tandem-kafka`'s `slf4j-api` major version (an older
+1.x binding is not loadable against a 2.x provider — see HLD-logging.md §10). CI needs a **JDK 25**; the existing
 `foojay-resolver` convention (`settings.gradle.kts`) auto-provisions it if absent.
 
 **`loadTest` is a dedicated `JavaExec` task**, not the `application` plugin's generic `run` — an

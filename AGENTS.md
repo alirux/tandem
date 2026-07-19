@@ -95,8 +95,9 @@ same jar as the relay engine, so both must log via the JDK's dependency-free
 **`java.lang.System.Logger`** — never add SLF4J/Log4j2 there, it would land on the client's
 classpath. `tandem-kafka` is relay-only and already pulls `slf4j-api` transitively via
 `kafka-clients`, so it logs via **SLF4J** at no extra footprint cost. `tandem-sample` and
-`tandem-benchmark` are leaf apps, not libraries — they may take a full logging stack (SLF4J +
-Logback). The library **ships no logging configuration** (no `logback.xml`/`log4j2.xml`) —
+`tandem-benchmark` are leaf apps, not libraries — they may take a concrete logging backend, and
+both use `slf4j-simple` (zero-config; their real output is `System.out` report text, so a
+configurable backend would be weight for nothing). The library **ships no logging configuration** (no `logback.xml`/`log4j2.xml`) —
 routing logs is the consuming application's job, same reasoning as every other unopinionated
 default (§1.1). See [docs/HLD-logging.md](docs/HLD-logging.md).
 

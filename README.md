@@ -174,6 +174,39 @@ relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lea
 Spring users will later have higher-level options: autoconfiguration, a `TransactionalOutboxTemplate`,
 a `@TransactionalOutbox` annotation, and a Spring application-events tier.
 
+## Logging
+
+Tandem ships **no logging configuration** — routing and formatting are the consuming application's
+job, not the library's. What each module logs through is chosen so the client write-side stays
+dependency-free:
+
+| Module | Logs via | To see its logs |
+|---|---|---|
+| `tandem-jdbc` (relay lifecycle, claim/reclaim cycles) | `java.lang.System.Logger` (JDK built-in, zero dependencies) | Needs a bridge — see below |
+| `tandem-kafka` (publish/encode/send failures) | SLF4J | Nothing to do: picked up by the same SLF4J binding your Kafka client already uses |
+| `tandem-core`, `tandem-test` | Nothing — no I/O, errors surface as exceptions | — |
+
+**Bridging `System.Logger` to your backend.** Add this runtime dependency and every `tandem-jdbc`
+log line goes straight to SLF4J and whatever backend is bound behind it — no code, no properties
+file, it self-registers as a `System.LoggerFinder` via `ServiceLoader`:
+
+```kotlin
+runtimeOnly("org.slf4j:slf4j-jdk-platform-logging:2.0.16")
+```
+
+Without a bridge, `System.Logger` falls back to the JDK's `java.util.logging`. You can redirect
+from there instead with `org.slf4j:jul-to-slf4j` plus `handlers=org.slf4j.bridge.SLF4JBridgeHandler`
+in `logging.properties` — config-only, but one extra hop.
+
+> **Caveat:** `System.LoggerFinder` is a JVM-wide singleton resolved via `ServiceLoader`. If two
+> bridges end up on the classpath (say SLF4J's and Log4j2's `log4j-jpl`), which one wins is
+> undefined — keep exactly one.
+
+**Levels.** `INFO` covers relay lifecycle (start/stop, worker count, coordination mode); `DEBUG`
+covers per-cycle detail (rows claimed, leases reclaimed) and is what you want when troubleshooting
+a stalled relay. Set them on the `com.codingful.tandem.jdbc` and `com.codingful.tandem.kafka`
+logger names. Full policy, including what Tandem will never log: [HLD-logging.md](docs/HLD-logging.md).
+
 ## Try it
 
 `tandem-sample` is a self-contained tutorial you can run immediately — no Maven Central required.
@@ -230,6 +263,7 @@ demo is running. Containers stay alive until you press ENTER.
 | [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
 | [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive |
 | [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
+| [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [causal-ordering.md](docs/causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
