@@ -6,6 +6,12 @@ postgresql = "42.7.12"
 kafka = "3.9.2"
 cloudevents = "4.1.1"
 testcontainers = "1.21.4"
+# Not a dependency Tandem declares — only a version floor for what Testcontainers drags in.
+# Testcontainers 1.21.4 (its newest release) still resolves commons-compress 1.24.0, which carries
+# two moderate DoS advisories (DUMP infinite loop, Pack200 OOM). Neither is reachable through
+# Testcontainers' tar-only usage, but tandem-test is published, so consumers inherit the flagged
+# coordinate on their runtime classpath. Constrained up in tandem-test/build.gradle.kts.
+commons-compress = "1.28.0"
 # Benchmark-only (leaf app, not part of any published library footprint).
 hdrhistogram = "2.2.2"
 hikaricp = "5.1.0"
@@ -31,6 +37,7 @@ testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql" }
 testcontainers-kafka = { module = "org.testcontainers:kafka" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 
 hdrhistogram = { module = "org.hdrhistogram:HdrHistogram", version.ref = "hdrhistogram" }
 hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
