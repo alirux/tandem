@@ -97,9 +97,12 @@ resolved (or consciously deferred) to write correct per-module LLDs.
 
 ## D. tandem-spring (producer / relay / aggregator / tandem-relay)
 
-- [ ] **Q21 (P1)** — **Reconcile the two split axes.** §10.1 proposes a *version* split
-  (`tandem-spring-core` / `-boot3` / `-boot4`); §3.2 introduces a *producer/relay* split.
-  Combined they risk module explosion — decide how they coexist. *(tandem-spring; HLD §10.1, §3.2)*
+- [x] **Q21 (P1)** — **Reconcile the two split axes.** ✅ Resolved: split by **role only** —
+  `tandem-spring-producer` + `tandem-spring-relay`, each a **single artifact** compiled against the
+  Spring Framework 6.x/7.x common API subset (no `-boot3`/`-boot4` split) and validated by a CI
+  version matrix. The role split is structural enforcement of the minimal client footprint; the
+  version split would protect no invariant, so it stays the §10.1 fallback. No all-in-one aggregator.
+  *(tandem-spring; HLD §10.1, §3.2; LLD-spring §1)*
 - [ ] **Q22 (P2)** — **Spring component details.** `@TransactionalOutbox` aspect impl;
   `TransactionalOutboxTemplate` API; `OutboxEventMapper<T>` signature; Micrometer-Tracing adapter
   wiring. *(tandem-spring; HLD §3.1)*
