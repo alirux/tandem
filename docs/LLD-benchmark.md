@@ -516,6 +516,21 @@ killed instance owning **84 buckets** pre-kill (≈ `256/3`) and the two survivo
 duplicate counts — 0 to 3 — from whatever the killed instance had genuinely in flight, exactly as
 expected for a crash).
 
+### 8.4 A consumer/drain race in `verify` (surfaced in CI, 2026-07-22)
+
+`SmokeLoadTest.s5WorkerFailoverSmoke` failed once in GitHub-Actions CI with `missing=1` (one produced
+key never seen by the consumer), while passing on every prior run and locally. Root cause was a latent
+race in the shared `ScenarioSupport.verify`, not in the product and not in S5 specifically: a scenario
+waits for the **outbox** to drain (`waitForDrain` → all rows published) and then immediately diffs
+`generator.insertedKeys()` against `consumer.receivedKeys()`. But the `CorrelationConsumer` polls Kafka
+on its own thread and can lag the outbox drain by a poll cycle, so a just-published, not-yet-received
+event reads as loss. It bit S5 first only because that scenario's stop/restart timing makes the last
+event land right at the drain boundary; all six verifying scenarios (S1–S5, S8) shared the exposure.
+**Fixed centrally in `verify`:** before diffing, wait a bounded grace (15s) for the consumer to catch up
+to what was published. This never hides real loss — a genuinely dropped event never arrives, the wait
+times out, and `verify` still reports it; in the happy path the check passes on the first poll and adds
+no measurable time. No product code involved.
+
 ---
 
 ## 9. Execution & CI

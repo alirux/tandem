@@ -22,9 +22,22 @@ final class ScenarioSupport {
         }
     }
 
+    /** Grace for the co-located consumer to receive what the outbox has already published (see {@link #verify}). */
+    private static final Duration CONSUMER_CATCH_UP = Duration.ofSeconds(15);
+
     /** Zero ordering violations, and every inserted {@code (aggregateId, seq)} eventually arrived (duplicates allowed). */
-    static CorrectnessReport verify(LoadGenerator generator, CorrelationConsumer consumer) {
-        Set<String> missing = new HashSet<>(generator.insertedKeys());
+    static CorrectnessReport verify(LoadGenerator generator, CorrelationConsumer consumer) throws InterruptedException {
+        // The caller waits for the OUTBOX to drain (all rows published), but the correlation consumer polls
+        // Kafka on its own thread and can lag that drain by a poll cycle — so diffing immediately would read a
+        // just-published, not-yet-received event as loss (a flaky missing key under CI timing). Give the
+        // consumer a bounded grace to catch up to what was published before diffing. This never hides real
+        // loss: a genuinely dropped event never arrives, the wait times out, and verify still reports it.
+        Set<String> inserted = new HashSet<>(generator.insertedKeys());
+        Instant deadline = Instant.now().plus(CONSUMER_CATCH_UP);
+        while (!consumer.receivedKeys().containsAll(inserted) && Instant.now().isBefore(deadline)) {
+            Thread.sleep(200);
+        }
+        Set<String> missing = new HashSet<>(inserted);
         missing.removeAll(consumer.receivedKeys());
         return new CorrectnessReport(consumer.orderingViolations(), missing, consumer.duplicateCount());
     }
