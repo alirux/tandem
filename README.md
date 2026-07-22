@@ -172,6 +172,12 @@ to Kafka, preserving per-aggregate order:
 ```java
 OutboxRepository repo = new JdbcOutboxRepository(dataSource, /* bucketCount */ 256);
 
+// Startup guard: fail fast if the write-side and the relay disagree on bucketCount. A mismatch
+// would route rows into buckets no worker polls — delivery stops with no error — so the first
+// side to start records the value and every later start validates against it. Run it once, on a
+// plain DataSource. (The write-side and relay usually run in separate processes; call it in each.)
+BucketCountGuard.check(dataSource, /* bucketCount */ 256);   // must match the repository above
+
 OutboxStore      store      = new JdbcOutboxStore(dataSource, /* maxAttempts */ 10);
 TopicRouter      router     = TopicRouter.kebabWithSuffix("-topic");
 OutboxDispatcher dispatcher = new KafkaRelay(kafkaProducerConfig, router, KafkaRelayConfig.of("/tandem/orders"));
@@ -179,8 +185,9 @@ WorkerPool       relay      = new WorkerPool(store, dispatcher, RelayConfig.defa
 relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lease)
 ```
 
-Spring users will later have higher-level options: autoconfiguration, a `TransactionalOutboxTemplate`,
-a `@TransactionalOutbox` annotation, and a Spring application-events tier.
+Spring users will later have higher-level options: autoconfiguration (which runs the bucket-count
+guard for you), a `TransactionalOutboxTemplate`, a `@TransactionalOutbox` annotation, and a Spring
+application-events tier.
 
 ## Logging
 
