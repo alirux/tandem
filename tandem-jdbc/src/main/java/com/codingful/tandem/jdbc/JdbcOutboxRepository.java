@@ -50,6 +50,12 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     private final int bucketCount;
 
     /**
+     * <p>This constructor does <b>no</b> I/O: the {@code dataSource} may be a transaction-aware proxy
+     * that only yields a connection inside a caller transaction (that is the point — {@link #insert}
+     * joins the caller's {@code @Transactional}), so it cannot be queried at construction time. The
+     * bucket-count guard (LLD-bucket-count-guard) is therefore an explicit assembly step run against a
+     * plain {@code DataSource} — {@link BucketCountGuard} — not something this constructor performs.
+     *
      * @param dataSource  the write-side connection source; the insert joins whatever transaction the
      *                     returned {@link Connection} is already part of
      * @param bucketCount must match the relay's {@link RelayConfig#bucketCount()} — baked into every

@@ -126,10 +126,12 @@ relay never polls) stops delivery **silently**, so the value is persisted in the
 validated at startup by both sides, with a loud fail-fast on divergence.
 
 This is a core/adapter and schema concern, not a Spring one — a pure reconciliation strategy and a
-storage port in `tandem-core`, a JDBC adapter in `tandem-jdbc`. It protects the manual assembly path
-too, and the Spring modules inherit it purely by wiring the same components. It is therefore specified
-separately in **[LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)**. The Spring layer adds
-nothing to it beyond binding `tandem.outbox.bucket-count` (§2.1) into the components that carry it.
+storage port in `tandem-core`, a JDBC adapter in `tandem-jdbc`. It is specified separately in
+**[LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)**. The guard is an explicit startup check
+(`BucketCountGuard.check`) run against a plain `DataSource`, not something an adapter constructor does
+— so each autoconfiguration runs it against the raw `DataSource` bean at startup: `tandem-spring-producer`
+before exposing the write-side repository, `tandem-spring-relay` before starting the relay. Beyond that
+call, the Spring layer only binds `tandem.outbox.bucket-count` (§2.1) into the components.
 
 ---
 

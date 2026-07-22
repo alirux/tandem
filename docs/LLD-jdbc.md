@@ -46,6 +46,31 @@ CREATE TABLE tandem_relay_member (
 re-maps aggregates across buckets and would split an aggregate's events across workers. To change
 `B`, drain all PENDING under the old `B` first, then switch.
 
+Because `B` is split across two configured sides (the write-side `JdbcOutboxRepository` and the relay
+`RelayConfig`) that are often separate processes, a divergent value would make the write-side insert
+into buckets the relay never polls — silently stopping delivery. The **bucket-count guard** persists
+the effective `B` in a small metadata table and fails fast on divergence, on both sides:
+
+```sql
+-- Cross-cutting metadata, keyed by name. Holds `bucket_count` (the effective B). NOT seeded here:
+-- the guard seeds it on first startup with the operator's configured B, so a fresh DB with a
+-- non-default B is correct without editing the DDL. A pre-guard database has the row seeded on first
+-- startup under the new version (additive, backward/forward compatible — HLD §1.4).
+CREATE TABLE tandem_meta (
+    key         TEXT         PRIMARY KEY,
+    value       TEXT         NOT NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+```
+
+Unlike the two `LEASE` tables, `tandem_meta` is part of the **core** schema (present in every
+deployment, both coordination modes) since the write-side relies on it too. Its full design — the
+pure `BucketCountReconciliation` strategy and `BucketCountStore` port in `tandem-core`, the
+`JdbcBucketCountStore` adapter and `BucketCountGuard` orchestrator in `tandem-jdbc`, the atomic
+seed-if-absent and the concurrency handling — is in [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md).
+Re-sharding (an intentional change of `B`) is a separate future feature, never something the guard
+accepts.
+
 **Bucket computation** (`tandem-jdbc`, at insert): computed **in Java** via the core
 `BucketHash.bucketFor(aggregateId, B)` (64-bit FNV-1a + `Math.floorMod`; LLD-core §4) and bound as a
 plain `SMALLINT` parameter in the INSERT. It is **engine-independent** (identical on PostgreSQL and

@@ -2,6 +2,7 @@ package com.codingful.tandem.benchmark;
 
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.jdbc.BackoffStrategy;
+import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.BucketSource;
 import com.codingful.tandem.jdbc.JdbcOutboxStore;
 import com.codingful.tandem.jdbc.RelayConfig;
@@ -67,6 +68,12 @@ public final class BenchmarkEnvironment implements AutoCloseable {
         dataSource = pooledDataSource();
         applyBenchSchema();
         containers.createTopic(TOPIC, TOPIC_PARTITIONS);
+
+        // Bucket-count guard (LLD-bucket-count-guard §7): the explicit assembly-level startup check,
+        // run once against the plain pooled DataSource. The write-side (LoadGenerator's repository) and
+        // every relay in this environment share config.bucketCount(), so seeding it here establishes the
+        // value the whole run agrees on — mirroring how a real assembly runs the guard at startup.
+        BucketCountGuard.check(dataSource, config.bucketCount());
 
         store = new JdbcOutboxStore(dataSource, config.maxAttempts());
         metrics = new BenchmarkMetrics();

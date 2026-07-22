@@ -2,6 +2,7 @@ package com.codingful.tandem.test;
 
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TopicRouter;
+import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import com.codingful.tandem.jdbc.JdbcOutboxStore;
 import com.codingful.tandem.jdbc.RelayConfig;
@@ -92,6 +93,11 @@ public final class TandemTestContainer implements AutoCloseable {
 
     /** A {@link JdbcOutboxRepository} wired to this container's Postgres — the write-side entry point. */
     public JdbcOutboxRepository newRepository(int bucketCount) {
+        // Write-side bucket-count guard (LLD-bucket-count-guard §7): an explicit assembly step against
+        // this container's plain DataSource. The repository constructor deliberately does no I/O (its
+        // DataSource may be transaction-scoped), so the assembly runs the guard, mirroring how
+        // tandem-spring-producer will run it against the raw DataSource bean at startup.
+        BucketCountGuard.check(dataSource, bucketCount);
         return new JdbcOutboxRepository(dataSource, bucketCount);
     }
 
@@ -106,6 +112,10 @@ public final class TandemTestContainer implements AutoCloseable {
      * the caller {@code start()}s and {@code stop()}s the returned pool.
      */
     public WorkerPool newRelay(RelayConfig cfg, TopicRouter router, KafkaRelayConfig kafkaCfg) {
+        // Relay-side bucket-count guard (LLD-bucket-count-guard §7): an explicit assembly step, since
+        // WorkerPool is port-only (no DataSource). Fails fast if this relay's bucketCount differs from
+        // the value the write-side established. Mirrors how tandem-spring-relay will wire it in autoconfig.
+        BucketCountGuard.check(dataSource, cfg.bucketCount());
         OutboxStore store = newStore(cfg.maxAttempts());
         KafkaRelay relay = new KafkaRelay(producerConfig(), router, kafkaCfg);
         relays.add(relay);

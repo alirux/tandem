@@ -37,6 +37,20 @@ CREATE TABLE tandem_outbox (
     UNIQUE (aggregate_id, seq)               -- per-aggregate ordering safety net (HLD §4.2)
 );
 
+-- Cross-cutting Tandem metadata, keyed by name (LLD-bucket-count-guard §5). Holds `bucket_count`:
+-- the single value the write-side and the relay must agree on. Deliberately NOT seeded here — the
+-- guard seeds it on first startup with whatever bucketCount the operator configured, so a fresh
+-- database with a non-default bucketCount is correct without editing this file (unlike the lease
+-- table below, whose row count must equal B and so is seeded). A database created before this table
+-- existed simply has the guard seed the row on first startup under the new version (backward- and
+-- forward-compatible, HLD §1.4). `value` is stored as text and parsed by the adapter, so the table
+-- is not typed to this one setting.
+CREATE TABLE tandem_meta (
+    key         TEXT         PRIMARY KEY,
+    value       TEXT         NOT NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
 -- Partial index driving the bucket poll (only PENDING rows), by bucket then id.
 CREATE INDEX idx_tandem_outbox_dispatch
     ON tandem_outbox (bucket, id)

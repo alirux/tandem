@@ -41,6 +41,11 @@ public interface BucketSource {
     /**
      * Select the {@link BucketSource} for the configured {@link Coordination} mode (§3.2): {@link #embedded}
      * for {@code SINGLE}, a {@link BucketLeaseManager} (backed by {@code dataSource}) for {@code LEASE}.
+     *
+     * <p>Pure selection — it does not query {@code dataSource} (the {@code SINGLE} branch ignores it and
+     * the {@code LEASE} branch only hands it to the manager). The bucket-count guard is a separate,
+     * explicit relay-startup step ({@link BucketCountGuard}, LLD-bucket-count-guard §7), not folded in
+     * here, so this stays a side-effect-free factory.
      */
     static BucketSource forCoordination(RelayConfig cfg, DataSource dataSource) {
         return switch (cfg.coordination()) {

@@ -1,7 +1,7 @@
 # Tandem — LLD: bucket-count consistency guard (`tandem-core` + `tandem-jdbc`)
 
-**Version:** 0.2
-**Status:** Proposed
+**Version:** 1.0
+**Status:** Implemented
 **Companion to:** [HLD.md](HLD.md) §4.3; [LLD-jdbc.md](LLD-jdbc.md); consumed by [LLD-spring.md](LLD-spring.md) §2.1
 
 A guard that makes a divergent `bucketCount` between the write-side and the relay impossible to miss.
@@ -105,9 +105,11 @@ different pure function over the same two inputs — the textbook case for the p
   explicit provisioning step);
 - a **warn-only** policy for a controlled rollout, logging the mismatch instead of throwing.
 
-Selection mirrors `BucketSource.forCoordination`: a factory picks the implementation, defaulting to
-`seedOrValidate()`, and an assembler may pass a different one. The default is the only one shipped in
-this increment.
+The default is selected by a static factory, `BucketCountReconciliation.seedOrValidate()`, which the
+static `BucketCountGuard.check(dataSource, bucketCount)` entry point applies; the overload
+`BucketCountGuard.check(dataSource, bucketCount, policy)` (and the injectable
+`BucketCountGuard(store, reconciliation)` constructor) is the seam for a different policy or a test
+double. The default is the only one shipped in this increment.
 
 **Re-sharding is deliberately *not* one of these policies.** Treating a mismatch as an intentional
 change of `bucketCount` is a feature in its own right — it means re-bucketing already-stored rows and
@@ -166,17 +168,24 @@ trivial read (plus, on first init only, one seed) and nothing on the hot path.
 
 ## 5. Storage / schema
 
-A single stored value keyed by name, additive to the baseline schema — a new metadata row/table only,
-with **no change to `tandem_outbox`**. The natural shape is a small key/value metadata table
-(`tandem_meta(key TEXT PRIMARY KEY, value TEXT)`) holding `bucket_count`, which also gives later
-cross-cutting settings a home without another migration. The exact DDL is settled when this lands and
-is mirrored into `schema/postgres/tandem-baseline.sql` and LLD-jdbc; the MySQL equivalent follows the
-same shape under Q28.
+A key/value metadata table, additive to the baseline schema — no change to `tandem_outbox`:
 
-Whichever shape is chosen, it must not reintroduce a per-DB hash or any value that changes across DB
-major-version upgrades — the same constraint the `bucket` computation already honours ("stable across
-DB major-version upgrades", LLD-jdbc §-). The `value` is stored as text and parsed by the adapter, so
-the metadata table is not typed to this one setting.
+```sql
+CREATE TABLE tandem_meta (
+    key         TEXT         PRIMARY KEY,
+    value       TEXT         NOT NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+```
+
+It holds one row, key `bucket_count`, and is **not seeded by the DDL** — the guard seeds it on first
+startup with the operator's configured value, so a fresh database with a non-default bucket count is
+correct without editing the schema (this is why it differs from `tandem_bucket_lease`, whose row
+count must equal `B` and so is seeded). It sits in the **core** section of
+`schema/postgres/tandem-baseline.sql` (present in both coordination modes), not the `LEASE`-only
+section, because the write-side depends on it too. The `value` is stored as text and parsed by the
+adapter, so the table is not typed to this one setting and can host later cross-cutting values without
+another migration. The MySQL equivalent follows the same shape under Q28.
 
 ---
 
@@ -198,15 +207,39 @@ therefore safe to add in a minor release.
 
 ## 7. Placement / wiring
 
-The port and strategy live in `tandem-core` (dependency-free, already a dependency of `tandem-jdbc`);
-the adapter and orchestrator live in `tandem-jdbc` and the baseline schema — **not** in any Spring
-autoconfiguration. The manual assembly path (`new JdbcOutboxRepository(...)` + `new WorkerPool(...)`)
-is the one Tandem ships and documents today; a guard that lived in the Spring layer would leave the
-primary path unprotected. The write-side runs the guard inside `JdbcOutboxRepository` construction;
-the relay runs it at `WorkerPool` start, alongside the existing row-lease invariant check (LLD-jdbc
-§3.5), so both fail-fast paths sit together. `tandem-spring-producer` and `tandem-spring-relay`
-acquire the guard purely by constructing these same components — and, because selection is a factory,
-an assembler that needs a non-default policy passes one without the guard changing.
+The port (`BucketCountStore`) and strategy (`BucketCountReconciliation`) live in `tandem-core`
+(dependency-free, already a dependency of `tandem-jdbc`); the adapter (`JdbcBucketCountStore`) and
+orchestrator (`BucketCountGuard`) live in `tandem-jdbc`, with the table in the baseline schema —
+**not** in any Spring autoconfiguration. The manual assembly path is the one Tandem ships and
+documents today; a guard that lived in the Spring layer would leave the primary path unprotected.
+
+The guard is an **explicit assembly step on both sides** — `BucketCountGuard.check(dataSource, bucketCount)`
+— run at startup against a **plain `DataSource`**, not inside any adapter constructor. It is a static
+entry point (no dangling `new` for a throwaway object); the instance form is reserved for the
+policy/store seam.
+
+**Why not the `JdbcOutboxRepository` constructor.** The write-side `DataSource` is, by design, allowed
+to be a transaction-aware proxy that only yields a connection *inside* a caller transaction — that is
+exactly how `insert` joins the caller's `@Transactional`. Constructing the repository happens outside
+any transaction, so querying that `DataSource` at construction time fails (`no transaction bound on
+this thread`). The constructor therefore does no I/O, and the guard runs separately against a plain
+`DataSource` — the raw connection pool, which the assembly always has in hand alongside the
+transaction-aware one it wraps for the write path.
+
+**Why not `WorkerPool.start` or `BucketSource.forCoordination` on the relay side.** `WorkerPool` is
+deliberately port-only (no `DataSource`, so its in-memory-store unit tests need no database), and
+`forCoordination` is a pure selection factory whose contract — asserted by a fast unit test — is that
+it does not query the `DataSource`. So the relay guard is likewise an explicit startup check, parallel
+to the row-lease invariant check (itself a startup check, not a constructor side effect).
+
+**Where it runs today.** The shipped `TandemTestContainer` helper runs the guard in both `newRepository`
+(write-side) and `newRelay` (relay), against the container's plain `DataSource`. In production,
+`tandem-spring-producer` and `tandem-spring-relay` will run it in their autoconfiguration against the
+raw `DataSource` bean, before wiring the transaction-aware template. A component assembled entirely by
+hand runs `BucketCountGuard.check` itself; a write-side assembled without it, but co-located with a
+guarded relay (or vice versa), is still covered by the other side. Because the static `check` has an
+overload taking an explicit strategy (and the injectable constructor accepts one), an assembler that
+ever needs a non-default policy passes one without the guard or the wiring changing.
 
 ---
 

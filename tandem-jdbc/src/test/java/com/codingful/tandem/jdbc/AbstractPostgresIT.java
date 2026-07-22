@@ -39,7 +39,10 @@ abstract class AbstractPostgresIT {
     void resetTables() {
         execute("TRUNCATE tandem_outbox RESTART IDENTITY",
                 "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL",
-                "TRUNCATE tandem_relay_member");
+                "TRUNCATE tandem_relay_member",
+                // Cleared so each test's first component construction re-seeds the bucket-count guard
+                // (LLD-bucket-count-guard); every IT uses bucketCount 256, so re-seeding is consistent.
+                "TRUNCATE tandem_meta");
     }
 
     static void execute(String... statements) {

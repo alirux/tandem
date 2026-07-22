@@ -1,5 +1,6 @@
 package com.codingful.tandem.sample;
 
+import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.RelayConfig;
 import com.codingful.tandem.jdbc.WorkerPool;
 import com.codingful.tandem.kafka.KafkaRelayConfig;
@@ -119,6 +120,22 @@ public final class SampleApplication {
             // a mismatch means rows hash into buckets the relay never polls.
             // -------------------------------------------------------------------
             int bucketCount = 256;
+
+            // -------------------------------------------------------------------
+            // [CALLER] Step 2a — guard the bucket count (run once at startup)
+            //
+            // Because the same bucketCount is configured on two sides that are
+            // often separate processes, a typo on one side would silently route
+            // rows into buckets no relay worker polls — delivery just stops, with
+            // no error. BucketCountGuard closes that gap: on first startup it
+            // records the value in tandem_meta, and every later startup (write side
+            // or relay) fails fast if its configured value differs. Run it against
+            // a plain DataSource at startup — NOT inside a @Transactional path.
+            // (The newRepository/newRelay helpers below also perform it; shown here
+            // explicitly because that is the production pattern.)
+            // -------------------------------------------------------------------
+            BucketCountGuard.check(tandem.dataSource(), bucketCount);
+
             var repository = tandem.newRepository(bucketCount);
 
             // -------------------------------------------------------------------
