@@ -219,6 +219,19 @@ interface BucketSource {
   > A brief membership-change window can leave two instances transiently believing they own a bucket.
   > This is **safe** — head-of-chain + `FOR UPDATE SKIP LOCKED` (§3.3) prevent concurrent processing of
   > the same aggregate; the worst case is a duplicate, absorbed by consumer dedup (q8-worker-model-decision §4.2).
+  > The full reasoning — the slow/paused-then-woken relay ("slot-handoff split-brain") and why no bucket
+  > **fencing token** is needed (exclusivity is *structural* by partitioning, not lock-carried) — is in
+  > q8-worker-model-decision §4.2 (case B3) and E4.
+
+  > **The DB is the only time authority — clock drift between relays does not matter.** Every lease
+  > timestamp is both *stamped* and *compared* with the DB's `now()` — `lease_until = now() + :lease`
+  > and `... < now()` above, `locked_until`/`next_attempt_at` likewise (§3.4/§3.5). A relay never
+  > compares a lease against its own wall clock, so drift between relay hosts cannot make one believe it
+  > still owns an expired bucket (or that a live peer's is free). **Invariant: never gate ownership or
+  > expiry on the relay-local clock — all lease deadlines and comparisons must go through the DB `now()`.**
+  > (The relay's local clock is used only to *pace* the heartbeat/reclaim tick, a relative interval;
+  > absolute drift does not affect it. Assumes a single DB whose `now()` is coherent — a multi-primary /
+  > distributed clock would reopen this.)
 
   > **Cleanup and lease-reclaim are NOT partitioned by this mechanism.** Both run globally on every
   > instance regardless of `coordination` mode — see §3.7's note on redundant-but-safe multi-instance
