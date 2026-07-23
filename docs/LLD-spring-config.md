@@ -186,6 +186,40 @@ two sources of truth for values that are not negotiable; it would also drag `spr
 classpath of a module that only needs `kafka-clients`. An application that already configures its own
 Kafka producer keeps it — Tandem's producer is separate by design.
 
+### 2.4 Deliverables of the contract: IDE metadata + a reference file
+
+The property contract is not finished when the `@ConfigurationProperties` types compile — it must also
+be **discoverable in the editor** and **documented as a copy-pasteable reference**. Two artifacts,
+one source of truth.
+
+**Single source of truth: the `@ConfigurationProperties` Javadoc.** Every property's meaning, default,
+and unit lives as Javadoc on the corresponding field/record component. The tables in §2.1–§2.3 mirror
+it; they must not drift from it.
+
+**IDE tooltips + auto-completion — `spring-configuration-metadata.json`.** Each Spring module depends
+on `spring-boot-configuration-processor` (annotation processor, `annotationProcessor` scope — compile
+only, not shipped as a runtime dependency). At compile time it reads the properties-type Javadoc and
+emits `META-INF/spring-configuration-metadata.json`, which Spring Boot IDEs (IntelliJ, VS Code Spring
+Tools) use for property-name completion, type checking, default display, and the **hover tooltip** that
+shows each property's description. The obligation this places on the code: **every property carries a
+non-empty Javadoc description** — an undocumented property yields an empty tooltip.
+
+**What the processor cannot infer — `additional-spring-configuration-metadata.json`.** A hand-written
+`META-INF/additional-spring-configuration-metadata.json` (merged into the generated file at build)
+covers what the processor misses:
+- the raw map key `tandem.kafka.producer.*` (dynamic keys the processor cannot enumerate) — documented
+  with a description and, ideally, `providers` hints pointing at the Kafka `ProducerConfig` keys;
+- any default that is computed rather than a literal (e.g. `workers-per-instance` = `availableProcessors() * 2`);
+- **deprecations** — when a property is renamed under the compatibility rule (§6), its old name stays
+  bound with a `deprecation` entry (level + replacement), so the IDE flags it and points at the new name.
+
+**Reference file — a documented `application.yml`.** The contract ships a reference configuration that
+lists every `tandem.*` property with its default and a one-line explanation, as a starting point a user
+copies and trims. It is generated from / kept in sync with the same property tables (§2.1–§2.3) — it is
+a rendering of the contract, not a second definition. Committed under the module (e.g.
+`src/main/resources/tandem-reference.yml`) and/or reproduced as an appendix here; whichever, it has no
+independent authority over the Javadoc.
+
 ---
 
 ## 3. The cross-module `bucket-count` guard
@@ -243,8 +277,10 @@ that fix. Applications that need a different delivery timeout set
 
 Property names are a public contract and evolve under the project's compatibility rule: additive
 changes only within a major version. A key may gain a default or be deprecated (bound and honoured,
-with a warning) but must not be renamed or removed in place. Unknown `tandem.*` keys must not fail
-binding, so a configuration file shared between two versions stays usable by both.
+with a warning) but must not be renamed or removed in place. A rename is expressed as a `deprecation`
+entry in `additional-spring-configuration-metadata.json` (§2.4) — the old key stays bound and the IDE
+points at the replacement. Unknown `tandem.*` keys must not fail binding, so a configuration file
+shared between two versions stays usable by both.
 
 ---
 
