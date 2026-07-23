@@ -194,7 +194,10 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
     }
 
     @Override
-    public void markForRetry(long id, String error, Instant nextAttemptAt) {
+    public void markForRetry(long id, String error, Duration retryDelay) {
+        // The JDBC adapter anchors the delay on the DB clock; single-process, this fake's own clock is
+        // the same clock the claim compares against, so anchoring here is the faithful equivalent.
+        Instant nextAttemptAt = retryDelay == null ? null : clock.instant().plus(retryDelay);
         mutate(id, r -> r.toBuilder()
                 .status(OutboxStatus.PENDING)
                 .attempts(r.attempts() + 1)

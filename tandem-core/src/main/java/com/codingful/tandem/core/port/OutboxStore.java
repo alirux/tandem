@@ -39,8 +39,16 @@ public interface OutboxStore {
         }
     }
 
-    /** A retriable failure: back to {@code PENDING}, eligible again at {@code nextAttemptAt}. */
-    void markForRetry(long id, String error, Instant nextAttemptAt);
+    /**
+     * A retriable failure: back to {@code PENDING}, eligible again after {@code retryDelay}.
+     *
+     * <p>The delay is passed <b>relative</b>, exactly like {@code claimBatch}'s lease: the caller owns
+     * the backoff policy, the adapter owns the anchor. The JDBC adapter anchors it on the <b>DB clock</b>
+     * ({@code next_attempt_at = now() + retryDelay}), which is also the clock the claim compares against
+     * — so a relay whose host clock differs from the DB's cannot make a row due early or late
+     * (LLD-jdbc §3.2/§3.6).
+     */
+    void markForRetry(long id, String error, Duration retryDelay);
 
     /** A permanent failure: {@code FAILED} (blocks the aggregate until an operator intervenes). */
     void markFailed(long id, String error);

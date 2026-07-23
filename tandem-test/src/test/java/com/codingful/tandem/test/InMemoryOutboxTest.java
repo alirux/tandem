@@ -152,7 +152,7 @@ class InMemoryOutboxTest {
     void GIVEN_a_row_with_a_future_next_attempt_WHEN_claimed_THEN_it_is_skipped_until_due() {
         outbox.insert(message("order-1", 1));
         long id = claimAll(10).get(0).id();
-        outbox.markForRetry(id, "boom", clock.instant().plus(Duration.ofSeconds(30)));
+        outbox.markForRetry(id, "boom", Duration.ofSeconds(30));
 
         // Not yet due.
         assertThat(claimAll(10)).isEmpty();
@@ -165,9 +165,10 @@ class InMemoryOutboxTest {
     void GIVEN_a_retriable_failure_WHEN_the_row_is_scheduled_for_retry_THEN_it_returns_to_pending_with_an_incremented_attempt() {
         outbox.insert(message("order-1", 1));
         long id = claimAll(10).get(0).id();
-        Instant next = clock.instant().plus(Duration.ofSeconds(5));
+        Duration delay = Duration.ofSeconds(5);
+        Instant next = clock.instant().plus(delay);
 
-        outbox.markForRetry(id, "transient", next);
+        outbox.markForRetry(id, "transient", delay);
 
         OutboxRecord r = outbox.byId(id);
         assertThat(r.status()).isEqualTo(OutboxStatus.PENDING);

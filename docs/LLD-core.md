@@ -138,7 +138,9 @@ public interface OutboxStore {
     List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId,
                                   Duration lease, int batchSize);
     void markDone(long id);
-    void markForRetry(long id, String error, Instant nextAttemptAt);  // → PENDING
+    void markForRetry(long id, String error, Duration retryDelay);    // → PENDING; delay is
+                                                                      // relative — the adapter
+                                                                      // anchors it on the DB clock
     void markFailed(long id, String error);                           // → FAILED
     int  reclaimExpiredLeases();                                       // → PENDING; returns count
     int  cleanup(Instant doneBefore, int batchSize);                  // housekeeping (Q12)

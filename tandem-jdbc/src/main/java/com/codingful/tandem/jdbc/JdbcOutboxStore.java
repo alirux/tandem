@@ -55,9 +55,13 @@ public final class JdbcOutboxStore implements OutboxStore {
     private static final String MARK_DONE_SQL =
             "UPDATE tandem_outbox SET status = 2, locked_by = NULL, locked_until = NULL WHERE id = ANY(?)";
 
+    // next_attempt_at is anchored on the DB clock (like locked_until above), not on the relay's: the
+    // claim compares it with the DB's now(), so anchoring it locally would shift a row's due time by
+    // the relay-to-DB clock offset (§3.2/§3.6). The caller supplies only the relative backoff.
     private static final String MARK_FOR_RETRY_SQL =
             "UPDATE tandem_outbox"
-                    + "   SET status = 0, attempts = attempts + 1, last_error = ?, next_attempt_at = ?,"
+                    + "   SET status = 0, attempts = attempts + 1, last_error = ?,"
+                    + "       next_attempt_at = now() + (? * interval '1 millisecond'),"
                     + "       locked_by = NULL, locked_until = NULL"
                     + " WHERE id = ?";
 
@@ -150,14 +154,14 @@ public final class JdbcOutboxStore implements OutboxStore {
     }
 
     @Override
-    public void markForRetry(long id, String error, Instant nextAttemptAt) {
+    public void markForRetry(long id, String error, Duration retryDelay) {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(MARK_FOR_RETRY_SQL)) {
             ps.setString(1, error);
-            if (nextAttemptAt == null) {
-                ps.setNull(2, Types.TIMESTAMP_WITH_TIMEZONE);
+            if (retryDelay == null) {
+                ps.setNull(2, Types.BIGINT);          // now() + NULL = NULL → due immediately
             } else {
-                ps.setObject(2, OffsetDateTime.ofInstant(nextAttemptAt, ZoneOffset.UTC));
+                ps.setLong(2, retryDelay.toMillis());
             }
             ps.setLong(3, id);
             ps.executeUpdate();

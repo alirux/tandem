@@ -40,11 +40,11 @@ class RelayWorkerTest {
     private RelayWorker worker() {
         Supplier<Set<Integer>> allBuckets = outbox::allBuckets;
         return new RelayWorker(outbox, dispatcher, cfg, attempts -> Duration.ofSeconds(10),
-                clock, TandemMetrics.NOOP, "worker-1", allBuckets);
+                TandemMetrics.NOOP, "worker-1", allBuckets);
     }
 
     private RelayWorker worker(BackoffStrategy backoff, TandemMetrics metrics) {
-        return new RelayWorker(outbox, dispatcher, cfg, backoff, clock, metrics, "worker-1", outbox::allBuckets);
+        return new RelayWorker(outbox, dispatcher, cfg, backoff, metrics, "worker-1", outbox::allBuckets);
     }
 
     private void insert(String aggregateId, long seq) {

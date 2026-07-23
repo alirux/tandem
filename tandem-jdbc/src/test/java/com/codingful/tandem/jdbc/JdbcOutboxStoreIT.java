@@ -82,12 +82,12 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
         insert("order-1", 1);
         long id = claim(10).get(0).id();
 
-        store.markForRetry(id, "transient", Instant.now().plus(Duration.ofHours(1)));
+        store.markForRetry(id, "transient", Duration.ofHours(1));
         assertThat(statusOf(id)).isEqualTo(OutboxStatus.PENDING.code());
         assertThat(attemptsOf(id)).isEqualTo(1);
         assertThat(claim(10)).isEmpty();
 
-        store.markForRetry(id, "transient", Instant.now().minusSeconds(1));   // now due
+        store.markForRetry(id, "transient", Duration.ofSeconds(-1));   // already past → now due
         assertThat(claim(10)).extracting(OutboxRecord::id).containsExactly(id);
     }
 

@@ -5,8 +5,6 @@ import com.codingful.tandem.core.exception.OutboxDispatchException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
-import java.time.Clock;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -38,7 +36,6 @@ final class RelayWorker {
     private final OutboxDispatcher dispatcher;
     private final RelayConfig cfg;
     private final BackoffStrategy backoff;
-    private final Clock clock;
     private final TandemMetrics metrics;
     private final String workerId;
     private final Supplier<Set<Integer>> ownedBuckets;
@@ -51,13 +48,15 @@ final class RelayWorker {
     private record FailedDispatch(OutboxRecord record, Throwable error) {
     }
 
+    // No Clock here on purpose: the worker only ever computes a *relative* backoff and hands it to the
+    // store, which anchors it on the DB clock (§3.2/§3.6). Keeping a Clock out of the worker makes a
+    // locally-anchored deadline impossible to reintroduce by accident.
     RelayWorker(OutboxStore store, OutboxDispatcher dispatcher, RelayConfig cfg, BackoffStrategy backoff,
-                Clock clock, TandemMetrics metrics, String workerId, Supplier<Set<Integer>> ownedBuckets) {
+                TandemMetrics metrics, String workerId, Supplier<Set<Integer>> ownedBuckets) {
         this.store = store;
         this.dispatcher = dispatcher;
         this.cfg = cfg;
         this.backoff = backoff;
-        this.clock = clock;
         this.metrics = metrics;
         this.workerId = workerId;
         this.ownedBuckets = ownedBuckets;
@@ -117,8 +116,7 @@ final class RelayWorker {
         String message = cause.getMessage();
         int attemptsAfter = record.attempts() + 1;
         if (retriable && attemptsAfter < cfg.maxAttempts()) {
-            Instant nextAttemptAt = clock.instant().plus(backoff.delayFor(record.attempts()));
-            store.markForRetry(record.id(), message, nextAttemptAt);
+            store.markForRetry(record.id(), message, backoff.delayFor(record.attempts()));
             if (metrics.isEnabled()) {
                 metrics.incrementRetry();
             }

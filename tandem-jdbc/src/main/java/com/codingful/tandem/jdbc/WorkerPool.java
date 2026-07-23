@@ -103,7 +103,7 @@ public final class WorkerPool {
         for (int i = 0; i < workerCount; i++) {
             int index = i;
             String workerId = "tandem-relay-" + instanceId + "-w" + index;
-            workers[i] = new RelayWorker(store, dispatcher, cfg, backoff, clock, metrics, workerId,
+            workers[i] = new RelayWorker(store, dispatcher, cfg, backoff, metrics, workerId,
                     () -> sliceFor(index));
             startWorkerThread(index);
         }

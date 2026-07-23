@@ -229,9 +229,18 @@ interface BucketSource {
   > compares a lease against its own wall clock, so drift between relay hosts cannot make one believe it
   > still owns an expired bucket (or that a live peer's is free). **Invariant: never gate ownership or
   > expiry on the relay-local clock — all lease deadlines and comparisons must go through the DB `now()`.**
-  > (The relay's local clock is used only to *pace* the heartbeat/reclaim tick, a relative interval;
-  > absolute drift does not affect it. Assumes a single DB whose `now()` is coherent — a multi-primary /
-  > distributed clock would reopen this.)
+  > This holds for `next_attempt_at` too: the relay computes only the *relative* backoff and the store
+  > anchors it (`markForRetry(id, error, retryDelay)` → `now() + retryDelay`), mirroring how `claimBatch`
+  > passes `rowLease`. `RelayWorker` deliberately holds **no `Clock`**, so a locally-anchored deadline
+  > cannot be reintroduced by accident.
+  >
+  > *Documented exception:* cleanup's retention cutoff (§3.7) **is** computed on the relay
+  > (`clock.instant() - retention`, passed as an absolute `doneBefore`). It is deliberate and benign —
+  > the window is days, so a drift of seconds only shifts when terminal rows are deleted, never what is
+  > delivered. The tick cadence itself uses `scheduleWithFixedDelay` (a monotonic elapsed-time interval,
+  > not wall clock), so drift does not affect it either.
+  >
+  > Assumes a single DB whose `now()` is coherent — a multi-primary / distributed clock would reopen this.
 
   > **Cleanup and lease-reclaim are NOT partitioned by this mechanism.** Both run globally on every
   > instance regardless of `coordination` mode — see §3.7's note on redundant-but-safe multi-instance
@@ -400,9 +409,14 @@ in chunks to avoid long locks:
 DELETE FROM tandem_outbox
  WHERE id IN ( SELECT id FROM tandem_outbox
                 WHERE status IN (2, 4)              -- DONE / DISCARDED
-                  AND created_at < now() - :retention
+                  AND created_at < :doneBefore        -- relay-computed cutoff, see below
                 ORDER BY id LIMIT :chunk );
 ```
+Unlike every lease deadline (§3.2), the cutoff is the one timestamp computed on the **relay**
+(`clock.instant() - retention`, hence the injectable `Clock` on `WorkerPool`) rather than with the DB's
+`now()`. This is deliberate: it keeps the retention window testable with a controllable clock, and a
+relay-to-DB clock offset only shifts *when* terminal rows are deleted — over a window of days, never
+what gets delivered. Do not copy this pattern for anything that gates delivery.
 **Time-partitioning** on `created_at` (drop old partitions) is an opt-in alternative for high volume
 (instant drop, no bloat) at the cost of partition-management setup.
 
