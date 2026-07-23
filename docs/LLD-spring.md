@@ -38,11 +38,79 @@ published surface and protects no invariant; adopt it only if a real binary inco
 **CI obligation.** Because a single artifact claims dual-generation support, it must be *tested*
 against a version matrix — at least one Boot 3.x line and one Boot 4.x line. A green single-version
 build does not prove dual-generation compatibility, so the matrix is part of this design, not an
-optional extra.
+optional extra. §1.2 specifies how the matrix is realised.
 
 **No aggregator module.** An all-in-one `tandem-spring` depending on both was considered and
 rejected: an application that both writes and runs an embedded relay simply declares both modules,
 which costs it one dependency line and keeps the published surface at two artifacts.
+
+### 1.1 How one artifact supports two Spring generations
+
+A single jar cannot be *compiled* against two versions at once, so the mechanism is not "compile
+against both" — it is "compile against one, force neither, resolve at runtime". Three parts:
+
+1. **Compile against a single baseline.** The module compiles against one concrete version — the
+   **lowest supported**, Spring Boot 3.x / Framework 6.x. The resulting bytecode holds only *symbolic
+   references* to Spring (fully-qualified class names, method signatures, annotation types), not the
+   Spring classes themselves.
+
+2. **Declare Spring `compileOnly` (Gradle) / `provided` (Maven), never `implementation`/`api`.** This
+   is the crux. A `compileOnly` dependency is visible to the compiler but is **omitted from the
+   published POM**, so the baseline version is *not* propagated transitively to the consumer. Tandem's
+   jar drags no Spring version onto the application classpath — it declares a dependency on
+   `tandem-jdbc`/`tandem-kafka` (real, `api` scope) and on Spring only `compileOnly`.
+
+3. **The consumer supplies the version; the JVM binds at runtime.** The consumer is a Spring Boot
+   application — it brings its own Boot 3.x **or** 4.x via its starter/BOM. At class-load time the JVM
+   resolves Tandem's symbolic references against whatever Spring is actually on the classpath. One jar,
+   two runtimes.
+
+**The condition that makes it sound.** Every Spring symbol Tandem references must exist with an
+identical binary signature in **both** Framework 6.x and 7.x — the "common API subset". Tandem
+restricts itself to API that is expected stable across the two (the `AutoConfiguration.imports`
+mechanism, `@AutoConfiguration`, `@ConditionalOn…`, `@ConfigurationProperties` binding, the AOP model).
+If a later Boot generation renames, moves, or changes the signature of a referenced member, the
+runtime fails loudly with `NoSuchMethodError` / `NoClassDefFoundError` — it does **not** fail silently.
+
+**Why this is an assumption under test, not a guarantee.** Boot 3 → 4 is a *major* framework bump
+(6 → 7), and a major version is *permitted* to break binary compatibility. So the single-artifact
+strategy is a validated bet, not a certainty: the **CI matrix** above is exactly what turns the bet
+into a checked fact — compile once against the baseline, then run the integration tests against a real
+Boot 3.x runtime **and** a real Boot 4.x runtime. If a genuine incompatibility surfaces, the fallback
+is the version split (`-core` / `-boot3` / `-boot4`, §1), adopted only then.
+
+### 1.2 Verifying dual-generation compatibility
+
+The dual-generation claim is only as good as the test that checks it. Realised as follows:
+
+**The matrix lives in the build (Gradle JVM Test Suites), not only in CI.** Each Spring module declares
+two test suites — one pinning a Spring Boot 3.x BOM, one a 4.x BOM — so a single `./gradlew check` runs
+the autoconfiguration tests against **both** generations, locally and in CI alike (consistent with the
+project convention that `check` is the single source of truth). The module's main sources still compile
+once against the baseline (Boot 3.x, via `compileOnly`, §1.1); a suite only swaps the Spring version on
+its own **test runtime** classpath, so both suites exercise the *same baseline-compiled bytecode* —
+which is precisely the binary compatibility under test. A suite recompiles only the trivial test code
+against its version, never the module's main jar.
+
+**The dual-run tests are lightweight `ApplicationContextRunner` tests** — no full context, no
+container. Per module they assert:
+
+- the autoconfiguration applies and its beans exist — `tandem-spring-producer`: an `OutboxRepository`;
+  `tandem-spring-relay`: the `OutboxStore`, `TopicRouter`, `OutboxDispatcher`, `WorkerPool`;
+- the `tandem.*` properties bind (e.g. `tandem.outbox.bucket-count`, `tandem.relay.batch-size` →
+  `RelayConfig`);
+- the conditionals behave — `tandem.relay.enabled=false` contributes no relay; a user `@Bean` replaces
+  the autoconfigured one (`@ConditionalOnMissingBean`, §4);
+- the bucket-count guard runs at startup.
+
+Being in-memory, running them twice adds seconds, not a doubled build.
+
+**The heavier end-to-end smoke runs once, on the baseline only.** A `@SpringBootTest` starting real
+Postgres/Kafka via Testcontainers — to prove the wired producer + relay actually deliver under Spring —
+is valuable but container-dominated, so it runs a **single** time against the baseline version.
+Duplicating it across generations would double its container startup for little added signal: the
+binary-compat question it re-answers is already covered, far more cheaply, by the context-runner matrix
+above.
 
 ---
 
