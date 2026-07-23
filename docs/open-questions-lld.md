@@ -102,7 +102,7 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   Spring Framework 6.x/7.x common API subset (no `-boot3`/`-boot4` split) and validated by a CI
   version matrix. The role split is structural enforcement of the minimal client footprint; the
   version split would protect no invariant, so it stays the §10.1 fallback. No all-in-one aggregator.
-  *(tandem-spring; HLD §10.1, §3.2; LLD-spring §1)*
+  *(tandem-spring; HLD §10.1, §3.2; LLD-spring-config §1)*
 - [ ] **Q22 (P2)** — **Spring component details.** `@TransactionalOutbox` aspect impl;
   `TransactionalOutboxTemplate` API; `OutboxEventMapper<T>` signature; Micrometer-Tracing adapter
   wiring. *(tandem-spring; HLD §3.1)*

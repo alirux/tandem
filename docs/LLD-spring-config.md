@@ -1,13 +1,15 @@
-# Tandem — LLD: Spring Boot integration (`tandem-spring-producer`, `tandem-spring-relay`)
+# Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
 **Version:** 0.1
 **Status:** Work in progress
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md)
 
-Defines the Spring Boot integration: which modules exist, the configuration property contract they
-bind, and how the beans are assembled. This document covers the **configuration contract only**; the
-write-side ergonomics (`TransactionalOutboxTemplate`, `@TransactionalOutbox`, `OutboxEventMapper<T>`)
-are a separate, later increment and are listed as open in §7.
+Defines the **foundation** of the Spring Boot integration: which modules exist, the configuration
+property contract they bind, and how the beans are assembled. This is deliberately **not** the whole
+Spring integration — the write-side ergonomics (`TransactionalOutboxTemplate`, `@TransactionalOutbox`,
+`OutboxEventMapper<T>`, the Spring application-events tier) and the optional adapters (Micrometer,
+tracing) are separate, later increments, each with its own LLD, and are listed as open in §7. The
+configuration contract comes first because everything else binds onto it.
 
 ---
 

@@ -259,7 +259,7 @@ demo is running. Containers stay alive until you press ENTER.
 | `tandem-sample` | Runnable end-to-end tutorial — self-contained, not published to Maven Central | ✅ basic round |
 | `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
 | `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
-| `tandem-spring-producer` / `tandem-spring-relay` | Spring Boot autoconfig, split by role (write-side / relay) — see [LLD-spring.md](docs/LLD-spring.md) | 🔜 planned |
+| `tandem-spring-producer` / `tandem-spring-relay` | Spring Boot autoconfig, split by role (write-side / relay) — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🔜 planned |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
 | `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |
@@ -284,7 +284,7 @@ demo is running. Containers stay alive until you press ENTER.
 | [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive |
 | [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
 | [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
-| [LLD-spring.md](docs/LLD-spring.md) | Spring Boot integration — module split, configuration property contract, autoconfiguration |
+| [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |
 | [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |

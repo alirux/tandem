@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Status:** Implemented
-**Companion to:** [HLD.md](HLD.md) §4.3; [LLD-jdbc.md](LLD-jdbc.md); consumed by [LLD-spring.md](LLD-spring.md) §2.1
+**Companion to:** [HLD.md](HLD.md) §4.3; [LLD-jdbc.md](LLD-jdbc.md); consumed by [LLD-spring-config.md](LLD-spring-config.md) §2.1
 
 A guard that makes a divergent `bucketCount` between the write-side and the relay impossible to miss.
 It is a core-adapter concern, not a Spring one: it protects the manual assembly path Tandem ships
