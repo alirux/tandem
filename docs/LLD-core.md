@@ -109,11 +109,11 @@ Ports are interfaces **defined by the core** and implemented by adapters (HLD §
 | `OutboxRepository` | `tandem-jdbc` (+ `InMemoryOutbox`) | Write-side insert |
 | `OutboxStore` | `tandem-jdbc` | Relay-side persistence (poll/claim/update/cleanup) |
 | `OutboxDispatcher` | `tandem-kafka` | Publish one record to Kafka |
-| `PayloadSerializer` | client / `tandem-spring` (JSON) | Object → bytes |
+| `PayloadSerializer` | client / `tandem-spring-producer` (JSON) | Object → bytes |
 | `TopicRouter` | `tandem-kafka` (default) | `aggregateType` → topic |
-| `CausalContext` | `tandem-spring` (consumer side) | Inbound Lamport timestamp |
+| `CausalContext` | `tandem-spring-producer` (consumer side) | Inbound Lamport timestamp |
 | `AttemptRecorder` | core (no-op) / `tandem-jdbc` | Attempt archive (§7.1) |
-| `TracePropagator` | core (no-op) / `tandem-spring`, `tandem-tracing-otel` | Trace capture (§7.2) |
+| `TracePropagator` | core (no-op) / `tandem-spring-producer`, `tandem-tracing-otel` | Trace capture (§7.2) |
 | `TandemMetrics` | core (no-op) / `tandem-micrometer` | Metrics (§7) |
 | `ReplayService` | `tandem-jdbc` | Replay (§8) |
 | `TandemAggregate` | client's aggregate | Expose pending messages (annotation tier) |
@@ -181,7 +181,7 @@ public interface TopicRouter {
 ```
 
 There is **no default `PayloadSerializer` in core** (a JSON one needs a JSON library — §1.3).
-A Jackson-based default ships in `tandem-spring`; non-Spring users supply one or pass bytes.
+A Jackson-based default ships in `tandem-spring-producer`; non-Spring users supply one or pass bytes.
 
 ### 2.5 Optional capability ports (no-op defaults in core)
 
@@ -313,4 +313,4 @@ These are referenced by the signatures above but resolved in other LLDs:
   **virtual-bucket sharding** — fixed `B`, workers own bucket subsets; `SINGLE` (in-process, all
   buckets) or `LEASE` (`tandem_bucket_lease`-table) coordination; structural exclusivity, §4.3.)*
 - **Q20** — behaviour when `type` is null (`tandem-kafka`).
-- **Q6** — consolidated `TandemProperties` reference (`tandem-spring`).
+- **Q6** — consolidated property reference (`tandem-spring-producer` / `tandem-spring-relay`; the `tandem.*` contract is specified in LLD-spring-config §2).

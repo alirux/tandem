@@ -90,7 +90,7 @@ consumer continues the trace with zero Tandem-specific knowledge.
   result into `headers` — so **all four usage tiers** (plain, template, annotation, Spring
   events) get propagation transparently, with no per-tier code.
 - **Opt-in adapters:**
-  - **Spring / Micrometer Tracing** (in `tandem-spring`): auto-wired when Spring Boot's
+  - **Spring / Micrometer Tracing** (in `tandem-spring-producer`): auto-wired when Spring Boot's
     tracing is on the classpath — covers the Spring majority with no extra module. Bridges
     to whatever backend the app uses (OTel or Brave).
   - **OpenTelemetry** (optional `tandem-tracing-otel` module): for non-Spring users; uses

@@ -16,7 +16,8 @@ defines done-ness. Read those sections first. Follow [AGENTS.md](../AGENTS.md) f
 
 **The problem.** The embedded relay (the Pareto default) is built with `BucketSource.embedded(B)`, which
 makes the instance own **all** `B` buckets. That is correct for a single process, but a client service is
-routinely scaled to N replicas — and `tandem-spring` bundles the relay in-process by default. N embedded
+routinely scaled to N replicas — and an embedded deployment (declaring `tandem-spring-relay` alongside
+`tandem-spring-producer`) runs the relay in-process. N embedded
 replicas each own all buckets: correctness holds (ordering + single-claim are row-carried via
 `status = IN_FLIGHT` + `FOR UPDATE SKIP LOCKED`, so no reorder and no double-claim), **but** every
 instance polls every bucket, multiplying DB load for zero throughput gain and widening the reclaim-vs-late-
@@ -59,8 +60,8 @@ engine logic.
 - Unit + integration tests (two `WorkerPool`s sharing one DB under `LEASE`).
 
 ### Out of scope (do NOT build; stop and flag if a task seems to need it)
-- **Spring autoconfig exposure** (`tandem.relay.coordination` property) — belongs to `tandem-spring`,
-  which is **2nd round (Q6/Q21–Q23 open)**. This plan makes the mechanism ready; wiring it into
+- **Spring autoconfig exposure** (`tandem.relay.coordination` property) — belongs to `tandem-spring-relay`,
+  which is **2nd round (Q6/Q22–Q23 open)**. This plan makes the mechanism ready; wiring it into
   autoconfig is a follow-up.
 - **`tandem-relay` standalone runnable** — 2nd round.
 - **Reclaim scoping / fencing hardening** (see §6) — a *separate*, optional hardening; not required for

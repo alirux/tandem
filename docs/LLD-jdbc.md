@@ -470,7 +470,7 @@ fail-fast metric (§3.5) is the one exception — it is recorded once at startup
 
 ## 6. Basic-round configuration defaults
 
-The defaults the basic round needs (the full `TandemProperties` reference stays Q6 / `tandem-spring`):
+The defaults the basic round needs (the full property reference is the `tandem.*` contract in the Spring modules, LLD-spring-config §2):
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -529,18 +529,18 @@ relay.start();
 ```
 
 **Serialization in the basic round.** There is **no default `PayloadSerializer` without Spring** (a
-JSON default ships in `tandem-spring`; LLD-core §2.4). So in the basic round the client **serializes
+JSON default ships in `tandem-spring-producer`; LLD-core §2.4). So in the basic round the client **serializes
 the payload to `byte[]` itself** and passes the bytes (optionally setting `contentType`, persisted to
 `headers["content-type"]`, §2). The end-to-end `TandemTestContainer` test does the same — it serializes
 a sample payload to bytes and asserts the CloudEvent body on the topic (LLD-test §3).
 
-`tandem-spring` later automates exactly this wiring; nothing here requires it.
+`tandem-spring-producer` later automates exactly this wiring; nothing here requires it.
 
 ---
 
 ## 8. Open items touching this module (post basic round)
 
-- **Q6** — full `TandemProperties` reference (`tandem-spring`); the basic-round defaults are in §6.
+- **Q6** — full property reference (the `tandem.*` contract in `tandem-spring-producer` / `tandem-spring-relay`, LLD-spring-config §2); the basic-round defaults are in §6.
 - **Q28** — full MySQL DDL (partial-index workaround, partitioning).
 - The `tandem_bucket_lease` table doubles as / aligns with the **relay heartbeat-status** the Admin API needs
   (HLD-admin-api §4.1) — reconcile the two into one mechanism when writing `tandem-admin`.

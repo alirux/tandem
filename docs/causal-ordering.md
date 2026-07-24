@@ -342,8 +342,8 @@ Tandem owns the clock, not the projection engine: it stamps the `lamport`, write
 the Kafka header, and on the consumer side offers a `CausalContext` (populated from
 inbound headers) so the merge `max(local, inbound)+1` happens on re-emit. Spans
 `tandem-core` (abstraction + merge + header constant), `tandem-jdbc` (clock store +
-transactional read-merge-write), `tandem-kafka` (header I/O), `tandem-spring`
-(auto-populate `CausalContext` from inbound headers).
+transactional read-merge-write), `tandem-kafka` (header I/O), `tandem-spring-producer`
+(auto-populate `CausalContext` from inbound headers on the consumer side).
 
 **(b) Adapters to existing engines — the sweet spot, and the default.**
 Small, high-value glue: a `TimestampExtractor` for Kafka Streams (`tandem-kafka-streams`)
@@ -444,7 +444,7 @@ key, do not reinvent the engine*.
   aggregate population, and are out of scope.
 - **Requires consumer cooperation.** The merge only happens if downstream code threads
   the `CausalContext`. A consumer that ignores it silently degrades to per-aggregate
-  counters. `tandem-spring` makes this easy (auto-populate from inbound headers) but
+  counters. `tandem-spring-producer` makes this easy (auto-populate from inbound headers) but
   cannot enforce it.
 - **At-least-once is unchanged.** Consumers must still deduplicate on `(aggregate_id,
   seq)`; causal ordering does not alter delivery semantics.

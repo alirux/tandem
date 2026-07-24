@@ -203,10 +203,9 @@ tandem-core             zero external runtime deps; defines models + ports
 tandem-jdbc   ──▶ core   JDBC adapter: outbox INSERT + polling/lease/cleanup (NO Kafka)
 tandem-kafka  ──▶ core   Kafka publish adapter (implements the OutboxDispatcher port)
 
-# Spring autoconfig — write-side and relay split so the client can avoid Kafka (§3.2)
+# Spring autoconfig — split by role so the client can avoid Kafka (§3.2); no aggregator
 tandem-spring-producer  ──▶ tandem-jdbc                  write-side tiers (client; NO Kafka)
 tandem-spring-relay     ──▶ tandem-jdbc + tandem-kafka   relay autoconfig
-tandem-spring           ──▶ producer + relay             all-in-one (embedded default)
 tandem-relay (runnable) ──▶ tandem-spring-relay          prebuilt standalone relay app
 
 tandem-bom              version alignment only, no code
@@ -219,7 +218,7 @@ tandem-flink         ──▶ core   (Flink TimestampAssigner/WatermarkStrategy
 
 `tandem-core` is the only module with zero external runtime dependencies. All other modules depend on it.
 
-`tandem-spring-producer` (the write-side, re-exported by the `tandem-spring` aggregator) provides four optional usage tiers, from lowest to highest abstraction:
+`tandem-spring-producer` (the client's write-side module) provides four optional usage tiers, from lowest to highest abstraction:
 
 | Tier | API | How it works |
 |---|---|---|
@@ -290,10 +289,11 @@ The relay is **fully domain-agnostic**: it reads rows (`aggregate_id`, `aggregat
 
 **Module support.** To let the client avoid the Kafka dependency, the Spring write-side autoconfig is separated from the relay autoconfig (see the module graph in §3.1 and LLD-base):
 
-- `tandem-spring-producer` — write-side tiers + autoconfig (JDBC only, **no Kafka**) → used by the client in the split topology.
+- `tandem-spring-producer` — write-side tiers + autoconfig (JDBC only, **no Kafka**) → used by the client; the only module the write-side needs in the split topology.
 - `tandem-spring-relay` — relay autoconfig (JDBC + Kafka).
-- `tandem-spring` — all-in-one aggregator (producer + relay) for the simple embedded default.
 - `tandem-relay` — a prebuilt **standalone runnable** relay (Spring Boot app / container over `tandem-spring-relay`): point it at DB + Kafka and run.
+
+The modules split by **role only** (write-side vs. relay), not by Spring Boot generation, and there is **no all-in-one aggregator**: an application that both writes and hosts an embedded relay declares both modules, which costs one dependency line and keeps the published surface at two artifacts. The reasoning is in [LLD-spring-config.md](LLD-spring-config.md) §1 (resolves Q21).
 
 Ordering and all delivery guarantees are **identical regardless of topology** — they are properties of the DB, the hash-sharding, and the Kafka config, not of where the relay process runs.
 
@@ -669,7 +669,7 @@ Design highlights (full design: [HLD-tracing.md](HLD-tracing.md)):
 - **Hexagonal (§1.2).** Port `TracePropagator` in `tandem-core`, default
   `NoOpTracePropagator`; capture happens at the `JdbcOutboxRepository.insert` chokepoint so
   **all four usage tiers** get it transparently. Opt-in adapters: Micrometer Tracing (auto
-  in `tandem-spring`) and OpenTelemetry (optional `tandem-tracing-otel`).
+  in `tandem-spring-producer`) and OpenTelemetry (optional `tandem-tracing-otel`).
 - **Off by default, zero cost when off.** Guarded capture — no context lookup, no
   allocation, nothing added to `headers` when disabled.
 - **Feeds the attempt archive (§7.1)**, whose `trace_id` / `correlation_id` columns are
@@ -760,7 +760,7 @@ The two coexist: `seq` continues to enforce per-aggregate order and the `UNIQUE(
   new_lamport = max(local_clock, inbound_ts /* 0 if none */) + 1
   ```
   A purely local mutation advances by 1; a mutation caused by consuming an event with timestamp `t` merges via `max(., t) + 1`. The merge is what makes the clock causal rather than a plain counter.
-- **Inbound context.** Consuming code declares the causing event's timestamp via a `CausalContext` (`tandem-core`), auto-populated from the inbound Kafka header on the consumer side (`tandem-spring`). Without an inbound context, a mutation is treated as a causal root (local advance only).
+- **Inbound context.** Consuming code declares the causing event's timestamp via a `CausalContext` (`tandem-core`), auto-populated from the inbound Kafka header on the consumer side (a client-side helper in `tandem-spring-producer`). Without an inbound context, a mutation is treated as a causal root (local advance only).
 - **Propagation.** The relay writes the value into a Kafka header (`ce_logicalclock`); downstream consumers read it back into their `CausalContext`.
 - **Total order.** Consumers sort by `(lamport, aggregate_id)`; the tie-break makes the order deterministic across unrelated aggregates that share a Lamport value.
 
@@ -806,7 +806,7 @@ Tandem to write domain tables.
 | `tandem-core` | `CausalContext` abstraction + pure merge function + `ce_logicalclock` header constant |
 | `tandem-jdbc` | clock store (column or `tandem_aggregate_clock` table) + transactional read-merge-write |
 | `tandem-kafka` | write / read the `ce_logicalclock` header |
-| `tandem-spring` | auto-populate `CausalContext` from inbound Kafka headers on the consumer side |
+| `tandem-spring-producer` | auto-populate `CausalContext` from inbound Kafka headers on the consumer side (client-side helper) |
 
 **(b) Engine adapters.** Tandem does not build a reordering engine; it ships thin adapters so existing stream processors order by `lamport`. The two differ in operational weight — Kafka Streams is an *embedded library* (no cluster; scales as a consumer group; state in changelog topics on the Kafka you already run), while Flink is a *cluster*. **Kafka Streams is the recommended default** since Kafka is already present:
 
@@ -889,14 +889,13 @@ All throughput/latency targets are stated against the **reference baseline** (si
 
 ### 10.1 Spring Boot 3.x / 4.x compatibility strategy
 
-`tandem-spring` must support both Spring Boot generations. They share everything `tandem-spring` relies on: the autoconfiguration import mechanism (`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`), the Jakarta (`jakarta.*`) namespace, the `@AutoConfiguration` / `@ConditionalOn…` annotations, `@ConfigurationProperties` binding, and the core AOP / `@Transactional` model (including the composed-annotation + `@AliasFor` used by `@TransactionalOutbox`). They differ in the underlying Spring Framework (6.x for Boot 3, 7.x for Boot 4); both keep a **Java 17** baseline, matching Tandem.
+The Spring modules (`tandem-spring-producer`, `tandem-spring-relay`) must support both Spring Boot generations. They share everything Tandem relies on: the autoconfiguration import mechanism (`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`), the Jakarta (`jakarta.*`) namespace, the `@AutoConfiguration` / `@ConditionalOn…` annotations, `@ConfigurationProperties` binding, and the core AOP / `@Transactional` model (including the composed-annotation + `@AliasFor` used by `@TransactionalOutbox`). They differ in the underlying Spring Framework (6.x for Boot 3, 7.x for Boot 4); both keep a **Java 17** baseline, matching Tandem.
 
-**Strategy, in priority order:**
+**Resolved strategy — a single artifact per module on the common API subset.** Each Spring module is **one jar**, compiled against the lowest supported generation (Boot 3.x / Framework 6.x) with Spring declared `compileOnly` (Gradle) / `provided` (Maven) so no Spring version is propagated to the consumer. The consumer's own starter/BOM supplies Boot 3.x **or** 4.x, and the JVM binds Tandem's symbolic references at class-load time. This is sound because every Spring symbol Tandem references exists with an identical binary signature in both Framework 6.x and 7.x; if a later generation breaks one, the failure is loud (`NoSuchMethodError` / `NoClassDefFoundError`), not silent. The full mechanism is in [LLD-spring-config.md](LLD-spring-config.md) §1.1.
 
-1. **Single artifact on the common API subset (preferred).** Compile `tandem-spring` against the minimal API common to Spring Framework 6.x and 7.x and rely on binary compatibility. The surface Tandem uses is stable across the two, so this is expected to work.
-2. **Split modules (fallback).** If a real binary incompatibility surfaces, extract version-agnostic logic into `tandem-spring-core` and ship thin `tandem-spring-boot3` / `tandem-spring-boot4` modules over it. Adopt only if (1) proves infeasible — it doubles the published Spring surface.
+**CI obligation — a version matrix, in the build.** Because one artifact claims dual-generation support, it is tested against **at least one Boot 3.x line and one Boot 4.x line** — a green single-version build does not prove dual-generation compatibility. The matrix lives in the build itself (Gradle JVM Test Suites: lightweight `ApplicationContextRunner` tests run against both generations under `./gradlew check`), with the heavier Testcontainers smoke run once on the baseline; specified in [LLD-spring-config.md](LLD-spring-config.md) §1.2.
 
-**CI implication:** `tandem-spring` is tested against a **version matrix** — at least one Boot 3.x line and one Boot 4.x line — not a single pinned version. A green single-version build does not prove dual-generation compatibility.
+**Fallback, if a real incompatibility surfaces.** Only then split the version-agnostic logic into `tandem-spring-core` and ship thin `-boot3` / `-boot4` modules over it. This is the escape hatch, not the plan: it doubles the published Spring surface and protects no invariant until an incompatibility is actually observed.
 
 ---
 
@@ -920,14 +919,14 @@ Tandem is positioned in the gap between a hand-rolled outbox (correct, but you b
 | `@TransactionalOutbox` event extraction | `TandemAggregate` interface (preferred) vs. `@DomainEvents`-style annotation vs. return-value serialization | `TandemAggregate` keeps domain model explicit; `@DomainEvents` reuses Spring Data convention if already adopted |
 | Spring-events tier event mapping | Published object implements/extends `OutboxMessage` vs. registered `OutboxEventMapper<T>` SPI for arbitrary domain events | Direct is simplest; the mapper SPI decouples domain events from Tandem types |
 | ~~Lamport clock store~~ | **Resolved:** Tandem-managed `tandem_aggregate_clock` table (clean boundary — Tandem never writes domain tables); atomic upsert serializes the per-aggregate advance (§9.3) | |
-| Spring Boot dual-version packaging | Single artifact on the common 6.x/7.x API (preferred) vs. split `tandem-spring-boot3` / `-boot4` over `tandem-spring-core` | Decide by validating actual API compatibility; split only if a real incompatibility is found (§10.1) |
+| ~~Spring Boot dual-version packaging~~ | **Resolved:** a **single artifact per module** on the common 6.x/7.x API, Spring `compileOnly`, validated by an in-build Boot 3.x/4.x test matrix; `-boot3`/`-boot4` split kept only as a fallback if a real incompatibility surfaces (§10.1, LLD-spring-config §1.1/§1.2) | |
 | Attempt archive write timing | Synchronous in the status-update tx (consistent; one extra INSERT — preferred) vs. async/batched writer | Only relevant when the attempt archive is enabled (§7.1) |
 | Attempt archive — which attempts | Record every attempt incl. the successful one (full timeline) vs. failures + final success only (smaller) | Trade forensic completeness vs. archive size |
 | Trace propagation enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is on the classpath | Only relevant when trace/correlation propagation is used (§7.2) |
 | Correlation-id source | MDC key (default) vs. explicit `TandemContext` API vs. both | |
 | Admin API spec ↔ code binding | Generate server stubs from the OpenAPI at build time vs. hand-write + validate against the spec in CI | API-first either way (§7.3) |
 | Admin API discard semantics | Hard skip (ordering break, acknowledged) vs. discard + tombstone/compensation | Only relevant when the Admin API is enabled |
-| Producer/relay packaging (split topology) | Split modules (`tandem-spring-producer` / `tandem-spring-relay`) vs. single `tandem-spring` with Kafka as an optional dependency + conditional relay autoconfig | Both let the client avoid the Kafka dependency (§3.2); split is more explicit, optional-dep is fewer modules |
+| ~~Producer/relay packaging (split topology)~~ | **Resolved:** split by role into `tandem-spring-producer` / `tandem-spring-relay`, no all-in-one aggregator — structural (the producer cannot pull Kafka transitively) rather than convention-based (a single module with an optional Kafka dep + conditional relay autoconfig would rest the invariant on every conditional staying correct) (§3.2, LLD-spring-config §1) | |
 | ~~CloudEvents `id` / `source` / event versioning~~ | **Resolved:** `id` = outbox `id`; `source` = a single configured URI (`tandem.kafka.source`); event **version lives in the `type`** (`.v{n}`), topic stays version-agnostic; optional `dataschema` from header/config (HLD-cloudevents §7–§8, LLD-kafka §3/§6) | Content mode (binary), raw escape hatch, and `type` column also decided (§4.8) |
 | CloudEvents trace header naming | Bare `traceparent` / `tracestate` vs. `ce_`-prefixed — **deferred** until tracing (`tandem-tracing-otel`) lands; tracing is off in the basic round | Only affects the (optional) trace extension (§7.2, HLD-cloudevents §8) |
 | Write-side payload serializer dependency | Bundle a JSON lib vs. use the client's existing one (`provided`/optional) vs. a minimal built-in writer | Must honour minimal client footprint (§1.3) — the write-side must not force a heavy JSON dependency on the client |

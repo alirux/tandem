@@ -245,7 +245,7 @@ This is documentation work, not a code change — track it alongside §9 item 6.
 **Plan closed 2026-07-19.** Items 1–6 are done; item 7 is a standing rule, not a task — every
 new log statement is reviewed against §5 as it is written. Further logging work is now driven by
 the features that need it (trace/MDC correlation with HLD-tracing.md §8, and whatever
-`tandem-spring`/`tandem-admin` add), not by this plan.
+`tandem-spring-producer` / `tandem-spring-relay` / `tandem-admin` add), not by this plan.
 
 ---
 

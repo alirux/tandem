@@ -32,9 +32,8 @@ type-safe, best IDE support, and consistent with the `build.gradle.kts` assumed 
 | `tandem-core` | `tandem-core` | |
 | `tandem-jdbc` | `tandem-jdbc` | |
 | `tandem-kafka` | `tandem-kafka` | |
-| `tandem-spring-producer` | `tandem-spring-producer` | Write-side Spring autoconfig (JDBC, **no Kafka**) — used by the client (§3.2 HLD) |
+| `tandem-spring-producer` | `tandem-spring-producer` | Write-side Spring autoconfig (JDBC, **no Kafka**) — used by the client (§3.2 HLD). Split by role, no aggregator (Q21, LLD-spring-config §1) |
 | `tandem-spring-relay` | `tandem-spring-relay` | Relay Spring autoconfig (JDBC + Kafka) |
-| `tandem-spring` | `tandem-spring` | All-in-one aggregator (producer + relay) — embedded default |
 | `tandem-relay` | `tandem-relay` | Prebuilt **standalone runnable** relay (Spring Boot app over `tandem-spring-relay`) — split topology (§3.2 HLD) |
 | `tandem-test` | `tandem-test` | |
 | `tandem-kafka-streams` | `tandem-kafka-streams` | Optional — causal-ordering adapter (§9 HLD) |
@@ -88,7 +87,6 @@ com.codingful.tandem.<module>[.<sub-package>]
 | tandem-kafka | `com.codingful.tandem.kafka` |
 | tandem-spring-producer | `com.codingful.tandem.spring.producer` |
 | tandem-spring-relay | `com.codingful.tandem.spring.relay` |
-| tandem-spring | `com.codingful.tandem.spring` |
 | tandem-relay | `com.codingful.tandem.relay` |
 | tandem-test | `com.codingful.tandem.test` |
 | tandem-kafka-streams | `com.codingful.tandem.kafkastreams` |
