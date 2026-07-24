@@ -1,6 +1,6 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Reviewed — specifies modules not yet implemented
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
@@ -242,21 +242,96 @@ call, the Spring layer only binds `tandem.outbox.bucket-count` (§2.1) into the 
 ## 4. Autoconfiguration
 
 Each module ships one `@AutoConfiguration` class, registered through
-`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. Both declare
+`@AutoConfiguration(after = DataSourceAutoConfiguration.class)` so the application's `DataSource` is
+already defined when Tandem's beans are created. Every contributed bean is `@ConditionalOnMissingBean`,
+so an application can replace any single piece — most usefully a custom `TopicRouter` — without
+abandoning the autoconfiguration.
 
-**`tandem-spring-producer`** — requires a `DataSource`; contributes an `OutboxRepository` bean.
+### 4.1 The `DataSource` both modules bind to
 
-**`tandem-spring-relay`** — requires a `DataSource`, is conditional on `tandem.relay.enabled`
-(default true), and contributes the `OutboxStore`, `TopicRouter`, `OutboxDispatcher` and the
-`WorkerPool`, started and stopped with the application lifecycle.
+Both modules consume the application's own `DataSource`; neither creates one. Each is
+`@ConditionalOnSingleCandidate(DataSource.class)` — the same guard Spring Boot's own
+`JdbcTemplateAutoConfiguration` uses: it resolves the `@Primary` one when several exist and **backs
+off** (contributes nothing) when the choice is ambiguous, rather than guessing. An application with
+multiple unqualified `DataSource`s therefore wires Tandem explicitly (its own `@Bean`s, which the
+`@ConditionalOnMissingBean` guards then leave in place). Tandem never opens its own connection pool.
 
-Every contributed bean is `@ConditionalOnMissingBean`, so an application can replace any single piece
-— most usefully a custom `TopicRouter` — without abandoning the autoconfiguration.
+### 4.2 The `@ConfigurationProperties` types
 
-**Startup ordering matters for the relay.** The relay validates the row-lease invariant against the
-delivery timeout the *dispatcher* reports, so the dispatcher must be constructed before the pool
-starts. Wiring it as a constructor dependency of the pool is what guarantees this; nothing here may
-reorder those two steps.
+The property contract (§2) binds through three `@ConfigurationProperties` types — the single source
+of truth for names, defaults and Javadoc (§2.4):
+
+| Type | Prefix | Module(s) |
+|---|---|---|
+| `TandemOutboxProperties` | `tandem.outbox` | producer **and** relay |
+| `TandemRelayProperties` | `tandem.relay` | relay |
+| `TandemKafkaProperties` | `tandem.kafka` | relay |
+
+Their only job is to be **mapped onto the core configuration objects**, which stay the source of truth
+for behaviour: `TandemRelayProperties` (+ `tandem.outbox.bucket-count`) is copied field-for-field onto
+`RelayConfig.builder()` — the 1:1 naming of §2.2 is what keeps that mapping mechanical and driftless —
+and `TandemKafkaProperties` becomes a `KafkaRelayConfig(source, defaultContentType, defaultDataSchema)`
+plus the raw `producer` map. The properties types carry no logic beyond binding; all validation stays
+where it already lives (`RelayConfig`'s row-lease invariant, the Kafka producer hardening).
+
+### 4.3 `tandem-spring-producer` beans
+
+The write-side module contributes exactly the plain tier:
+
+1. runs `BucketCountGuard.check(dataSource, bucketCount)` as an explicit startup step **before** the
+   repository is exposed (§3) — a mismatch fails context refresh, loudly;
+2. contributes `OutboxRepository` = `new JdbcOutboxRepository(dataSource, bucketCount)`.
+
+The higher tiers (`TransactionalOutboxTemplate`, the `@TransactionalOutbox` aspect, the Spring-events
+listener, the Jackson `PayloadSerializer`) are **Q22** and are not part of this increment (§7); a
+`tandem-spring-producer` built to this LLD gives the *Plain* tier (HLD §3.1) and the guard, no more.
+
+### 4.4 `tandem-spring-relay` beans
+
+Conditional on `tandem.relay.enabled` (`@ConditionalOnProperty`, matchIfMissing = true, default true),
+the relay module contributes the engine, each bean `@ConditionalOnMissingBean`:
+
+1. `TopicRouter` = `TopicRouter.kebabWithSuffix(tandem.kafka.topic-suffix)`;
+2. `OutboxDispatcher` = `new KafkaRelay(producerMap, topicRouter, kafkaRelayConfig)` — the constructor
+   is where the producer hardening runs and the effective `delivery.timeout.ms` is fixed;
+3. `OutboxStore` = `new JdbcOutboxStore(dataSource, tandem.relay.max-attempts)`;
+4. `TandemMetrics` = `TandemMetrics.NOOP` (a real Micrometer bean overrides it once `tandem-micrometer`
+   exists — hence `@ConditionalOnMissingBean`);
+5. `BucketSource` = `BucketSource.forCoordination(relayConfig, dataSource)` — returns the in-process
+   owner under `SINGLE`, the lease/member-backed one under `LEASE`, per `tandem.relay.coordination`;
+6. `WorkerPool` = the full-topology constructor
+   `new WorkerPool(outboxStore, outboxDispatcher, relayConfig, tandemMetrics, Clock.systemUTC(), BackoffStrategy.fullJitter(), bucketSource)`.
+
+`tandem.relay.enabled=false` contributes none of these — the supported way to load the relay module
+without running a relay (§2.2).
+
+**Why the dispatcher is a constructor dependency of the pool.** The pool validates the row-lease
+invariant against the delivery timeout the *dispatcher reports* (`OutboxDispatcher.deliveryTimeoutMillis()`),
+not against a configured value — the footgun removed before publication (§5). Wiring the dispatcher as
+a constructor argument of the `WorkerPool` bean is what forces it to exist first; the bean graph, not a
+comment, enforces the order.
+
+### 4.5 Relay lifecycle — a `SmartLifecycle`, not bean init
+
+The `WorkerPool` must **start after** the context is fully built (its `DataSource` and Kafka producer
+live) and **stop before** the context tears those down, draining in-flight sends gracefully. A `@Bean`
+`initMethod`/`destroyMethod` is the wrong tool: init runs mid-refresh, too early and with no ordering
+guarantee against the infrastructure beans. So the module contributes a thin **`SmartLifecycle`** bean
+(the `WorkerPool` itself stays a plain `tandem-core`/JDBC type, unaware of Spring) whose:
+
+- `start()` calls `workerPool.start()` — which itself performs the fail-fast checks (the `rowLease >
+  delivery.timeout.ms` invariant against the dispatcher's reported timeout, and the `LEASE` lease-table
+  precondition via `BucketSource.validateOnStart`) before spawning any worker thread, so a
+  misconfiguration fails startup rather than surfacing at runtime;
+- `stop()` calls `workerPool.stop()` — the graceful drain (finish in-flight, release `LEASE` ownership),
+  distinct from `kill()`, which the autoconfiguration never calls;
+- `isRunning()` mirrors the pool.
+
+`autoStartup` is true; the default phase is used (the relay depends only on ordinary singleton beans,
+which are constructed before any `SmartLifecycle` starts and destroyed after all have stopped, so no
+custom phase is needed). Container images that deploy the same jar as a pure write-side simply set
+`tandem.relay.enabled=false`, and no lifecycle bean is contributed at all.
 
 ---
 
