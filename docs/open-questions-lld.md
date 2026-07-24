@@ -69,6 +69,19 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   (default 14 days); time-partitioning as an opt-in high-volume alternative. *(tandem-jdbc)*
 - [x] **Q13 (P2)** — **`BackoffStrategy`.** ✅ §3.6: exponential **full-jitter**, base 1s, cap ~5min,
   max 10 attempts; DB-clock `next_attempt_at`. *(tandem-jdbc)*
+  > **Drift found and corrected (2026-07-23, during a relay-lease review).** The decision above was
+  > right but the **implementation had diverged**: `RelayWorker` anchored the deadline on its own wall
+  > clock (`clock.instant() + backoff`) and passed an absolute `Instant`, while the claim compares
+  > `next_attempt_at` with the DB's `now()`. A relay-to-DB clock offset therefore shifted when a row
+  > became due — early enough to burn `attempts` and quarantine it prematurely, or late enough to delay
+  > delivery. Safety (ordering, exclusivity, bucket ownership) was never affected: those were already
+  > DB-anchored. Realigned to the documented decision — `markForRetry(id, error, retryDelay)` now takes
+  > the **relative** backoff and the adapter anchors it (`now() + retryDelay`), mirroring how
+  > `claimBatch` passes `rowLease`; `RelayWorker` holds **no `Clock`** so a locally-anchored deadline
+  > cannot reappear. The invariant is now stated in [LLD-jdbc.md](LLD-jdbc.md) §3.2, with cleanup's
+  > retention cutoff (Q12, §3.7) recorded as the single deliberate exception — relay-computed and
+  > benign over a window of days. *Lesson: this doc records decisions, not what the code does; a
+  > resolved question is not evidence the code still matches it.*
 - [x] **Q14 (P2)** — **WorkerPool lifecycle.** ✅ §3.1: thread pool (`cores×2`), poll loop, graceful
   shutdown (in-flight recovered by lease). *(tandem-jdbc)*
 - [x] **Q15 (P2)** — **Lease reclaim.** ✅ §3.5: periodic (~5s) `UPDATE … WHERE status=1 AND locked_until<now()`.
