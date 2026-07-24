@@ -1,0 +1,286 @@
+# Tandem — LLD: Spring write-side ergonomics (`tandem-spring-producer`)
+
+**Version:** 0.1
+**Status:** Draft — awaiting review; specifies code not yet implemented
+**Companion to:** [HLD.md](HLD.md) §3.1; [LLD-spring-config.md](LLD-spring-config.md) (module + autoconfig foundation); [LLD-core.md](LLD-core.md) §2 (ports)
+
+Resolves **Q22**. Specifies the three write-side *convenience tiers* the Spring producer adds on top
+of the plain `OutboxRepository`: the **Template**, the **`@TransactionalOutbox` annotation**, and the
+**Spring application-events** tier — plus the optional object-payload serialization they share. The
+*Plain* tier (inject `OutboxRepository`, call `.insert()` inside `@Transactional`) needs nothing beyond
+the autoconfiguration already specified in [LLD-spring-config.md](LLD-spring-config.md) §4.3 and is not
+repeated here.
+
+**Out of scope.** Micrometer-Tracing wiring is part of the tracing increment ([HLD-tracing.md](HLD-tracing.md)
+§8): trace capture happens at the `OutboxRepository.insert` chokepoint, so all three tiers inherit it
+transparently and it needs no per-tier design. This LLD only cross-references it.
+
+---
+
+## 1. What HLD §3.1 already fixes (not re-decided here)
+
+Carried in from the HLD as constraints, not re-opened:
+
+- **Four tiers** exist, from lowest to highest abstraction (Plain, Template, Annotation, Spring events).
+- **`@TransactionalOutbox` is a composed annotation** meta-annotated with `@Transactional`, exposing
+  every `@Transactional` attribute via `@AliasFor`. A transaction is always present; the user never
+  writes both annotations.
+- **Annotation-tier extraction is via `TandemAggregate`** — the `tandem-core` interface
+  (`Collection<OutboxMessage> pendingOutboxMessages()`) the returned aggregate implements.
+- **The Spring-events listener is synchronous** (`@EventListener`, inline in the publisher's thread and
+  transaction) — **never** `@TransactionalEventListener(AFTER_COMMIT)`, which would insert in a
+  separate transaction and break atomicity.
+- **`seq` always comes from the aggregate's `version`** (HLD §4.2). Tandem reads it, never invents it —
+  every tier below takes `seq` from the caller/aggregate and passes it through unchanged.
+
+This LLD pins the **signatures and mechanics** that realise those decisions.
+
+---
+
+## 2. The shared serialization model (optional, Jackson, never forced)
+
+The higher tiers let the caller hand Tandem a **payload object** instead of pre-serialized `byte[]`.
+That convenience rests on the `PayloadSerializer` core port (Object → bytes + a content type), and it
+must not violate the minimal-client-footprint invariant (HLD §1.3): **no JSON library is forced onto
+the classpath.**
+
+- **A Jackson `PayloadSerializer` is auto-configured only when Jackson is present** —
+  `@ConditionalOnClass(ObjectMapper)` `@ConditionalOnMissingBean(PayloadSerializer)`. It reuses the
+  application's `ObjectMapper` bean when one exists, else constructs a plain one; its `contentType()`
+  is `application/json`. An application on a different format supplies its own `PayloadSerializer` bean
+  and the conditional backs off.
+- **Object payloads require a serializer; the absence is loud, not silent.** When a tier is handed an
+  object payload and **no** `PayloadSerializer` bean exists, it fails fast at the call site with a clear
+  message (`PayloadSerializationException`: "no PayloadSerializer configured — add a JSON library, supply
+  a PayloadSerializer bean, or pass byte[]"). It never guesses an encoding.
+- **`byte[]` always works with zero dependencies.** Every tier also accepts a pre-built `OutboxMessage`
+  (or raw bytes), so the whole footprint-free path stays open — the serializer is a convenience, not a
+  requirement.
+
+Serialization always produces a `byte[]` that is stored in `OutboxMessage.payload`, and the serializer's
+`contentType()` is written to `headers["content-type"]` (the same slot the relay reads, HLD §6). The core
+`OutboxMessage` model is unchanged — it stays bytes-carrying; object payloads are serialized *before* the
+message is built, never stored as objects.
+
+---
+
+## 3. Tier 2 — `TransactionalOutboxTemplate` (collector)
+
+The template wraps *transaction + collect + insert* in one call. The unit of work receives an
+**`OutboxCollector`** and records what to emit; the template owns the transaction and inserts everything
+collected within it, after the work returns and before commit.
+
+```java
+public interface OutboxCollector {
+    /** Full control: a pre-built message (footprint-free path). */
+    void add(OutboxMessage message);
+
+    /** Object payload: serialized via the configured PayloadSerializer, then built into an OutboxMessage.
+     *  seq MUST be the aggregate's version (HLD §4.2). */
+    void record(String aggregateType, AggregateId aggregateId, long seq, Object payload);
+
+    /** As record(...), with a String aggregate id. */
+    void record(String aggregateType, String aggregateId, long seq, Object payload);
+}
+
+public interface TransactionalOutboxTemplate {
+    <T> T execute(Function<OutboxCollector, T> work);
+    default void executeWithoutResult(Consumer<OutboxCollector> work) { execute(c -> { work.accept(c); return null; }); }
+}
+```
+
+Usage:
+
+```java
+Order order = outboxTemplate.execute(outbox -> {
+    Order o = orderRepository.findById(id);
+    o.place();                                             // domain logic: version++
+    orderRepository.save(o);                               // business state
+    outbox.record("Order", o.id(), o.version(), new OrderPlaced(o));  // POJO payload
+    return o;                                              // Order stays a plain domain type
+});
+```
+
+**Mechanics.**
+
+- The template owns the transaction **programmatically** — it wraps a Spring `TransactionTemplate`
+  built from the application's `PlatformTransactionManager`. `execute` opens a transaction, runs `work`,
+  then calls `OutboxRepository.insertAll(collected)` **in that same transaction**, then commits. A
+  runtime exception from `work` (or from the insert) rolls the whole thing back — business state and
+  outbox rows are atomic by construction.
+- Insert order is **collection order**: `insertAll` preserves the order the work called `record`/`add`,
+  which is the order the caller intends for a given aggregate's `seq` sequence.
+- The collector is **not** thread-safe and is valid only for the duration of the `execute` call;
+  escaping it is a programming error (documented, not defended against at runtime).
+
+**Why a collector, not a `Supplier<TandemAggregate>` (Q22 decision).** The template has no reason to
+constrain the return type, so keeping the domain object free of Tandem — and putting the object-payload
+entry point (`record`) on a collector that owns the serializer — is cleaner than making every aggregate
+implement `TandemAggregate` and carry a pending-messages list. The annotation tier (§4) *does* use
+`TandemAggregate`, because there the aggregate **is** the return value; the two tiers legitimately have
+different attachment points.
+
+---
+
+## 4. Tier 3 — `@TransactionalOutbox` annotation
+
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+@Transactional                      // composed: a transaction is always present
+public @interface TransactionalOutbox {
+
+    /** Optional guard: if set, every extracted message must carry this aggregateType (fail-fast on
+     *  mismatch). Left empty, extraction is unconstrained — the messages carry their own type. */
+    String aggregateType() default "";
+
+    // --- all aliased to @Transactional, so the user keeps full transaction control ---
+    @AliasFor(annotation = Transactional.class, attribute = "propagation")   Propagation propagation() default Propagation.REQUIRED;
+    @AliasFor(annotation = Transactional.class, attribute = "isolation")     Isolation isolation() default Isolation.DEFAULT;
+    @AliasFor(annotation = Transactional.class, attribute = "timeout")       int timeout() default -1;
+    @AliasFor(annotation = Transactional.class, attribute = "readOnly")      boolean readOnly() default false;
+    @AliasFor(annotation = Transactional.class, attribute = "rollbackFor")   Class<? extends Throwable>[] rollbackFor() default {};
+    @AliasFor(annotation = Transactional.class, attribute = "noRollbackFor") Class<? extends Throwable>[] noRollbackFor() default {};
+}
+```
+
+Usage:
+
+```java
+@TransactionalOutbox                                 // = @Transactional + outbox extraction
+public Order place(OrderId id) {
+    Order o = orderRepository.findById(id);
+    o.place();                                        // records its own event + seq = version
+    return orderRepository.save(o);                   // Order implements TandemAggregate
+}
+```
+
+**Extraction.** After the method body returns (still inside the transaction), an AOP aspect reads the
+return value:
+
+- a `TandemAggregate` → its `pendingOutboxMessages()` are inserted;
+- an `Iterable<? extends TandemAggregate>` → each element's messages are inserted, in iteration order;
+- anything else (including `void`/`null`) → **nothing is extracted** (the method opted into the
+  transaction but produced no aggregate; this is allowed, not an error);
+- if `aggregateType` is set on the annotation, every extracted message is asserted to carry it —
+  a mismatch fails fast (`OutboxInsertException`), turning the attribute into a real guard rather than
+  decoration.
+
+Because `TandemAggregate.pendingOutboxMessages()` returns fully-built `OutboxMessage`s, the annotation
+tier is **byte-oriented**: the aggregate builds its own messages (it may inject a `PayloadSerializer` to
+do so). The object-payload convenience of §2/§3 lives on the collector, not here — an aggregate that
+wants it uses the Template tier instead.
+
+**Atomicity and advice ordering (the one subtlety).** The extraction+insert must run **inside** the
+transaction the composed `@Transactional` opened, before commit. Concretely:
+
+1. the aspect is an `@Around` advisor that `proceed()`s the method, then extracts and inserts;
+2. it must be **inner** to Spring's transaction advisor (which by default sits at
+   `Ordered.LOWEST_PRECEDENCE`), so that when control returns from `proceed()` the transaction is still
+   open. The outbox advisor is registered to sort accordingly;
+3. **backstop (loud, not silent):** immediately after `proceed()` the aspect asserts
+   `TransactionSynchronizationManager.isActualTransactionActive()` and throws if it is not — so any
+   misordering surfaces as an error, never as a non-atomic insert. The invariant is pinned by an
+   integration test: a business-logic rollback must also roll back the outbox rows.
+
+---
+
+## 5. Tier 4 — Spring application events
+
+The domain publishes ordinary Spring events inside its own `@Transactional` method; Tandem maps each to
+an `OutboxMessage` and inserts it in the **same** transaction. This gives Spring-Modulith-style
+ergonomics with Tandem's per-aggregate ordering.
+
+```java
+public interface OutboxEventMapper<T> {
+    /** Map one domain event to the outbox rows it produces (0..n; usually 1). seq comes from the
+     *  aggregate's version, carried on the event. */
+    Collection<OutboxMessage> map(T event);
+}
+```
+
+```java
+@Transactional
+public void place(OrderId id) {
+    Order o = orderRepository.findById(id);
+    o.place();
+    orderRepository.save(o);
+    events.publishEvent(new OrderPlaced(o));          // ordinary Spring event
+}
+```
+
+**Mapping.** For each intercepted event:
+
+- an event that already **is** an `OutboxMessage` is inserted directly;
+- otherwise the registered `OutboxEventMapper<T>` whose `T` matches the event's runtime type produces
+  the message(s);
+- a mapper returning an empty collection is allowed (the app chose not to emit); returning `null` is a
+  bug and fails fast.
+
+**Mapper resolution.** Mappers are Spring beans. At startup the module builds a registry keyed by each
+mapper's resolved `T` (via `ResolvableType` over the bean type). Lookup is by the event's runtime class,
+walking to the most specific registered supertype; **two mappers matching the same event ambiguously
+fail fast at startup**, not per-event.
+
+**Which events are intercepted (a deliberate refinement of the HLD sketch).** The listener is scoped to
+**exactly** the types it can handle — `OutboxMessage` and every type with a registered mapper (realised
+via a `SmartApplicationListener`/`GenericApplicationListener` whose `supportsEventType` consults the
+registry). Framework events (`ContextRefreshedEvent`, …) are therefore **not** intercepted, so there is
+no catch-all-`Object` listener that would fire on them. The app opts a domain event into the outbox by
+**registering a mapper** for it; an event with no mapper and no `OutboxMessage` identity is simply not
+Tandem's concern. This is cleaner than a catch-all listener that must fail-fast on every unrelated
+event, and it is the one place this LLD improves on the HLD §3.1 prose — flagged for review.
+
+**Fail-fasts (atomicity, loud).**
+
+- The listener asserts an **active transaction** (`isActualTransactionActive()`) and throws if absent —
+  a synchronous listener fires even under autocommit, which would insert non-atomically. Never a silent
+  insert, never a silent drop.
+- Insert failures propagate as `OutboxInsertException`, rolling back the caller's transaction.
+
+---
+
+## 6. Autoconfiguration additions
+
+These extend `tandem-spring-producer`'s autoconfiguration ([LLD-spring-config.md](LLD-spring-config.md)
+§4.3), which already contributes the `OutboxRepository` and runs the bucket-count guard. Class declared
+`@AutoConfiguration(after = { DataSourceAutoConfiguration.class, TransactionAutoConfiguration.class })`
+so a `PlatformTransactionManager` is available. Every contributed bean is `@ConditionalOnMissingBean`.
+
+| Bean | Condition | Needs |
+|---|---|---|
+| `PayloadSerializer` (Jackson) | `@ConditionalOnClass(ObjectMapper)` | the app's `ObjectMapper` if present |
+| `TransactionalOutboxTemplate` | `@ConditionalOnBean(PlatformTransactionManager)` | `OutboxRepository`, `PlatformTransactionManager`, optional `PayloadSerializer` |
+| `@TransactionalOutbox` advisor + aspect | `@ConditionalOnClass` AOP present | `OutboxRepository` |
+| Spring-events listener + mapper registry | always (registry may be empty) | `OutboxRepository`, the `OutboxEventMapper` beans, optional `PayloadSerializer` |
+
+The higher tiers are **independent** — an application uses any subset. The serializer is shared by the
+Template and events tiers when object payloads are used; its absence only matters at an object-payload
+call site (§2), so the tiers wire fine without it.
+
+---
+
+## 7. The `seq` = version invariant (all tiers)
+
+One rule, stated once: **`seq` is the aggregate's `version` and originates in the domain.** The Template
+takes it as an explicit `record(..., seq, ...)` argument; the annotation tier reads it from the messages
+the aggregate built; the events tier reads it from the mapper's output (carried on the event). No tier
+generates or mutates `seq`. The `UNIQUE(aggregate_id, seq)` constraint remains the safety net (HLD §4.2),
+surfaced as `DuplicateSeqException` if a bug produces a collision.
+
+---
+
+## 8. Compatibility & open points
+
+- **Public API surface added by this increment:** `TransactionalOutboxTemplate`, `OutboxCollector`,
+  `@TransactionalOutbox`, `OutboxEventMapper<T>` (all `com.codingful.tandem.spring.producer`), plus the
+  reuse of the `TandemAggregate` and `PayloadSerializer` core ports. These evolve under the project's
+  additive-compatibility rule (HLD §1.4).
+- **AOP advice ordering** (§4) is the one mechanism whose exact registration is settled at implementation
+  time; the active-transaction backstop and the rollback integration test make any ordering error loud
+  rather than silent.
+- **Micrometer-Tracing** — cross-referenced only (HLD-tracing §8); trace capture is at the insert
+  chokepoint and needs no per-tier work.
+- **`@TransactionalOutbox` on a non-`TandemAggregate` return** is treated as "no extraction", not an
+  error (§4). If experience shows silent no-ops confuse users, a future opt-in strict mode could warn —
+  deferred, not built.

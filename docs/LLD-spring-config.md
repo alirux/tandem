@@ -361,10 +361,11 @@ shared between two versions stays usable by both.
 
 ## 7. Open points
 
-- **Q22 — write-side ergonomics.** `TransactionalOutboxTemplate` API, the `@TransactionalOutbox`
-  aspect, `OutboxEventMapper<T>` signature, and the Spring application-events tier. Deliberately
-  excluded from this increment: the configuration contract is what everything else binds to, so it
-  is specified and reviewed first.
+- **Q22 — write-side ergonomics.** ✅ Now specified separately in
+  [LLD-spring-producer.md](LLD-spring-producer.md): the `TransactionalOutboxTemplate`, the
+  `@TransactionalOutbox` aspect, the Spring application-events tier, `OutboxEventMapper<T>`, and the
+  optional object-payload serialization. It was excluded from *this* increment on purpose — the
+  configuration contract is what everything else binds to, so it was specified and reviewed first.
 - **Micrometer.** A `TandemMetrics` implementation backed by Micrometer belongs to
   `tandem-micrometer`, not here. Note that several port methods have no caller in the relay today,
   so wiring an adapter alone would not produce lag telemetry.

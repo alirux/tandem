@@ -118,9 +118,13 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   version matrix. The role split is structural enforcement of the minimal client footprint; the
   version split would protect no invariant, so it stays the §10.1 fallback. No all-in-one aggregator.
   *(tandem-spring; HLD §10.1, §3.2; LLD-spring-config §1)*
-- [ ] **Q22 (P2)** — **Spring component details.** `@TransactionalOutbox` aspect impl;
-  `TransactionalOutboxTemplate` API; `OutboxEventMapper<T>` signature; Micrometer-Tracing adapter
-  wiring. *(tandem-spring; HLD §3.1)*
+- [x] **Q22 (P2)** — **Spring write-side ergonomics.** ✅ [LLD-spring-producer.md](LLD-spring-producer.md):
+  Template = `execute(Function<OutboxCollector,T>)` (collector owns the tx + optional-Jackson object
+  payloads); `@TransactionalOutbox` = composed `@Transactional` aspect extracting `TandemAggregate`
+  after `proceed()`, inside the tx, with an active-tx fail-fast backstop; Spring-events = synchronous
+  `@EventListener` scoped to `OutboxMessage` + registered `OutboxEventMapper<T>` types, fail-fast
+  without a tx. Serializer optional (never forced); `byte[]` path always dependency-free.
+  Micrometer-Tracing left to the tracing increment (HLD-tracing §8). *(tandem-spring-producer; HLD §3.1)*
 - [ ] **Q23 (P2)** — **`tandem-relay` runnable.** Main class, config binding, packaging
   (JAR/Docker), how it receives N / shard assignment (ties to Q8). *(tandem-relay; HLD §3.2)*
 
