@@ -4,7 +4,7 @@ import java.util.OptionalLong;
 
 /**
  * Optional inbound-causality port (LLD-core §2.5, §9). The default reports no inbound timestamp, so a
- * mutation is treated as a causal root. A real adapter ships on the consumer side ({@code tandem-spring}).
+ * mutation is treated as a causal root. A real adapter ships on the consumer side ({@code tandem-spring-producer}).
  */
 public interface CausalContext {
 

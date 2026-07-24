@@ -4,7 +4,7 @@ import java.util.Map;
 
 /**
  * Optional trace-capture port (LLD-core §2.5, §7.2). The default is a no-op returning {@code {}} and
- * {@link #isEnabled()} is {@code false}. Real adapters ship in {@code tandem-spring} /
+ * {@link #isEnabled()} is {@code false}. Real adapters ship in {@code tandem-spring-producer} /
  * {@code tandem-tracing-otel}.
  */
 public interface TracePropagator {
