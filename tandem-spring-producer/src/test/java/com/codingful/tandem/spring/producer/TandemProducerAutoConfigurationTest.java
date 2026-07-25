@@ -101,4 +101,14 @@ class TandemProducerAutoConfigurationTest {
                 .withBean(OutboxRepository.class, InMemoryOutbox::new)
                 .run(context -> assertThat(context).hasSingleBean(TransactionalOutboxAspect.class));
     }
+
+    @Test
+    void GIVEN_the_write_side_WHEN_the_context_starts_THEN_the_events_tier_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(OutboxEventListener.class);
+                    assertThat(context).hasSingleBean(OutboxEventMapperRegistry.class);
+                });
+    }
 }

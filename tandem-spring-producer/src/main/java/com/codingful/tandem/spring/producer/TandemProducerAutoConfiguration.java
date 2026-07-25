@@ -46,6 +46,24 @@ public class TandemProducerAutoConfiguration {
     }
 
     /**
+     * The Spring application-events tier (LLD-spring-producer §5). The registry is built from the
+     * registered {@link OutboxEventMapper} beans (empty is fine — the listener still handles a directly
+     * published {@code OutboxMessage}); the listener is scoped to those handleable types.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    OutboxEventMapperRegistry tandemOutboxEventMapperRegistry(ObjectProvider<OutboxEventMapper<?>> mappers) {
+        return OutboxEventMapperRegistry.of(mappers.stream().toList());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    OutboxEventListener tandemOutboxEventListener(OutboxRepository outboxRepository,
+            OutboxEventMapperRegistry mapperRegistry) {
+        return new OutboxEventListener(outboxRepository, mapperRegistry);
+    }
+
+    /**
      * The Template tier (LLD-spring-producer §3). Contributed only when a {@link PlatformTransactionManager}
      * exists — the template owns its transaction — so the plain repository tier still works without one.
      * The optional {@link PayloadSerializer} enables object payloads; absent, only {@code add(...)} works.
