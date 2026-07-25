@@ -35,16 +35,25 @@ class TransactionalOutboxAspect {
     Object insertPendingMessages(ProceedingJoinPoint joinPoint, TransactionalOutbox transactionalOutbox)
             throws Throwable {
         Object result = joinPoint.proceed();
-        List<OutboxMessage> messages = extract(result);
-        guardAggregateType(messages, transactionalOutbox.aggregateType());
-        if (!messages.isEmpty()) {
-            if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-                throw new OutboxInsertException("@TransactionalOutbox produced outbox messages outside an active"
-                        + " transaction — the insert would not be atomic");
-            }
-            outboxRepository.insertAll(messages);
-        }
+        insertPending(extract(result), transactionalOutbox.aggregateType());
         return result;
+    }
+
+    /**
+     * Guard the extracted messages, then insert them within the active transaction — failing fast when
+     * there is none, so a misordering can never insert non-atomically. Separated from the advice so it is
+     * testable without AOP.
+     */
+    void insertPending(List<OutboxMessage> messages, String declaredAggregateType) {
+        guardAggregateType(messages, declaredAggregateType);
+        if (messages.isEmpty()) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new OutboxInsertException("@TransactionalOutbox produced outbox messages outside an active"
+                    + " transaction — the insert would not be atomic");
+        }
+        outboxRepository.insertAll(messages);
     }
 
     /**

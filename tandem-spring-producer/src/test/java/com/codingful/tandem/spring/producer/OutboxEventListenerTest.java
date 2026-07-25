@@ -28,6 +28,16 @@ class OutboxEventListenerTest {
         }
     }
 
+    private record Ignored(String id) {
+    }
+
+    private static final class SilentMapper implements OutboxEventMapper<Ignored> {
+        @Override
+        public Collection<OutboxMessage> map(Ignored event) {
+            return List.of();
+        }
+    }
+
     private final InMemoryOutbox outbox = new InMemoryOutbox();
     private final OutboxEventListener listener = new OutboxEventListener(
             outbox, OutboxEventMapperRegistry.of(List.of(new OrderPlacedMapper())));
@@ -85,6 +95,17 @@ class OutboxEventListenerTest {
     void GIVEN_no_active_transaction_WHEN_a_mapped_event_is_handled_THEN_it_fails_fast() {
         assertThatThrownBy(() -> listener.onApplicationEvent(event(new OrderPlaced("order-3"))))
                 .isInstanceOf(OutboxInsertException.class);
+        assertThat(outbox.all()).isEmpty();
+    }
+
+    @Test
+    void GIVEN_a_mapper_that_emits_nothing_WHEN_its_event_is_handled_THEN_nothing_is_inserted() {
+        OutboxEventListener quietListener =
+                new OutboxEventListener(outbox, OutboxEventMapperRegistry.of(List.of(new SilentMapper())));
+
+        // No active transaction, yet no failure: an empty result short-circuits before the tx check.
+        quietListener.onApplicationEvent(event(new Ignored("order-4")));
+
         assertThat(outbox.all()).isEmpty();
     }
 }

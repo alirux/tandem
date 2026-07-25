@@ -7,9 +7,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.exception.OutboxInsertException;
 import com.codingful.tandem.core.port.TandemAggregate;
+import com.codingful.tandem.test.InMemoryOutbox;
 import java.util.Collection;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class TransactionalOutboxAspectTest {
 
@@ -69,5 +71,43 @@ class TransactionalOutboxAspectTest {
     void GIVEN_no_declared_aggregate_type_WHEN_guarding_THEN_any_message_is_accepted() {
         assertThatCode(() -> TransactionalOutboxAspect.guardAggregateType(List.of(message("Customer", 1L)), ""))
                 .doesNotThrowAnyException();
+    }
+
+    private static void withActiveTransaction(Runnable action) {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            action.run();
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+    }
+
+    @Test
+    void GIVEN_an_active_transaction_WHEN_pending_messages_are_inserted_THEN_they_reach_the_outbox() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        TransactionalOutboxAspect aspect = new TransactionalOutboxAspect(outbox);
+
+        withActiveTransaction(() -> aspect.insertPending(List.of(message("Order", 1L)), ""));
+
+        assertThat(outbox.all()).hasSize(1);
+    }
+
+    @Test
+    void GIVEN_no_active_transaction_WHEN_pending_messages_would_be_inserted_THEN_it_fails_fast() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        TransactionalOutboxAspect aspect = new TransactionalOutboxAspect(outbox);
+
+        assertThatThrownBy(() -> aspect.insertPending(List.of(message("Order", 1L)), ""))
+                .isInstanceOf(OutboxInsertException.class);
+        assertThat(outbox.all()).isEmpty();
+    }
+
+    @Test
+    void GIVEN_no_pending_messages_WHEN_inserting_THEN_it_is_a_no_op_even_without_a_transaction() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        TransactionalOutboxAspect aspect = new TransactionalOutboxAspect(outbox);
+
+        assertThatCode(() -> aspect.insertPending(List.of(), "")).doesNotThrowAnyException();
+        assertThat(outbox.all()).isEmpty();
     }
 }

@@ -46,6 +46,29 @@ class OutboxEventMapperRegistryTest {
         }
     }
 
+    private interface Payable {
+    }
+
+    private interface Shippable {
+    }
+
+    private static final class PayableShippableEvent implements Payable, Shippable {
+    }
+
+    private static final class PayableMapper implements OutboxEventMapper<Payable> {
+        @Override
+        public Collection<OutboxMessage> map(Payable event) {
+            return List.of(message("Payable"));
+        }
+    }
+
+    private static final class ShippableMapper implements OutboxEventMapper<Shippable> {
+        @Override
+        public Collection<OutboxMessage> map(Shippable event) {
+            return List.of(message("Shippable"));
+        }
+    }
+
     @Test
     void GIVEN_a_registered_mapper_WHEN_asked_for_its_event_type_THEN_it_is_handled_and_mapped() {
         OutboxEventMapperRegistry registry = OutboxEventMapperRegistry.of(List.of(new OrderPlacedMapper()));
@@ -82,6 +105,15 @@ class OutboxEventMapperRegistryTest {
     void GIVEN_two_mappers_for_the_same_event_type_WHEN_the_registry_is_built_THEN_it_fails_fast() {
         assertThatThrownBy(() -> OutboxEventMapperRegistry.of(List.of(new OrderPlacedMapper(), new OrderPlacedMapper())))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void GIVEN_two_equally_specific_mappers_for_an_event_WHEN_mapping_THEN_the_ambiguity_fails_fast() {
+        OutboxEventMapperRegistry registry =
+                OutboxEventMapperRegistry.of(List.of(new PayableMapper(), new ShippableMapper()));
+
+        assertThatThrownBy(() -> registry.map(new PayableShippableEvent()))
+                .isInstanceOf(OutboxInsertException.class);
     }
 
     @Test
