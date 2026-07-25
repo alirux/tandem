@@ -222,14 +222,21 @@ mapper's resolved `T` (via `ResolvableType` over the bean type). Lookup is by th
 walking to the most specific registered supertype; **two mappers matching the same event ambiguously
 fail fast at startup**, not per-event.
 
-**Which events are intercepted (a deliberate refinement of the HLD sketch).** The listener is scoped to
+**Which events are intercepted — the mapper registration *is* the opt-in.** The listener is scoped to
 **exactly** the types it can handle — `OutboxMessage` and every type with a registered mapper (realised
 via a `SmartApplicationListener`/`GenericApplicationListener` whose `supportsEventType` consults the
 registry). Framework events (`ContextRefreshedEvent`, …) are therefore **not** intercepted, so there is
 no catch-all-`Object` listener that would fire on them. The app opts a domain event into the outbox by
-**registering a mapper** for it; an event with no mapper and no `OutboxMessage` identity is simply not
-Tandem's concern. This is cleaner than a catch-all listener that must fail-fast on every unrelated
-event, and it is the one place this LLD improves on the HLD §3.1 prose — flagged for review.
+**registering an `OutboxEventMapper` for it** (or publishing an `OutboxMessage` directly); a published
+event with no mapper is simply not Tandem's concern and is ignored.
+
+Two reasons this is the right model: (1) a catch-all listener that fails fast on any unmapped event is
+unimplementable — it would fire and throw on every framework lifecycle event, breaking startup; and
+(2) "an event with no listener does nothing" is Spring's own native event-bus semantics, so the scoped
+model behaves like every other `@EventListener` rather than surprising users. Crucially this does
+**not** weaken any Tandem delivery guarantee: loudness applies once a row is in the outbox (it is
+delivered or loudly stalls), not to whether the application wired its Spring events — that stays
+ordinary application configuration.
 
 **Fail-fasts (atomicity, loud).**
 
@@ -284,3 +291,22 @@ surfaced as `DuplicateSeqException` if a bug produces a collision.
 - **`@TransactionalOutbox` on a non-`TandemAggregate` return** is treated as "no extraction", not an
   error (§4). If experience shows silent no-ops confuse users, a future opt-in strict mode could warn —
   deferred, not built.
+- **Future: an optional `OutboxEvent` marker for loud, guaranteed events (evaluate later).** The events
+  tier (§5) settled on *scoped listening* — an unmapped published event is silently ignored, matching
+  Spring's native event bus. A future **additive** enhancement could reintroduce loudness *selectively*:
+  an optional marker interface (e.g. `OutboxEvent`) that an application puts on the events it insists
+  must reach the outbox. The listener would additionally intercept marker-implementing types, and a
+  published `OutboxEvent` with **no** registered mapper would then **fail fast** instead of being ignored.
+  - *Advantages:* restores the project's loud-failure posture for the events a team deems critical —
+    a forgotten mapper on a marked event becomes an error, not a silent drop; purely opt-in, so the
+    ordinary "publish a POJO, register a mapper" path (B) is unchanged; additive and backward-compatible
+    (existing events keep their current behaviour, no marker required).
+  - *Disadvantages:* adds a second opt-in signal (mapper registration *and* a marker), so "is this event
+    for the outbox?" now has two answers to hold in mind; a marked event couples the domain type to a
+    Tandem interface, eroding the "ordinary Spring events" appeal exactly where it is used; and the
+    guarantee is still only as good as remembering to *mark* — it cannot catch an event the developer
+    forgot to mark *and* forgot to map. Realising it also means the scoped `supportsEventType` must widen
+    to marker-assignable types and the handler must distinguish "marked-but-unmapped" (fail) from
+    "unmarked-and-unmapped" (never intercepted).
+  - *Decision:* not built now; the B baseline stays the default. Revisit if real usage shows the silent
+    no-op is a recurring footgun for critical events.
