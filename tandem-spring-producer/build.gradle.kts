@@ -11,6 +11,9 @@ dependencies {
     compileOnly(libs.spring.boot.autoconfigure)
     compileOnly(libs.spring.tx)
     compileOnly(libs.spring.aspects)
+    // TransactionAwareDataSourceProxy — makes the write-side insert join the Spring transaction. Present
+    // in any Spring app with a DataSource (DataSourceAutoConfiguration pulls spring-jdbc), so compileOnly.
+    compileOnly(libs.spring.jdbc)
     // Optional payload serializer — auto-configured only when Jackson is on the consumer's classpath
     // (LLD-spring-producer §2); never forced, hence compile-only.
     compileOnly(libs.jackson.databind)

@@ -14,9 +14,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -28,7 +30,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * the {@code @Primary} one when several exist and backs off, rather than guessing, when the choice is
  * ambiguous. This module never pulls Kafka.
  */
-@AutoConfiguration(after = DataSourceAutoConfiguration.class)
+@AutoConfiguration(after = {DataSourceAutoConfiguration.class, TransactionAutoConfiguration.class})
 @ConditionalOnSingleCandidate(DataSource.class)
 @EnableConfigurationProperties(TandemOutboxProperties.class)
 public class TandemProducerAutoConfiguration {
@@ -42,7 +44,11 @@ public class TandemProducerAutoConfiguration {
     @ConditionalOnMissingBean
     OutboxRepository tandemOutboxRepository(DataSource dataSource, TandemOutboxProperties properties) {
         BucketCountGuard.check(dataSource, properties.bucketCount());
-        return new JdbcOutboxRepository(dataSource, properties.bucketCount());
+        // Wrap in a transaction-aware proxy so the insert joins the application's Spring transaction —
+        // the JdbcOutboxRepository takes whatever connection the DataSource hands it, and this proxy hands
+        // it the one bound to the active transaction. Without it, the insert would run on a separate
+        // autocommitted connection and lose atomicity with the business state change.
+        return new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), properties.bucketCount());
     }
 
     /**

@@ -281,7 +281,16 @@ The write-side module contributes exactly the plain tier:
 
 1. runs `BucketCountGuard.check(dataSource, bucketCount)` as an explicit startup step **before** the
    repository is exposed (§3) — a mismatch fails context refresh, loudly;
-2. contributes `OutboxRepository` = `new JdbcOutboxRepository(dataSource, bucketCount)`.
+2. contributes `OutboxRepository` = `new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), bucketCount)`.
+
+The `TransactionAwareDataSourceProxy` is load-bearing, not decoration: `JdbcOutboxRepository` inserts on
+whatever connection its `DataSource` hands it (its constructor does no I/O, LLD-jdbc), and the proxy hands
+it the connection **bound to the application's active Spring transaction**. Without it the insert would
+run on a separate, autocommitted connection and lose atomicity with the business state change — so it
+is what makes all four write-side tiers transactional. It is `spring-jdbc`'s proxy (`compileOnly`;
+present in any Spring app with a `DataSource`), wrapping the raw bean, so Tandem still opens no pool of
+its own. The autoconfiguration is ordered `after` `TransactionAutoConfiguration` as well, so the
+transaction manager the Template tier needs exists before its `@ConditionalOnBean` is evaluated.
 
 The higher tiers (`TransactionalOutboxTemplate`, the `@TransactionalOutbox` aspect, the Spring-events
 listener, the Jackson `PayloadSerializer`) are **Q22** and are not part of this increment (§7); a
