@@ -16,13 +16,14 @@
 
 ---
 
-> **Status: basic round implemented.** The first milestone — `tandem-core`, `tandem-jdbc`,
-> `tandem-kafka`, and the `tandem-test` helpers — is built and tested end-to-end on PostgreSQL +
-> Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md)). The Spring tiers,
-> the standalone relay, the Admin API, MySQL support, and the optional adapters are **not yet
-> implemented**. The basic-round modules are **available on Maven Central** under `com.codingful`
-> (see [Add the dependency](#add-the-dependency)). Start with the [HLD](docs/HLD.md) for the full
-> design.
+> **Status: basic round on Maven Central; Spring write-side implemented.** The first milestone —
+> `tandem-core`, `tandem-jdbc`, `tandem-kafka`, and the `tandem-test` helpers — is built and tested
+> end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md))
+> and is **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
+> The **Spring Boot write-side** (`tandem-spring-producer` — autoconfiguration plus the four usage tiers)
+> is implemented and tested against Boot 3.x, but **not yet released**. The Spring relay
+> autoconfiguration, the standalone relay, the Admin API, MySQL support, and the optional adapters are
+> **not yet implemented**. Start with the [HLD](docs/HLD.md) for the full design.
 
 ## What is Tandem?
 
@@ -77,8 +78,10 @@ If the relay crashes after publishing but before marking the row done, it republ
   cost) or `LEASE` (lease-partitioned ownership for a horizontally-scaled client or multiple relay
   processes). Both modes are implemented and tested. Only the outbox INSERT must live in the client,
   which stays dependency-light.
-- **Framework-agnostic core** — works with plain Java and no container; Spring Boot (3.x and 4.x)
-  autoconfiguration is 🔜 planned, so wiring is manual for now (see [Usage](#usage)).
+- **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration
+  for the **write side** (`tandem-spring-producer`) is implemented — the four usage tiers over the outbox
+  INSERT (see the [Spring sample](#try-it)); the relay-side autoconfiguration and a prebuilt standalone
+  relay are 🔜 planned, so relay wiring is manual for now (see [Usage](#usage)).
 
 ## Architecture at a glance
 
@@ -159,7 +162,7 @@ public Order placeOrder(Order order) {
         .aggregateType("Order")
         .type("com.acme.order.placed")
         .seq(order.version())          // your aggregate owns the sequence number
-        .payload(serialize(order))     // you provide the bytes (Spring tiers will add an object overload)
+        .payload(serialize(order))     // plain write-side takes bytes; the Spring producer tiers accept an object
         .contentType("application/json")
         .build());
     return order;
@@ -185,9 +188,10 @@ WorkerPool       relay      = new WorkerPool(store, dispatcher, RelayConfig.defa
 relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lease)
 ```
 
-Spring users will later have higher-level options: autoconfiguration (which runs the bucket-count
-guard for you), a `TransactionalOutboxTemplate`, a `@TransactionalOutbox` annotation, and a Spring
-application-events tier.
+Spring users get higher-level options from `tandem-spring-producer`: autoconfiguration (which runs the
+bucket-count guard for you), a `TransactionalOutboxTemplate`, a `@TransactionalOutbox` annotation, and a
+Spring application-events tier — see the [Spring sample](#try-it) and
+[LLD-spring-producer.md](docs/LLD-spring-producer.md).
 
 ## Logging
 
