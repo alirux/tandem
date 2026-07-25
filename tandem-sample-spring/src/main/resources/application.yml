@@ -1,0 +1,19 @@
+# Keep the sample's own narration (System.out) the star of the console.
+spring:
+  application:
+    name: tandem-sample-spring
+  main:
+    # Suppress Spring Boot's startup banner so it does not precede the sample's own console output.
+    banner-mode: "off"
+logging:
+  level:
+    root: WARN
+
+# Tandem's own configuration. The write side binds tandem.outbox.* — here the number of virtual
+# buckets, the single value the write side and the relay must agree on and never change after the
+# first deployment. It already defaults to 256; it is shown explicitly only to illustrate how Tandem
+# is configured. Your IDE offers completion and docs for every tandem.* key from the generated
+# spring-configuration-metadata.json.
+tandem:
+  outbox:
+    bucket-count: 256

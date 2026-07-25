@@ -19,6 +19,7 @@ include(
     "tandem-test",
     "tandem-spring-producer",
     "tandem-sample",
+    "tandem-sample-spring",
     "tandem-benchmark",
     "tandem-coverage",
 )

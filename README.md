@@ -247,6 +247,20 @@ tandem-sample\run.cmd
 The script prints JDBC and Kafka connection details so you can connect external clients while the
 demo is running. Containers stay alive until you press ENTER.
 
+For the **Spring Boot** write-side experience, run the Spring sample instead — it boots a Spring
+application against a Testcontainers PostgreSQL, writes events through the `@TransactionalOutbox`,
+Template and Spring-events tiers, and delivers them to Kafka in per-aggregate order:
+
+```bash
+# macOS / Linux
+./tandem-sample-spring/run.sh
+```
+
+```cmd
+:: Windows
+tandem-sample-spring\run.cmd
+```
+
 ## Modules
 
 | Module | Role | Status |
@@ -257,9 +271,11 @@ demo is running. Containers stay alive until you press ENTER.
 | `tandem-kafka` | Kafka publish adapter + CloudEvents binary binding | ✅ basic round |
 | `tandem-test` | In-memory outbox/dispatcher + Testcontainers helper | ✅ basic round |
 | `tandem-sample` | Runnable end-to-end tutorial — self-contained, not published to Maven Central | ✅ basic round |
+| `tandem-sample-spring` | Runnable Spring Boot tutorial — the write-side developer experience, not published | ✅ implemented |
 | `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
 | `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
-| `tandem-spring-producer` / `tandem-spring-relay` | Spring Boot autoconfig, split by role (write-side / relay) — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🔜 planned |
+| `tandem-spring-producer` | Spring Boot autoconfig for the write side — the four usage tiers — see [LLD-spring-producer.md](docs/LLD-spring-producer.md) | 🚧 in progress — not yet released |
+| `tandem-spring-relay` | Spring Boot autoconfig for the relay — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🔜 planned |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
 | `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |

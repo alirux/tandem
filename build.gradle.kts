@@ -20,7 +20,7 @@ val junitLauncher = libs.junit.platform.launcher
 // java-library/publishing convention below: tandem-sample is a Java 17 tutorial app; tandem-benchmark
 // needs a newer JDK for virtual threads (LLD-benchmark §2); tandem-coverage is a build-only module that
 // only produces the aggregated JaCoCo report (no Java sources, no artifact to publish).
-val unpublishedModules = setOf("tandem-sample", "tandem-benchmark", "tandem-coverage")
+val unpublishedModules = setOf("tandem-sample", "tandem-sample-spring", "tandem-benchmark", "tandem-coverage")
 
 subprojects {
     if (name !in unpublishedModules) {
