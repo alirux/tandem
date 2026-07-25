@@ -1,15 +1,23 @@
 package com.codingful.tandem.spring.producer;
 
 import com.codingful.tandem.core.port.OutboxRepository;
+import com.codingful.tandem.core.port.PayloadSerializer;
 import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Write-side autoconfiguration (LLD-spring-config §4.3): contributes the {@link OutboxRepository} the
@@ -34,5 +42,35 @@ public class TandemProducerAutoConfiguration {
     OutboxRepository tandemOutboxRepository(DataSource dataSource, TandemOutboxProperties properties) {
         BucketCountGuard.check(dataSource, properties.bucketCount());
         return new JdbcOutboxRepository(dataSource, properties.bucketCount());
+    }
+
+    /**
+     * The Template tier (LLD-spring-producer §3). Contributed only when a {@link PlatformTransactionManager}
+     * exists — the template owns its transaction — so the plain repository tier still works without one.
+     * The optional {@link PayloadSerializer} enables object payloads; absent, only {@code add(...)} works.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(PlatformTransactionManager.class)
+    TransactionalOutboxTemplate tandemTransactionalOutboxTemplate(OutboxRepository outboxRepository,
+            PlatformTransactionManager transactionManager, ObjectProvider<PayloadSerializer> payloadSerializer) {
+        return new DefaultTransactionalOutboxTemplate(
+                outboxRepository, new TransactionTemplate(transactionManager), payloadSerializer.getIfAvailable());
+    }
+
+    /**
+     * The optional Jackson {@link PayloadSerializer} (LLD-spring-producer §2), contributed only when
+     * Jackson is on the classpath and never forced. Reuses the application's {@code ObjectMapper} bean
+     * when one exists, otherwise a plain default.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(ObjectMapper.class)
+    static class JacksonPayloadSerializerConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(PayloadSerializer.class)
+        PayloadSerializer tandemPayloadSerializer(ObjectProvider<ObjectMapper> objectMapper) {
+            return new JacksonPayloadSerializer(objectMapper.getIfAvailable(ObjectMapper::new));
+        }
     }
 }

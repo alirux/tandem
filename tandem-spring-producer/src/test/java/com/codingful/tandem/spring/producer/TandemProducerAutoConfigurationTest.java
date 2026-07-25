@@ -3,11 +3,14 @@ package com.codingful.tandem.spring.producer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.codingful.tandem.core.port.OutboxRepository;
+import com.codingful.tandem.core.port.PayloadSerializer;
 import com.codingful.tandem.test.InMemoryOutbox;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * Wiring tests for the write-side autoconfiguration (LLD-spring-config §4.3): no database is touched —
@@ -48,5 +51,47 @@ class TandemProducerAutoConfigurationTest {
                 .withBean(OutboxRepository.class, InMemoryOutbox::new)
                 .run(context -> assertThat(context.getBean(TandemOutboxProperties.class).bucketCount())
                         .isEqualTo(256));
+    }
+
+    @Test
+    void GIVEN_jackson_on_the_classpath_WHEN_the_context_starts_THEN_a_jackson_serializer_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .run(context -> assertThat(context.getBean(PayloadSerializer.class))
+                        .isInstanceOf(JacksonPayloadSerializer.class));
+    }
+
+    @Test
+    void GIVEN_a_user_supplied_serializer_WHEN_the_context_starts_THEN_it_replaces_the_autoconfigured_one() {
+        PayloadSerializer custom = new PayloadSerializer() {
+            @Override
+            public byte[] serialize(Object payload) {
+                return new byte[0];
+            }
+
+            @Override
+            public String contentType() {
+                return "application/x-custom";
+            }
+        };
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .withBean(PayloadSerializer.class, () -> custom)
+                .run(context -> assertThat(context.getBean(PayloadSerializer.class)).isSameAs(custom));
+    }
+
+    @Test
+    void GIVEN_a_transaction_manager_WHEN_the_context_starts_THEN_the_template_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .withBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(new NoopDataSource()))
+                .run(context -> assertThat(context).hasSingleBean(TransactionalOutboxTemplate.class));
+    }
+
+    @Test
+    void GIVEN_no_transaction_manager_WHEN_the_context_starts_THEN_no_template_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .run(context -> assertThat(context).doesNotHaveBean(TransactionalOutboxTemplate.class));
     }
 }
