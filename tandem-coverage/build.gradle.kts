@@ -5,12 +5,15 @@ plugins {
     jacoco
 }
 
-// Every module whose main sources should appear in the aggregated report.
+// Every module whose main sources should appear in the aggregated report. Published library modules
+// only — each must have a `test` and an `integrationTest` phase (relied on below); the unpublished
+// sample/benchmark apps have no meaningful coverage and are deliberately excluded.
 val coveredProjects = listOf(
     ":tandem-core",
     ":tandem-jdbc",
     ":tandem-kafka",
     ":tandem-test",
+    ":tandem-spring-producer",
 ).map { project(it) }
 
 // Force each covered module to be configured before we read its source sets and test tasks below.
