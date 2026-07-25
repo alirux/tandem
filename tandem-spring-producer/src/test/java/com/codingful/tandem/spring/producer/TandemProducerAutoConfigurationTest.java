@@ -94,4 +94,11 @@ class TandemProducerAutoConfigurationTest {
                 .withBean(OutboxRepository.class, InMemoryOutbox::new)
                 .run(context -> assertThat(context).doesNotHaveBean(TransactionalOutboxTemplate.class));
     }
+
+    @Test
+    void GIVEN_aspectj_on_the_classpath_WHEN_the_context_starts_THEN_the_annotation_aspect_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .run(context -> assertThat(context).hasSingleBean(TransactionalOutboxAspect.class));
+    }
 }

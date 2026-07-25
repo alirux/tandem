@@ -6,6 +6,7 @@ import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
+import org.aspectj.lang.ProceedingJoinPoint;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -71,6 +72,22 @@ public class TandemProducerAutoConfiguration {
         @ConditionalOnMissingBean(PayloadSerializer.class)
         PayloadSerializer tandemPayloadSerializer(ObjectProvider<ObjectMapper> objectMapper) {
             return new JacksonPayloadSerializer(objectMapper.getIfAvailable(ObjectMapper::new));
+        }
+    }
+
+    /**
+     * The {@link TransactionalOutbox} annotation tier (LLD-spring-producer §4), contributed only when
+     * AspectJ is on the classpath. Spring Boot's AOP autoconfiguration enables the aspect proxying that
+     * makes the advice apply.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(ProceedingJoinPoint.class)
+    static class TransactionalOutboxAspectConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        TransactionalOutboxAspect tandemTransactionalOutboxAspect(OutboxRepository outboxRepository) {
+            return new TransactionalOutboxAspect(outboxRepository);
         }
     }
 }
