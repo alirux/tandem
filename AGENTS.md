@@ -234,6 +234,16 @@ Docker Desktop or Colima must be running. Integration tests are tagged
 - **Before every commit, run the full test suite and make sure it is green**
   (`./gradlew test`, or `./gradlew check` to include the coverage gate). Never
   commit with failing or unrun tests.
+- **Before every commit, evaluate the coverage of the new or changed code** (JaCoCo —
+  e.g. `./gradlew :<module>:jacocoMergedReport`) and read *which* lines and branches
+  are uncovered, not just the percentage. Separate **genuine gaps** — untested real
+  behaviours: failure/exception paths, reachable edge cases, a branch that has a
+  killing input — from **acceptable ones**: defensive guards on framework or
+  impossible inputs, and branches no input can kill (per Testing §3, those signal
+  code to leave or remove, never a filler test). **Close the trivial genuine gaps
+  yourself in the same commit; for the non-trivial ones, surface them to the user
+  and ask whether to close them before moving on.** The point is pinned behaviour,
+  not a coverage number.
 - **Before every commit, check that the docs (`docs/`, `README.md`, `AGENTS.md`,
   …) are consistent with what is being committed** — update them in the same change
   if the code, conventions, structure, or commands they describe have moved. Treat
