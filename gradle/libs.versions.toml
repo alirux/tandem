@@ -2,6 +2,9 @@
 junit = "6.1.1"
 assertj = "3.27.7"
 postgresql = "42.7.12"
+# Spring modules compile once against the lowest supported Boot 3.x line (LLD-spring-config §1.1);
+# the dual-generation 4.x test line is added with the version matrix (§1.2). Both keep Java 17.
+spring-boot = "3.3.5"
 # kafka-clients aligned to the version cloudevents-kafka targets (binding compatibility).
 kafka = "3.9.2"
 cloudevents = "4.1.1"
@@ -32,6 +35,16 @@ cloudevents-core = { module = "io.cloudevents:cloudevents-core", version.ref = "
 cloudevents-kafka = { module = "io.cloudevents:cloudevents-kafka", version.ref = "cloudevents" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+
+# Spring: the BOM aligns every module version; the individual coordinates carry no version of their own.
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
+spring-tx = { module = "org.springframework:spring-tx" }
+spring-aspects = { module = "org.springframework:spring-aspects" }
+spring-jdbc = { module = "org.springframework:spring-jdbc" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind" }
 
 testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter" }

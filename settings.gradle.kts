@@ -17,6 +17,7 @@ include(
     "tandem-jdbc",
     "tandem-kafka",
     "tandem-test",
+    "tandem-spring-producer",
     "tandem-sample",
     "tandem-benchmark",
     "tandem-coverage",
