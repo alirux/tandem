@@ -52,9 +52,16 @@ characteristics:
 | `tandem-jdbc` | Write-side outbox INSERT, relay polling/claiming, PostgreSQL adapter. |
 | `tandem-kafka` | CloudEvents publication to Kafka. |
 | `tandem-test` | Test helpers (`InMemoryOutbox`, `RecordingDispatcher`, `TandemTestContainer`). |
-| `tandem-sample` | Example application, not published. |
+| `tandem-spring-producer` | Spring Boot autoconfiguration for the write side, plus its usage tiers. Never pulls Kafka. |
+| `tandem-spring-relay` | Spring Boot autoconfiguration for the relay, started with the application. |
+| `tandem-sample` | Example application (plain Java), not published. |
+| `tandem-sample-spring` | Example Spring Boot application, not published. Also hosts the end-to-end Spring smoke test. |
 | `tandem-benchmark` | Load-testing harness, not published. |
 | `tandem-coverage` | Aggregates JaCoCo coverage across modules for CI. |
+
+The Spring modules are compiled against Spring Boot 3.x with Spring `compileOnly`, and one artifact
+serves both Boot 3.x and 4.x; `./gradlew check` runs their tests against both lines. If you change them,
+read the dual-generation rules in [AGENTS.md](AGENTS.md) first — breaking them fails silently.
 
 The project follows a hexagonal (ports & adapters) style: `tandem-core` defines the ports,
 adapter modules depend on `tandem-core`, never the reverse. See

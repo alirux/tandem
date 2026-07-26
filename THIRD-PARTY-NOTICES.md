@@ -19,6 +19,8 @@ they never enter the published runtime classpath.
 | `tandem-core`  | none — JDK only                                     |
 | `tandem-jdbc`  | none beyond `tandem-core` (JDBC driver is test-only)|
 | `tandem-kafka` | `kafka-clients`, `cloudevents-kafka`, `cloudevents-core`, `slf4j-api` |
+| `tandem-spring-producer` | none beyond `tandem-jdbc` — **Spring and Jackson are `compileOnly`**, so the application's own versions are used and none is dragged in |
+| `tandem-spring-relay` | none beyond `tandem-jdbc` and `tandem-kafka` — Spring is `compileOnly`, as above |
 
 ## Dependencies
 

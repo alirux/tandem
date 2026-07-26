@@ -251,7 +251,8 @@ release). When you add a module, walk the whole list in the same change:
 | `tandem-bom/build.gradle.kts` | **Published modules only.** The BOM's job is to let a consumer declare any Tandem module without a version; a module missing there cannot be used that way. |
 | `tandem-coverage`'s `coveredProjects` | **Published, tested modules only.** Only the aggregated report attributes cross-module hits to the owning class, and it is the single report CI uploads to Codecov — a module missing there never reaches Codecov at all. |
 | `unpublishedModules` in the root `build.gradle.kts` | **Only for modules that must NOT be published** (sample/benchmark/coverage). It also opts them out of the shared java-library/publishing convention, so they configure their own toolchain and tasks. |
-| `README.md` module table · `docs/LLD-base.md` (artifactId + package) | The documented module list is a contract with readers; treat a stale table as part of the diff. |
+| `README.md` module table · `CONTRIBUTING.md` project layout · `docs/LLD-base.md` (artifactId + package) | Three separate documented module lists — all three go stale independently, and a contributor reading one will not know the module exists. |
+| `THIRD-PARTY-NOTICES.md` per-module table | **Published modules only.** It documents what a consumer actually inherits; a module absent from it makes the redistributed footprint unverifiable (state "none beyond …" when it adds no third-party dependency). |
 
 Unpublished leaf apps (`tandem-sample*`, `tandem-benchmark`) stay out of the BOM and out of coverage
 aggregation on purpose: no meaningful coverage, and no `integrationTest` phase for the aggregated report

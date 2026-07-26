@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring write-side ergonomics (`tandem-spring-producer`)
 
-**Version:** 0.1
-**Status:** Draft — awaiting review; specifies code not yet implemented
+**Version:** 1.0
+**Status:** Implemented, not yet released — all three tiers built and tested (Boot 3.x and 4.x)
 **Companion to:** [HLD.md](HLD.md) §3.1; [LLD-spring-config.md](LLD-spring-config.md) (module + autoconfig foundation); [LLD-core.md](LLD-core.md) §2 (ports)
 
 Resolves **Q22**. Specifies the three write-side *convenience tiers* the Spring producer adds on top
@@ -279,13 +279,14 @@ surfaced as `DuplicateSeqException` if a bug produces a collision.
 
 ## 8. Compatibility & open points
 
-- **Public API surface added by this increment:** `TransactionalOutboxTemplate`, `OutboxCollector`,
-  `@TransactionalOutbox`, `OutboxEventMapper<T>` (all `com.codingful.tandem.spring.producer`), plus the
-  reuse of the `TandemAggregate` and `PayloadSerializer` core ports. These evolve under the project's
+- **Public API surface:** `TransactionalOutboxTemplate`, `OutboxCollector`, `@TransactionalOutbox`,
+  `OutboxEventMapper<T>` (all `com.codingful.tandem.spring.producer`), plus the reuse of the
+  `TandemAggregate` and `PayloadSerializer` core ports. These evolve under the project's
   additive-compatibility rule (HLD §1.4).
-- **AOP advice ordering** (§4) is the one mechanism whose exact registration is settled at implementation
-  time; the active-transaction backstop and the rollback integration test make any ordering error loud
-  rather than silent.
+- **AOP advice ordering** (§4) rests on Spring's defaults rather than an explicit `@Order`: the
+  active-transaction backstop plus the rollback integration test make any ordering error loud rather than
+  silent, and a runtime test on both Spring generations pins that the advice intercepts at all
+  (LLD-spring-config §1.2). Set an explicit order only if a real conflict with another advisor appears.
 - **Micrometer-Tracing** — cross-referenced only (HLD-tracing §8); trace capture is at the insert
   chokepoint and needs no per-tier work.
 - **`@TransactionalOutbox` on a non-`TandemAggregate` return** is treated as "no extraction", not an

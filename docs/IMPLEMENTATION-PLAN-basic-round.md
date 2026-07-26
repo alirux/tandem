@@ -24,7 +24,9 @@ Read it first, then the relevant module LLD. Follow [AGENTS.md](../AGENTS.md) fo
 - **`tandem-test`** — `InMemoryOutbox`, `RecordingDispatcher`, `TandemTestContainer` (LLD-test).
 
 ### Out of scope (do NOT build; stop and flag if a task seems to need it)
-- **Spring** anything (`tandem-spring*`, `tandem-relay` runnable) — **Q21, Q22, Q23 open**.
+- **Spring** anything (`tandem-spring*`, `tandem-relay` runnable) — out of scope for *this* round. The
+  Spring modules landed in a later round (Q21/Q22 resolved, `tandem-spring-producer` +
+  `tandem-spring-relay` implemented); the `tandem-relay` runnable is still open as **Q23**.
 - **Admin API** (`tandem-admin`) — **Q25 open**; the OpenAPI exists but the impl is deferred.
 - **Optional capability features** even though their ports exist in core: attempt archive,
   trace/correlation propagation, causal ordering / Lamport, Micrometer adapter. In the basic round
