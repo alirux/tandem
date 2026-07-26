@@ -42,6 +42,9 @@ type-safe, best IDE support, and consistent with the `build.gradle.kts` assumed 
 | `tandem-tracing-otel` | `tandem-tracing-otel` | Optional — OpenTelemetry trace-capture adapter (§7.2 HLD) |
 | `tandem-admin` | `tandem-admin` | Optional — REST admin API, API-first (§7.3 HLD, admin-api.openapi.yaml) |
 | `tandem-benchmark` | *(not published)* | Internal — load/performance harness (see HLD-load-testing.md) |
+| `tandem-sample` | *(not published)* | Runnable end-to-end tutorial (plain Java, no Spring) |
+| `tandem-sample-spring` | *(not published)* | Runnable Spring Boot tutorial — the write-side tiers plus the autoconfigured relay |
+| `tandem-coverage` | *(not published)* | Build-only — the project-wide aggregated JaCoCo report |
 
 ---
 
@@ -95,3 +98,5 @@ com.codingful.tandem.<module>[.<sub-package>]
 | tandem-tracing-otel | `com.codingful.tandem.tracing.otel` |
 | tandem-admin | `com.codingful.tandem.admin` |
 | tandem-benchmark | `com.codingful.tandem.benchmark` |
+| tandem-sample | `com.codingful.tandem.sample` |
+| tandem-sample-spring | `com.codingful.tandem.sample.spring` |
