@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.2
-**Status:** Implemented (Boot 3.x), not yet released — both modules built and tested
+**Version:** 1.3
+**Status:** Implemented, not yet released — both modules built and tested against Boot 3.3.5 **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
 Defines the **foundation** of the Spring Boot integration: which modules exist, the configuration
@@ -71,28 +71,51 @@ against both" — it is "compile against one, force neither, resolve at runtime"
 identical binary signature in **both** Framework 6.x and 7.x — the "common API subset". Tandem
 restricts itself to API that is expected stable across the two (the `AutoConfiguration.imports`
 mechanism, `@AutoConfiguration`, `@ConditionalOn…`, `@ConfigurationProperties` binding, the AOP model).
-If a later Boot generation renames, moves, or changes the signature of a referenced member, the
-runtime fails loudly with `NoSuchMethodError` / `NoClassDefFoundError` — it does **not** fail silently.
+Where a referenced *member* is renamed or moved, the runtime usually fails loudly with
+`NoSuchMethodError` / `NoClassDefFoundError`.
 
-**Why this is an assumption under test, not a guarantee.** Boot 3 → 4 is a *major* framework bump
-(6 → 7), and a major version is *permitted* to break binary compatibility. So the single-artifact
-strategy is a validated bet, not a certainty: the **CI matrix** above is exactly what turns the bet
-into a checked fact — compile once against the baseline, then run the integration tests against a real
-Boot 3.x runtime **and** a real Boot 4.x runtime. If a genuine incompatibility surfaces, the fallback
-is the version split (`-core` / `-boot3` / `-boot4`, §1), adopted only then.
+**Not every mismatch is loud, so two rules constrain how the modules are written.** A class name that only
+appears as annotation *metadata* is read via ASM and never loaded, so naming a type absent on the other
+generation degrades **silently** rather than throwing:
+
+1. **Reference cross-generation autoconfigurations by name, never by class literal.** Boot 4 relocates the
+   autoconfigurations Tandem orders itself against (`DataSourceAutoConfiguration`,
+   `TransactionAutoConfiguration`) into their own modules under new packages, so a class literal in
+   `@AutoConfiguration(after = …)` names a type that does not exist there and the ordering is lost with no
+   error. Both modules use **`afterName`, listing both generations' coordinates**; unmatched names are
+   ignored, so one jar satisfies both lines.
+2. **Put class conditions on `@Bean` methods, not on a nested `@Configuration`.** A nested member
+   configuration inside an `@AutoConfiguration` is **not processed** under Boot 4, so grouping optional
+   beans behind a nested `@ConditionalOnClass` contributes nothing there — silently. Spring evaluates a
+   method's conditions from ASM metadata before resolving its signature, so an optional type in the
+   signature stays safe when absent.
+
+**Verdict.** Boot 3 → 4 is a *major* framework bump (6 → 7), which is *permitted* to break binary
+compatibility, so the single-artifact strategy is only as good as the matrix that checks it (§1.2). Under
+the two rules above **one jar does satisfy both lines**, with the residual gaps §1.2 records. If an
+incompatibility ever cannot be absorbed this way, the fallback is the version split (`-core` / `-boot3` /
+`-boot4`, §1), adopted only then.
 
 ### 1.2 Verifying dual-generation compatibility
 
 The dual-generation claim is only as good as the test that checks it. Realised as follows:
 
-**The matrix lives in the build (Gradle JVM Test Suites), not only in CI.** Each Spring module declares
-two test suites — one pinning a Spring Boot 3.x BOM, one a 4.x BOM — so a single `./gradlew check` runs
-the autoconfiguration tests against **both** generations, locally and in CI alike (consistent with the
-project convention that `check` is the single source of truth). The module's main sources still compile
-once against the baseline (Boot 3.x, via `compileOnly`, §1.1); a suite only swaps the Spring version on
-its own **test runtime** classpath, so both suites exercise the *same baseline-compiled bytecode* —
-which is precisely the binary compatibility under test. A suite recompiles only the trivial test code
-against its version, never the module's main jar.
+**The matrix lives in the build, not only in CI.** Each Spring module adds a `bootFourTest` task next to
+`test` and wires it into `check`, so a single `./gradlew check` runs the autoconfiguration tests against
+**both** generations, locally and in CI alike (consistent with the project convention that `check` is the
+single source of truth). Versions are pinned in the version catalog: baseline **Boot 3.3.5** (Framework
+6.1.x) and the latest **Boot 4.x** (4.1.0 at the time of writing, Framework 7.0.x) — the baseline stays
+the *lowest* supported 3.x line while the 4.x line tracks the newest patch, so the matrix pits the oldest
+jar Tandem compiles against against the newest runtime it claims to support. Both lines run on the same
+**Java 17** toolchain, which is not a coincidence to be rechecked by experiment: Boot 4.x officially
+requires "at least Java 17" (and supports up to 26), so Tandem's Java 17 baseline stays valid for both
+generations. Boot 4.1.0 also requires Framework 7.0.8 or above, which is what the 4.x classpath resolves.
+
+`bootFourTest` reuses the **already-compiled** test and main classes and only swaps Spring for the 4.x line
+on its runtime classpath (a dedicated `bootFourTestRuntimeClasspath` configuration pinning the 4.x BOM). So
+both runs exercise the *same baseline-compiled bytecode* — which is precisely the binary compatibility
+under test — and neither recompiles the module's main jar. Running the in-memory tests twice adds seconds,
+not a doubled build.
 
 **The dual-run tests are lightweight `ApplicationContextRunner` tests** — no full context, no
 container. Per module they assert:
@@ -105,7 +128,25 @@ container. Per module they assert:
   the autoconfigured one (`@ConditionalOnMissingBean`, §4);
 - the bucket-count guard runs at startup.
 
-Being in-memory, running them twice adds seconds, not a doubled build.
+**Wiring alone is a weak claim, so the matrix also runs behaviour.** Beans existing does not prove the
+machinery works, and a major version is most likely to break the machinery. `tandem-spring-producer`
+therefore has Docker-free **runtime** tests in a live context — a `@TransactionalOutbox` method is really
+called and the template really executes, against an `InMemoryOutbox` and a resource-less transaction
+manager. They pin the two mechanisms most exposed to a Spring major: **AspectJ proxying** (if the advice did
+not intercept, nothing would reach the outbox) and the **composed `@Transactional`** of the annotation (if
+Spring did not see it through `@AliasFor`, the aspect's active-transaction guard would throw).
+
+**The matrix's signal is uneven, and that matters.** `tandem-spring-producer` carries the real signal: its
+context-runner tests assert the autoconfiguration *applies* and each tier's beans exist, so a moved or
+re-signed Spring symbol fails loudly. `tandem-spring-relay`'s no-Docker tests are mostly *negative* (the
+relay backs off with no `DataSource`, or when disabled) and would pass even if the autoconfiguration
+never loaded — so a green relay run alone proves little. Read the two together, and prefer adding
+positive assertions to the relay's suite over trusting its colour.
+
+**A green matrix is necessary, not sufficient.** It exercises what the tests *do*, so it cannot see a
+mismatch that only degrades declared metadata — the relocated-autoconfiguration case of §1.1, rule 1, is
+invisible to it and is caught only by checking what the annotations *name* against the other generation's
+jars. Review that whenever an `@AutoConfiguration` ordering or a `@ConditionalOnClass` target is added.
 
 **The heavier end-to-end smoke runs once, on the baseline only.** A `@SpringBootTest` starting real
 Postgres/Kafka via Testcontainers — to prove the wired producer + relay actually deliver under Spring —
@@ -113,6 +154,13 @@ is valuable but container-dominated, so it runs a **single** time against the ba
 Duplicating it across generations would double its container startup for little added signal: the
 binary-compat question it re-answers is already covered, far more cheaply, by the context-runner matrix
 above.
+
+**Known residual gaps on the 4.x line** (accepted, recorded so nobody mistakes green for complete):
+end-to-end delivery and the *atomicity* of the tiers — a rollback discarding outbox rows — need a real
+transactional resource and a broker, so they are exercised on the baseline only. `RelayLifecycle` actually
+starting the pool is likewise baseline-only, and the `afterName` ordering of §1.1 is *declared* for 4.x
+with nothing asserting it takes effect there. Closing these means running the container-backed tests on
+both lines, which the trade-off above deliberately declines.
 
 ---
 

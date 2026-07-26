@@ -20,7 +20,8 @@
 > `tandem-core`, `tandem-jdbc`, `tandem-kafka`, and the `tandem-test` helpers — is built and tested
 > end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md))
 > and is **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
-> The **Spring Boot integration** is implemented and tested against Boot 3.x, but **not yet released**:
+> The **Spring Boot integration** is implemented and tested against **both Boot 3.x and 4.x**, but
+> **not yet released**:
 > `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
 > `tandem-spring-relay` (the relay autoconfiguration, started with the application). The prebuilt
 > standalone relay, the Admin API, MySQL support, and the optional adapters are **not yet implemented**.
@@ -82,7 +83,9 @@ If the relay crashes after publishing but before marking the row done, it republ
 - **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
   implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
   INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
-  app needs no manual wiring (see the [Spring sample](#try-it)); a prebuilt standalone relay deployable is
+  app needs no manual wiring (see the [Spring sample](#try-it)). One artifact per module serves **Boot 3.x
+  and 4.x** alike — Spring is `compileOnly`, so your app's own version binds at runtime, and `./gradlew
+  check` runs the autoconfiguration tests against both lines. A prebuilt standalone relay deployable is
   🔜 planned. Plain-Java wiring stays available (see [Usage](#usage)).
 
 ## Architecture at a glance

@@ -25,3 +25,44 @@ dependencies {
     testImplementation(libs.spring.jdbc)
     testImplementation(project(":tandem-test"))
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Dual-generation matrix (LLD-spring-config §1.2)
+//
+// The module's main sources are compiled ONCE against the Boot 3.x baseline (compileOnly, above). This
+// task re-runs the very same compiled test AND main classes with Spring swapped to the 4.x line on the
+// test runtime classpath — which is exactly the binary compatibility the single-artifact strategy bets
+// on (§1.1). Only the lightweight context-runner tests run here; the Docker-bound integration test stays
+// on the baseline, where its far slower containers buy no extra compatibility signal.
+// ---------------------------------------------------------------------------------------------------
+val bootFourTestRuntimeClasspath: Configuration by configurations.creating
+
+dependencies {
+    bootFourTestRuntimeClasspath(platform(libs.spring.boot.dependencies.v4))
+    bootFourTestRuntimeClasspath(libs.spring.boot.autoconfigure)
+    bootFourTestRuntimeClasspath(libs.spring.boot.test)
+    bootFourTestRuntimeClasspath(libs.spring.jdbc)
+    bootFourTestRuntimeClasspath(libs.slf4j.api)
+    bootFourTestRuntimeClasspath(project(":tandem-test"))
+    bootFourTestRuntimeClasspath(platform(libs.junit.bom))
+    bootFourTestRuntimeClasspath(libs.junit.jupiter)
+    bootFourTestRuntimeClasspath(libs.junit.platform.launcher)
+    bootFourTestRuntimeClasspath(libs.assertj.core)
+}
+
+val sourceSets = the<SourceSetContainer>()
+val mainOutput = sourceSets["main"].output
+val testOutput = sourceSets["test"].output
+
+val bootFourTest = tasks.register<Test>("bootFourTest") {
+    description = "Re-runs the unit tests against the Spring Boot 4.x line (dual-generation matrix)."
+    group = "verification"
+    testClassesDirs = testOutput.classesDirs
+    classpath = files(testOutput, mainOutput, bootFourTestRuntimeClasspath)
+    useJUnitPlatform { excludeTags("integration") }
+    shouldRunAfter(tasks.named("test"))
+}
+
+tasks.named("check") {
+    dependsOn(bootFourTest)
+}

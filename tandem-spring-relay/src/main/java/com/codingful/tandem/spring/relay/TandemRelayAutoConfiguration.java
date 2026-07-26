@@ -19,20 +19,25 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 /**
  * Relay autoconfiguration (LLD-spring-config §4.4): contributes the relay engine — topic router, Kafka
  * dispatcher, outbox store, bucket source and {@link WorkerPool} — and a {@link RelayLifecycle} that
- * starts and stops it with the application. Declared {@code after} {@link DataSourceAutoConfiguration}
- * and gated on a single {@code DataSource} candidate; the whole configuration is conditional on
- * {@code tandem.relay.enabled} (default true), the supported way to load the module without running a
- * relay. Every bean is {@link ConditionalOnMissingBean}, so an application can replace any piece — most
- * usefully a custom {@link TopicRouter}.
+ * starts and stops it with the application. Ordered after Spring Boot's own
+ * {@code DataSourceAutoConfiguration} and gated on a single {@code DataSource} candidate; the whole
+ * configuration is conditional on {@code tandem.relay.enabled} (default true), the supported way to load
+ * the module without running a relay. Every bean is {@link ConditionalOnMissingBean}, so an application
+ * can replace any piece — most usefully a custom {@link TopicRouter}.
+ *
+ * <p>The ordering is declared by <b>name</b> for both generations: Boot 4 moved
+ * {@code DataSourceAutoConfiguration} into {@code spring-boot-jdbc}, so a class literal would name a type
+ * absent there and the ordering would be silently lost (LLD-spring-config §1.1).
  */
-@AutoConfiguration(after = DataSourceAutoConfiguration.class)
+@AutoConfiguration(afterName = {
+        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",   // Spring Boot 3.x
+        "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration"})  // Spring Boot 4.x
 @ConditionalOnSingleCandidate(DataSource.class)
 @ConditionalOnProperty(prefix = "tandem.relay", name = "enabled", matchIfMissing = true)
 @EnableConfigurationProperties({

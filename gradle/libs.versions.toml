@@ -3,8 +3,9 @@ junit = "6.1.1"
 assertj = "3.27.7"
 postgresql = "42.7.12"
 # Spring modules compile once against the lowest supported Boot 3.x line (LLD-spring-config §1.1);
-# the dual-generation 4.x test line is added with the version matrix (§1.2). Both keep Java 17.
+# the dual-generation matrix (§1.2) re-runs the unit tests against a Boot 4.x line too. Both keep Java 17.
 spring-boot = "3.3.5"
+spring-boot-v4 = "4.1.0"
 # kafka-clients aligned to the version cloudevents-kafka targets (binding compatibility).
 kafka = "3.9.2"
 cloudevents = "4.1.1"
@@ -37,7 +38,9 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 # Spring: the BOM aligns every module version; the individual coordinates carry no version of their own.
+# spring-boot-dependencies-v4 is the same BOM at the 4.x line, used only by the dual-generation test suite.
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-dependencies-v4 = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot-v4" }
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
 spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
