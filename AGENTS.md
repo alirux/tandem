@@ -239,15 +239,23 @@ CI. Two rules keep one jar valid on both lines, and neither fails loudly if brok
 §1.1: order autoconfigurations by **name** (`afterName`), never by class literal, and put class conditions
 on **`@Bean` methods**, never on a nested `@Configuration`.
 
-### Coverage aggregation
+## Adding a module — the registration checklist
 
-`tandem-coverage` produces the single project-wide JaCoCo report CI uploads to Codecov — the
-per-module reports scope coverage to their own sources, so only the aggregated one attributes
-cross-module hits to the owning class. Its `coveredProjects` list is **explicit**, so **when you add
-a new published, tested module, add it to that list in the same change** — otherwise the module's
-coverage silently never reaches Codecov (as happened when `tandem-spring-producer` was first added).
-Unpublished leaf apps (`tandem-sample*`, `tandem-benchmark`) stay excluded on purpose: no meaningful
-coverage, and no `integrationTest` phase for the aggregated report to depend on.
+A module is not wired in by existing there: several **explicit lists** must name it, and each omission
+fails *silently* (nothing breaks the build; the module is simply absent from a report, a BOM, or a
+release). When you add a module, walk the whole list in the same change:
+
+| Register it in | Why, and what breaks if you forget |
+|---|---|
+| `settings.gradle.kts` | Gradle ignores the directory entirely otherwise. |
+| `tandem-bom/build.gradle.kts` | **Published modules only.** The BOM's job is to let a consumer declare any Tandem module without a version; a module missing there cannot be used that way. |
+| `tandem-coverage`'s `coveredProjects` | **Published, tested modules only.** Only the aggregated report attributes cross-module hits to the owning class, and it is the single report CI uploads to Codecov — a module missing there never reaches Codecov at all. |
+| `unpublishedModules` in the root `build.gradle.kts` | **Only for modules that must NOT be published** (sample/benchmark/coverage). It also opts them out of the shared java-library/publishing convention, so they configure their own toolchain and tasks. |
+| `README.md` module table · `docs/LLD-base.md` (artifactId + package) | The documented module list is a contract with readers; treat a stale table as part of the diff. |
+
+Unpublished leaf apps (`tandem-sample*`, `tandem-benchmark`) stay out of the BOM and out of coverage
+aggregation on purpose: no meaningful coverage, and no `integrationTest` phase for the aggregated report
+to depend on.
 
 ## Commit messages
 
