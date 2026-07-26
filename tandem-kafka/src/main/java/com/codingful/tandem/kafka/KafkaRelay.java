@@ -1,6 +1,7 @@
 package com.codingful.tandem.kafka;
 
 import com.codingful.tandem.core.OutboxRecord;
+import com.codingful.tandem.core.exception.OutboxDispatchException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.TopicRouter;
 import java.util.Map;
@@ -62,10 +63,13 @@ public final class KafkaRelay implements OutboxDispatcher, AutoCloseable {
         try {
             producerRecord = encoder.encode(record);
         } catch (RuntimeException encodeFailure) {
-            // An encoding failure (e.g. a bad payload/header) will never succeed → permanent.
+            // Permanent by construction, and deliberately NOT routed through the classifier: that maps
+            // *broker* errors and defaults an unknown exception to retriable, whereas re-encoding the
+            // same row always fails the same way. Retrying would only keep the aggregate's chain
+            // blocked for the whole backoff ladder while the row still looks merely PENDING (§4).
             LOG.error("Encoding outbox row failed rowId:{}, aggregateType:{}, aggregateId:{}", record.id(),
                     record.aggregateType(), record.aggregateId(), encodeFailure);
-            ack.completeExceptionally(classifier.classify(encodeFailure));
+            ack.completeExceptionally(permanent(encodeFailure));
             return ack;
         }
         try {
@@ -85,6 +89,12 @@ public final class KafkaRelay implements OutboxDispatcher, AutoCloseable {
             ack.completeExceptionally(classifier.classify(sendThrew));
         }
         return ack;
+    }
+
+    private static OutboxDispatchException permanent(RuntimeException encodeFailure) {
+        String detail = encodeFailure.getMessage() == null ? "" : " - " + encodeFailure.getMessage();
+        return new OutboxDispatchException("Encoding the outbox row failed (permanent): "
+                + encodeFailure.getClass().getSimpleName() + detail, false, encodeFailure);
     }
 
     /** The effective producer {@code delivery.timeout.ms} — the relay reads it for the rowLease invariant (LLD-jdbc §3.5). */

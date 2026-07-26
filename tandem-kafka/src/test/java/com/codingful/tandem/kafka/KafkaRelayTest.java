@@ -73,7 +73,7 @@ class KafkaRelayTest {
     }
 
     @Test
-    void GIVEN_an_event_that_cannot_be_encoded_WHEN_the_relay_publishes_THEN_nothing_reaches_the_broker_and_the_cause_is_kept() {
+    void GIVEN_an_event_that_cannot_be_encoded_WHEN_the_relay_publishes_THEN_it_fails_permanently_without_reaching_the_broker() {
         MockProducer<String, byte[]> producer = mockProducer(true);
         TopicRouter unroutable = record -> {
             throw new IllegalStateException("no topic for " + record.aggregateType());
@@ -83,7 +83,12 @@ class KafkaRelayTest {
 
         CompletableFuture<Void> ack = relay.dispatch(RECORD);
 
-        assertThat(catchDispatchException(ack)).hasRootCauseInstanceOf(IllegalStateException.class);
+        // Re-encoding the same row fails the same way, so a retry ladder would only keep the
+        // aggregate's chain blocked; the verdict must be permanent even though the broker-error
+        // classifier would call this unknown exception retriable.
+        OutboxDispatchException failure = catchDispatchException(ack);
+        assertThat(failure.isRetriable()).isFalse();
+        assertThat(failure).hasRootCauseInstanceOf(IllegalStateException.class);
         assertThat(producer.history()).isEmpty();   // the row is never half-published
     }
 

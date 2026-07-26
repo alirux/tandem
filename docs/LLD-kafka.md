@@ -131,6 +131,15 @@ if present, else falls back to `aggregate_type`** (configurable fallback). Raw m
 
 The classifier is a pluggable `ErrorClassifier` SPI; the above is the default mapping.
 
+**Encoding failures never reach the classifier.** A failure raised *before* the send — the
+CloudEvent cannot be built, or the `TopicRouter` cannot route the record — is completed as
+**permanent** at the encode site. The classifier maps *broker* errors and defaults an unknown
+exception to retriable, which is the wrong default here: re-encoding the same row fails the same
+way, so a retry ladder only keeps the aggregate's chain blocked (a `FAILED` head blocks its
+successors exactly as a `PENDING` one does) while the row still looks like an ordinary transient
+problem. Failing immediately puts the row in `FAILED` with the error recorded, where an operator
+can see it.
+
 ---
 
 ## 5. `TopicRouter` default (Q18)
