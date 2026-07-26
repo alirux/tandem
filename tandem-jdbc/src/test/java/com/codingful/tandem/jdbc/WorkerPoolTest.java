@@ -8,17 +8,22 @@ import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.exception.TandemConfigurationException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
+import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
+import com.codingful.tandem.test.ControllableClock;
 import com.codingful.tandem.test.InMemoryOutbox;
 import com.codingful.tandem.test.RecordingDispatcher;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
@@ -135,6 +140,134 @@ class WorkerPoolTest {
         pool.kill();
 
         assertThat(buckets.releaseCalls()).isZero();
+    }
+
+    @Test
+    void GIVEN_a_worker_killed_by_a_fatal_error_WHEN_events_are_waiting_THEN_the_relay_recovers_and_delivers_them() {
+        // The supervision contract (§3.1): an Error escaping a worker kills its thread, and with it the
+        // buckets it owns — nothing else would ever pick them up. A single worker makes that fatal if
+        // the restart does not happen: the event below would simply never be delivered.
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+        CrashingOnceStore store = new CrashingOnceStore(outbox);
+        RecordingDispatcher dispatcher = new RecordingDispatcher();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(store, dispatcher, cfg);
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
+        } finally {
+            pool.stop();
+        }
+
+        assertThat(store.crashed()).as("the worker really did die").isTrue();
+        assertThat(dispatcher.dispatchCount()).isEqualTo(1);
+    }
+
+    @Test
+    void GIVEN_delivered_events_older_than_the_retention_window_WHEN_the_relay_runs_THEN_they_are_purged_from_the_outbox() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        for (int seq = 1; seq <= 3; seq++) {
+            outbox.insert(OutboxMessage.builder()
+                    .aggregateId("order-1").aggregateType("Order").seq(seq).payload("{}".getBytes()).build());
+        }
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(2).pollInterval(Duration.ofMillis(10))
+                .retention(Duration.ZERO).cleanupInterval(Duration.ofMillis(50)).build();
+        WorkerPool pool = new WorkerPool(outbox, new RecordingDispatcher(), cfg);
+
+        pool.start();
+        try {
+            // Delivered is not enough — the rows must actually leave the table, or the outbox grows forever.
+            awaitUpTo(Duration.ofSeconds(20), () -> outbox.size() == 0);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_a_delivery_that_never_completes_WHEN_the_lease_expires_THEN_the_event_is_claimed_again_and_delivered() {
+        ControllableClock clock = ControllableClock.atEpochDay();
+        InMemoryOutbox outbox = new InMemoryOutbox(BUCKETS, InMemoryOutbox.DEFAULT_MAX_ATTEMPTS, clock);
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+        AtomicInteger attempts = new AtomicInteger();
+        // First attempt never settles — the relay instance that owned it is, from the outbox's point of
+        // view, gone; the row would stay IN_FLIGHT forever without reclaim.
+        OutboxDispatcher stallsOnce = record -> attempts.incrementAndGet() == 1
+                ? new CompletableFuture<>()
+                : CompletableFuture.completedFuture(null);
+        Duration rowLease = Duration.ofSeconds(60);
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .rowLease(rowLease).reclaimInterval(Duration.ofMillis(50)).build();
+        WorkerPool pool = new WorkerPool(outbox, stallsOnce, cfg);
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1);
+            clock.advance(rowLease.plusSeconds(1));
+            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
+        } finally {
+            pool.stop();
+        }
+
+        assertThat(attempts).hasValueGreaterThan(1);   // at-least-once: the stalled attempt was retried
+    }
+
+    /** A real {@link OutboxStore} that lets the first claim kill its worker thread, then delegates. */
+    private static final class CrashingOnceStore implements OutboxStore {
+        private final InMemoryOutbox delegate;
+        private final AtomicBoolean crashed = new AtomicBoolean();
+
+        CrashingOnceStore(InMemoryOutbox delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+            if (crashed.compareAndSet(false, true)) {
+                throw new Error("simulated fatal failure while claiming");
+            }
+            return delegate.claimBatch(buckets, workerId, lease, batchSize);
+        }
+
+        @Override
+        public void markDone(long id) {
+            delegate.markDone(id);
+        }
+
+        @Override
+        public void markDoneBatch(Collection<Long> ids) {
+            delegate.markDoneBatch(ids);
+        }
+
+        @Override
+        public void markForRetry(long id, String error, Duration retryDelay) {
+            delegate.markForRetry(id, error, retryDelay);
+        }
+
+        @Override
+        public void markFailed(long id, String error) {
+            delegate.markFailed(id, error);
+        }
+
+        @Override
+        public int reclaimExpiredLeases() {
+            return delegate.reclaimExpiredLeases();
+        }
+
+        @Override
+        public int cleanup(Instant doneBefore, int batchSize) {
+            return delegate.cleanup(doneBefore, batchSize);
+        }
+
+        boolean crashed() {
+            return crashed.get();
+        }
     }
 
     /** A real, in-memory {@link BucketSource} that counts {@link #release()} calls — no mocks. */

@@ -9,9 +9,15 @@ import com.codingful.tandem.core.port.TopicRouter;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Future;
+import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.clients.producer.BufferExhaustedException;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
@@ -64,6 +70,47 @@ class KafkaRelayTest {
         producer.errorNext(new RecordTooLargeException("too big"));
 
         assertThat(catchDispatchException(ack).isRetriable()).isFalse();
+    }
+
+    @Test
+    void GIVEN_an_event_that_cannot_be_encoded_WHEN_the_relay_publishes_THEN_nothing_reaches_the_broker_and_the_cause_is_kept() {
+        MockProducer<String, byte[]> producer = mockProducer(true);
+        TopicRouter unroutable = record -> {
+            throw new IllegalStateException("no topic for " + record.aggregateType());
+        };
+        KafkaRelay relay = new KafkaRelay(producer, unroutable, KafkaRelayConfig.of("/tandem/orders"),
+                new DefaultErrorClassifier(), 30_000);
+
+        CompletableFuture<Void> ack = relay.dispatch(RECORD);
+
+        assertThat(catchDispatchException(ack)).hasRootCauseInstanceOf(IllegalStateException.class);
+        assertThat(producer.history()).isEmpty();   // the row is never half-published
+    }
+
+    @Test
+    void GIVEN_a_producer_out_of_buffer_space_WHEN_it_rejects_the_send_outright_THEN_the_failure_is_retriable() {
+        CompletableFuture<Void> ack = relayOver(rejectingProducer(new BufferExhaustedException("buffer full")))
+                .dispatch(RECORD);
+
+        assertThat(catchDispatchException(ack).isRetriable()).isTrue();
+    }
+
+    @Test
+    void GIVEN_an_unserializable_event_WHEN_the_producer_rejects_the_send_outright_THEN_the_failure_is_permanent() {
+        CompletableFuture<Void> ack = relayOver(rejectingProducer(new SerializationException("not serializable")))
+                .dispatch(RECORD);
+
+        assertThat(catchDispatchException(ack).isRetriable()).isFalse();
+    }
+
+    /** A producer whose {@code send} throws instead of returning a future — the synchronous failure path. */
+    private static MockProducer<String, byte[]> rejectingProducer(RuntimeException failure) {
+        return new MockProducer<>(true, new StringSerializer(), new ByteArraySerializer()) {
+            @Override
+            public Future<RecordMetadata> send(ProducerRecord<String, byte[]> record, Callback callback) {
+                throw failure;
+            }
+        };
     }
 
     private static OutboxDispatchException catchDispatchException(CompletableFuture<Void> future) {

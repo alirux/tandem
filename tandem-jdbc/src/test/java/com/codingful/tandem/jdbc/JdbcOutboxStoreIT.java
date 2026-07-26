@@ -78,6 +78,21 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_a_claimed_head_WHEN_marked_done_on_its_own_THEN_its_lease_is_released_and_the_successor_becomes_claimable() {
+        insert("order-1", 1);
+        insert("order-1", 2);
+
+        long head = claim(10).get(0).id();
+        store.markDone(head);
+
+        assertThat(statusOf(head)).isEqualTo(OutboxStatus.DONE.code());
+        // A delivered row holding a stale lease diverges from the in-memory double and leaves dead
+        // entries in the partial in-flight index — the ownership must go with the delivery.
+        assertThat(holdsALease(head)).isFalse();
+        assertThat(claim(10)).extracting(OutboxRecord::id).containsExactly(2L);
+    }
+
+    @Test
     void GIVEN_a_retried_row_WHEN_its_next_attempt_is_in_the_future_THEN_it_is_not_claimable_until_due() {
         insert("order-1", 1);
         long id = claim(10).get(0).id();
@@ -257,6 +272,20 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static boolean holdsALease(long id) {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT locked_by IS NOT NULL OR locked_until IS NOT NULL FROM tandem_outbox WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getBoolean(1);
             }
         } catch (SQLException e) {
             throw new IllegalStateException(e);
