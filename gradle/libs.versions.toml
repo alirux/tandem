@@ -44,6 +44,7 @@ spring-boot-dependencies-v4 = { module = "org.springframework.boot:spring-boot-d
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
 spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
+spring-test = { module = "org.springframework:spring-test" }
 spring-tx = { module = "org.springframework:spring-tx" }
 spring-aspects = { module = "org.springframework:spring-aspects" }
 spring-jdbc = { module = "org.springframework:spring-jdbc" }

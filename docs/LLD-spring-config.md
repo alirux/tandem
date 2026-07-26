@@ -148,12 +148,20 @@ mismatch that only degrades declared metadata — the relocated-autoconfiguratio
 invisible to it and is caught only by checking what the annotations *name* against the other generation's
 jars. Review that whenever an `@AutoConfiguration` ordering or a `@ConditionalOnClass` target is added.
 
-**The heavier end-to-end smoke runs once, on the baseline only.** A `@SpringBootTest` starting real
-Postgres/Kafka via Testcontainers — to prove the wired producer + relay actually deliver under Spring —
-is valuable but container-dominated, so it runs a **single** time against the baseline version.
-Duplicating it across generations would double its container startup for little added signal: the
-binary-compat question it re-answers is already covered, far more cheaply, by the context-runner matrix
-above.
+**The heavier end-to-end smoke runs once, on the baseline only.** A `@SpringBootTest` over real
+Postgres/Kafka via Testcontainers proves the wired producer + relay actually deliver under Spring, but it is
+container-dominated, so it runs a **single** time against the baseline. Duplicating it across generations
+would double its container startup for little added signal: the binary-compat question it re-answers is
+already covered, far more cheaply, by the context-runner matrix above.
+
+It lives in **`tandem-sample-spring`** — the only module that depends on both Spring modules, so neither
+published module needs a test dependency on the other, and no module exists solely to host one test. It
+boots the *documented sample application itself*, which makes CI the thing that keeps the published tutorial
+from rotting. Because that module is unpublished it sits outside the shared build convention, so it declares
+its own test dependencies and `integrationTest` phase; the coverage its run produces is therefore not in the
+aggregated report, which is acceptable — the same production paths are covered by each module's own
+integration tests. The sample's `CommandLineRunner` is excluded under the `test` profile: its demo writes and
+console narration would be an uncontrolled precondition for an assertion.
 
 **Known residual gaps on the 4.x line** (accepted, recorded so nobody mistakes green for complete):
 end-to-end delivery and the *atomicity* of the tiers — a rollback discarding outbox rows — need a real

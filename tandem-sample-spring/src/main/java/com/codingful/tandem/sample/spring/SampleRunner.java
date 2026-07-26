@@ -15,6 +15,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Component;
  * just the {@code @TransactionalOutbox} methods on {@link OrderService}, and its relay runs itself.
  */
 @Component
+@Profile("!test")   // the smoke test drives the tiers itself; the demo narration would be an uncontrolled precondition
 class SampleRunner implements CommandLineRunner {
 
     private static final int EXPECTED_EVENTS = 7;

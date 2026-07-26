@@ -37,4 +37,38 @@ dependencies {
     // self-contained; a real app supplies its own DataSource. Also provides the relay + consumer helpers
     // used by the end-to-end tail. Pulls in tandem-jdbc/kafka/core and the JDBC driver transitively.
     implementation(project(":tandem-test"))
+
+    // This module is unpublished, so the root convention block configures neither JUnit/AssertJ nor an
+    // integrationTest phase for it (AGENTS, "Adding a module") — the smoke test declares both itself.
+    // spring-boot-starter-test is deliberately avoided: it would put its own JUnit 5 line on the
+    // classpath against the project's JUnit 6.
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testImplementation(libs.assertj.core)
+    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.spring.boot.test)
+    testImplementation(libs.spring.test)
+}
+
+// The smoke test boots the real sample application against real containers, so it is Docker-bound and
+// tagged `integration` like every other container-backed test in the project: `./gradlew test` stays
+// Docker-free, `check` runs it.
+val sourceSets = the<SourceSetContainer>()
+val testSourceSet = sourceSets["test"]
+
+val integrationTest = tasks.register<Test>("integrationTest") {
+    description = "Runs the @Tag(\"integration\") smoke test (requires Docker)."
+    group = "verification"
+    testClassesDirs = testSourceSet.output.classesDirs
+    classpath = testSourceSet.runtimeClasspath
+    useJUnitPlatform { includeTags("integration") }
+    shouldRunAfter(tasks.named("test"))
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform { excludeTags("integration") }
+}
+
+tasks.named("check") {
+    dependsOn(integrationTest)
 }
