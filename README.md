@@ -16,15 +16,15 @@
 
 ---
 
-> **Status: basic round on Maven Central; Spring write-side implemented.** The first milestone —
+> **Status: core and Spring integration on Maven Central.** The engine —
 > `tandem-core`, `tandem-jdbc`, `tandem-kafka`, and the `tandem-test` helpers — is built and tested
-> end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md))
-> and is **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
-> The **Spring Boot integration** is implemented and tested against **both Boot 3.x and 4.x**, but
-> **not yet released**:
+> end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md)).
+> The **Spring Boot integration** ships alongside it and is tested against **both Boot 3.x and 4.x**:
 > `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
-> `tandem-spring-relay` (the relay autoconfiguration, started with the application). The prebuilt
-> standalone relay, the Admin API, MySQL support, and the optional adapters are **not yet implemented**.
+> `tandem-spring-relay` (the relay autoconfiguration, started with the application). All of it is
+> **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
+> The prebuilt standalone relay, the Admin API, MySQL support, and the optional adapters are
+> **not yet implemented**.
 > Start with the [HLD](docs/HLD.md) for the full design.
 
 ## What is Tandem?
@@ -117,7 +117,7 @@ Tandem is published to Maven Central under the `com.codingful` group. Import the
 
 ```kotlin
 dependencies {
-    implementation(platform("com.codingful:tandem-bom:0.1.1"))
+    implementation(platform("com.codingful:tandem-bom:0.2.0"))
     implementation("com.codingful:tandem-jdbc")     // write-side + relay engine (PostgreSQL)
     implementation("com.codingful:tandem-kafka")    // Kafka publish + CloudEvents binding
     testImplementation("com.codingful:tandem-test") // in-memory doubles + Testcontainers helper
@@ -132,7 +132,7 @@ dependencies {
     <dependency>
       <groupId>com.codingful</groupId>
       <artifactId>tandem-bom</artifactId>
-      <version>0.1.1</version>
+      <version>0.2.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -152,7 +152,10 @@ dependencies {
 ```
 
 The write-side alone (`tandem-jdbc`) pulls no Kafka dependency; add `tandem-kafka` only where the
-relay runs. See [Modules](#modules) for the full list.
+relay runs. On Spring Boot, take `tandem-spring-producer` where you write and `tandem-spring-relay`
+where the relay runs — each brings its own tier of the stack and leaves Spring itself to your
+application's versions. See [Modules](#modules) for the full list. What changed between versions,
+breaking changes included, is on the [Releases](https://github.com/alirux/tandem/releases) page.
 
 ## Usage
 
@@ -284,8 +287,8 @@ tandem-sample-spring\run.cmd
 | `tandem-sample-spring` | Runnable Spring Boot tutorial — the write-side developer experience, not published | ✅ implemented |
 | `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
 | `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
-| `tandem-spring-producer` | Spring Boot autoconfig for the write side — the four usage tiers — see [LLD-spring-producer.md](docs/LLD-spring-producer.md) | 🚧 in progress — not yet released |
-| `tandem-spring-relay` | Spring Boot autoconfig for the relay — started with the application — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🚧 in progress — not yet released |
+| `tandem-spring-producer` | Spring Boot autoconfig for the write side — the four usage tiers — see [LLD-spring-producer.md](docs/LLD-spring-producer.md) | ✅ released |
+| `tandem-spring-relay` | Spring Boot autoconfig for the relay — started with the application — see [LLD-spring-config.md](docs/LLD-spring-config.md) | ✅ released |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
 | `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |

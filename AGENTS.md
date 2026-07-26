@@ -295,3 +295,24 @@ Before creating a release tag:
    1. proceed with the version as given,
    2. use the semver-correct version you propose, or
    3. cancel.
+
+The annotated tag's message body becomes the GitHub release notes (the workflow
+reads `%(contents:body)`), so write the notes once, in the tag — never by hand on
+the release page afterwards. The tag must therefore be **annotated**, never
+lightweight. Structure the message:
+
+- **First line** — `tandem v<x.y.z> — <short summary>`. This is the release title;
+  everything below it is the body.
+- Then only the sections that apply, in this order, each a heading followed by
+  `-` bullets: **New**, **Fixes**, **Breaking**, **Known limitations**. Drop a
+  section that has nothing in it (an early tag can be title-only).
+- **Breaking** is the one never to omit when it applies — name the changed public
+  API and what a caller must do. For this library that means the published ports
+  and types, the `tandem_*` schema, and the CloudEvents envelope alike (§1.4
+  compatibility applies to every contract, not just the API).
+
+Keep the notes short and factual: what changed and why, not how (same rule as
+commit messages). Wrap at ~80 columns. Any link must be an **absolute URL** —
+release notes render outside the repository, so a relative path does not resolve.
+Do not create or push a tag without the user asking in that turn; pushing one
+publishes the release and stages the Maven Central deployment.

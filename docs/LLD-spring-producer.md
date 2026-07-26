@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring write-side ergonomics (`tandem-spring-producer`)
 
 **Version:** 1.0
-**Status:** Implemented, not yet released — all three tiers built and tested (Boot 3.x and 4.x)
+**Status:** Implemented and released — all three tiers built and tested (Boot 3.x and 4.x)
 **Companion to:** [HLD.md](HLD.md) §3.1; [LLD-spring-config.md](LLD-spring-config.md) (module + autoconfig foundation); [LLD-core.md](LLD-core.md) §2 (ports)
 
 Resolves **Q22**. Specifies the three write-side *convenience tiers* the Spring producer adds on top

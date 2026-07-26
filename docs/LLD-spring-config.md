@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
 **Version:** 1.3
-**Status:** Implemented, not yet released — both modules built and tested against Boot 3.3.5 **and** 4.1.0
+**Status:** Implemented and released — both modules built and tested against Boot 3.3.5 **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
 Defines the **foundation** of the Spring Boot integration: which modules exist, the configuration
