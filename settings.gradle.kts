@@ -18,6 +18,7 @@ include(
     "tandem-kafka",
     "tandem-test",
     "tandem-spring-producer",
+    "tandem-spring-relay",
     "tandem-sample",
     "tandem-sample-spring",
     "tandem-benchmark",
