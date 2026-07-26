@@ -227,6 +227,18 @@ Docker Desktop or Colima must be running. Integration tests are tagged
 `@Tag("integration")` and run as part of `./gradlew check`; skip them with
 `./gradlew test -x integrationTest` if Docker is unavailable.
 
+### Spring modules — the dual-generation gate
+
+`tandem-spring-producer` and `tandem-spring-relay` ship **one artifact serving both Spring Boot 3.x and
+4.x**, compiled against the 3.x baseline with Spring `compileOnly`. Each therefore has a **`bootFourTest`**
+task that re-runs its unit tests with Spring swapped to the latest 4.x on the runtime classpath
+(LLD-spring-config §1.2). It is wired into `check`, so CI covers it — but **`./gradlew test` does not run
+it**. When you touch a Spring module, the pre-commit gate is **`./gradlew check`** (or at minimum
+`./gradlew :<module>:bootFourTest` alongside `test`); a green `test` alone can hide a 4.x regression until
+CI. Two rules keep one jar valid on both lines, and neither fails loudly if broken — see LLD-spring-config
+§1.1: order autoconfigurations by **name** (`afterName`), never by class literal, and put class conditions
+on **`@Bean` methods**, never on a nested `@Configuration`.
+
 ### Coverage aggregation
 
 `tandem-coverage` produces the single project-wide JaCoCo report CI uploads to Codecov — the
