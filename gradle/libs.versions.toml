@@ -8,6 +8,12 @@ spring-boot = "3.3.5"
 spring-boot-v4 = "4.1.0"
 # kafka-clients aligned to the version cloudevents-kafka targets (binding compatibility).
 kafka = "3.9.2"
+# Not a dependency Tandem declares — only a version floor for what kafka-clients drags in.
+# kafka-clients 3.9.2 resolves lz4-java 1.10.1, which carries a moderate advisory (the native
+# XXHash bindings can crash the JVM on out-of-range byte-array arguments), fixed in 1.11.1.
+# Not reachable through Kafka's compression usage, but tandem-kafka is published, so consumers
+# inherit the flagged coordinate on their runtime classpath. Constrained up in tandem-kafka/build.gradle.kts.
+lz4 = "1.11.1"
 cloudevents = "4.1.1"
 testcontainers = "1.21.4"
 # Not a dependency Tandem declares — only a version floor for what Testcontainers drags in.
@@ -32,6 +38,7 @@ assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
+lz4-java = { module = "at.yawk.lz4:lz4-java", version.ref = "lz4" }
 cloudevents-core = { module = "io.cloudevents:cloudevents-core", version.ref = "cloudevents" }
 cloudevents-kafka = { module = "io.cloudevents:cloudevents-kafka", version.ref = "cloudevents" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
