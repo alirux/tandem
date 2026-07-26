@@ -227,6 +227,16 @@ Docker Desktop or Colima must be running. Integration tests are tagged
 `@Tag("integration")` and run as part of `./gradlew check`; skip them with
 `./gradlew test -x integrationTest` if Docker is unavailable.
 
+### Coverage aggregation
+
+`tandem-coverage` produces the single project-wide JaCoCo report CI uploads to Codecov — the
+per-module reports scope coverage to their own sources, so only the aggregated one attributes
+cross-module hits to the owning class. Its `coveredProjects` list is **explicit**, so **when you add
+a new published, tested module, add it to that list in the same change** — otherwise the module's
+coverage silently never reaches Codecov (as happened when `tandem-spring-producer` was first added).
+Unpublished leaf apps (`tandem-sample*`, `tandem-benchmark`) stay excluded on purpose: no meaningful
+coverage, and no `integrationTest` phase for the aggregated report to depend on.
+
 ## Commit messages
 
 - Describe **what** changed and why, not **how** it was implemented.
