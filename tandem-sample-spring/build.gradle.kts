@@ -28,8 +28,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-json")  // Jackson — enables the object-payload tier
     implementation("org.springframework.boot:spring-boot-starter-aop")   // enables the @TransactionalOutbox aspect
 
-    // The Tandem write-side Spring module under demonstration.
+    // The Tandem Spring modules under demonstration: the write-side tiers and the relay autoconfig
+    // (so the relay runs itself, wired by Spring, rather than being assembled by hand).
     implementation(project(":tandem-spring-producer"))
+    implementation(project(":tandem-spring-relay"))
 
     // [DEMO-ONLY] TandemTestContainer spins up a real PostgreSQL (and Kafka) so the sample is
     // self-contained; a real app supplies its own DataSource. Also provides the relay + consumer helpers

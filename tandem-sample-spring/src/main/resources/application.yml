@@ -9,6 +9,13 @@ logging:
   level:
     root: WARN
 
+# [DEMO-ONLY] Start the Testcontainers PostgreSQL + Kafka and publish their addresses as properties
+# before the context binds, so the DataSource and Tandem's autoconfigurations wire from real properties.
+# A real application deletes this and configures spring.datasource / tandem.kafka.producer itself.
+context:
+  initializer:
+    classes: com.codingful.tandem.sample.spring.DemoContainerInitializer
+
 # Tandem's own configuration. The write side binds tandem.outbox.* — here the number of virtual
 # buckets, the single value the write side and the relay must agree on and never change after the
 # first deployment. It already defaults to 256; it is shown explicitly only to illustrate how Tandem
