@@ -87,9 +87,11 @@ subprojects {
         }
 
         val jacocoMergedReport = tasks.register<JacocoReport>("jacocoMergedReport") {
-            description = "Merged JaCoCo report (unit + integration) — upload this to Codecov."
+            description = "Merged JaCoCo report (every test phase) — upload this to Codecov."
             group = "verification"
-            dependsOn(tasks.named("test"), integrationTest)
+            // All Test tasks, not a hand-listed set: executionData globs *.exec below, so a module that
+            // adds a phase (e.g. the Spring modules' bootFourTest) is covered without touching this.
+            dependsOn(tasks.withType<Test>())
             executionData(fileTree(jacocoExecDir) { include("*.exec") })
             sourceSets(mainSourceSet)
         }

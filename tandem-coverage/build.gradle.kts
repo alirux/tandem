@@ -36,9 +36,11 @@ val aggregatedCoverageReport = tasks.register<JacocoReport>("aggregatedCoverageR
         sourceDirectories.from(mainSourceSet.allSource.sourceDirectories)
         classDirectories.from(mainSourceSet.output.classesDirs)
 
-        // Run every test phase so its .exec exists before we read it; mirrors the per-module report wiring.
-        dependsOn(covered.tasks.named("test"))
-        dependsOn(covered.tasks.named("integrationTest"))
+        // Run every test phase so its .exec exists before we read it. Declared as "all Test tasks" rather
+        // than a hand-listed set: the executionData below globs *.exec, so naming phases individually
+        // leaves any later one (bootFourTest, a future e2e) consumed without a declared dependency —
+        // which Gradle rejects as an implicit dependency once both tasks are in the same build.
+        dependsOn(covered.tasks.withType<Test>())
 
         // Collect whatever .exec files each module produced — test.exec, integrationTest.exec, and any
         // future phase (e.g. e2e.exec) — so a new test phase is picked up here with no change. fileTree
