@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.1
-**Status:** Reviewed — specifies modules not yet implemented
+**Version:** 1.2
+**Status:** Implemented (Boot 3.x), not yet released — both modules built and tested
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
 Defines the **foundation** of the Spring Boot integration: which modules exist, the configuration
@@ -315,6 +315,12 @@ the relay module contributes the engine, each bean `@ConditionalOnMissingBean`:
 `tandem.relay.enabled=false` contributes none of these — the supported way to load the relay module
 without running a relay (§2.2).
 
+The `RelayConfig` is built from `tandem.outbox.bucket-count` plus `tandem.relay.*`, where every relay
+property is **nullable and only overrides `RelayConfig`'s own default when set** — so the config object
+stays the single source of truth for defaults and the two cannot drift (§2.2). `OutboxStore` and the
+`WorkerPool` then take `maxAttempts`/the config from that one `RelayConfig` bean, not from the raw
+properties, so the store and the pool can never disagree.
+
 **Why the dispatcher is a constructor dependency of the pool.** The pool validates the row-lease
 invariant against the delivery timeout the *dispatcher reports* (`OutboxDispatcher.deliveryTimeoutMillis()`),
 not against a configured value — the footgun removed before publication (§5). Wiring the dispatcher as
@@ -341,6 +347,13 @@ guarantee against the infrastructure beans. So the module contributes a thin **`
 which are constructed before any `SmartLifecycle` starts and destroyed after all have stopped, so no
 custom phase is needed). Container images that deploy the same jar as a pure write-side simply set
 `tandem.relay.enabled=false`, and no lifecycle bean is contributed at all.
+
+**The lifecycle bean is declared with its concrete type, not `SmartLifecycle`.** `@ConditionalOnMissingBean`
+on the `SmartLifecycle` *interface* would back off whenever the application has any other lifecycle bean —
+which every real Boot app does — silently leaving the relay wired but never started. Declaring the bean as
+the concrete `RelayLifecycle` scopes the condition to Tandem's own type. (This is a case the minimal
+`ApplicationContextRunner` wiring tests cannot catch — they have no other lifecycle beans — so the
+end-to-end integration test runs with an unrelated `SmartLifecycle` present to guard it.)
 
 ---
 

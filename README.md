@@ -20,10 +20,11 @@
 > `tandem-core`, `tandem-jdbc`, `tandem-kafka`, and the `tandem-test` helpers — is built and tested
 > end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md))
 > and is **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
-> The **Spring Boot write-side** (`tandem-spring-producer` — autoconfiguration plus the four usage tiers)
-> is implemented and tested against Boot 3.x, but **not yet released**. The Spring relay
-> autoconfiguration, the standalone relay, the Admin API, MySQL support, and the optional adapters are
-> **not yet implemented**. Start with the [HLD](docs/HLD.md) for the full design.
+> The **Spring Boot integration** is implemented and tested against Boot 3.x, but **not yet released**:
+> `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
+> `tandem-spring-relay` (the relay autoconfiguration, started with the application). The prebuilt
+> standalone relay, the Admin API, MySQL support, and the optional adapters are **not yet implemented**.
+> Start with the [HLD](docs/HLD.md) for the full design.
 
 ## What is Tandem?
 
@@ -78,10 +79,11 @@ If the relay crashes after publishing but before marking the row done, it republ
   cost) or `LEASE` (lease-partitioned ownership for a horizontally-scaled client or multiple relay
   processes). Both modes are implemented and tested. Only the outbox INSERT must live in the client,
   which stays dependency-light.
-- **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration
-  for the **write side** (`tandem-spring-producer`) is implemented — the four usage tiers over the outbox
-  INSERT (see the [Spring sample](#try-it)); the relay-side autoconfiguration and a prebuilt standalone
-  relay are 🔜 planned, so relay wiring is manual for now (see [Usage](#usage)).
+- **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
+  implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
+  INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
+  app needs no manual wiring (see the [Spring sample](#try-it)); a prebuilt standalone relay deployable is
+  🔜 planned. Plain-Java wiring stays available (see [Usage](#usage)).
 
 ## Architecture at a glance
 
@@ -188,10 +190,11 @@ WorkerPool       relay      = new WorkerPool(store, dispatcher, RelayConfig.defa
 relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lease)
 ```
 
-Spring users get higher-level options from `tandem-spring-producer`: autoconfiguration (which runs the
-bucket-count guard for you), a `TransactionalOutboxTemplate`, a `@TransactionalOutbox` annotation, and a
-Spring application-events tier — see the [Spring sample](#try-it) and
-[LLD-spring-producer.md](docs/LLD-spring-producer.md).
+Spring users write none of the above. `tandem-spring-producer` autoconfigures the write side (running
+the bucket-count guard for you) and adds the `TransactionalOutboxTemplate`, the `@TransactionalOutbox`
+annotation, and the Spring application-events tier; `tandem-spring-relay` autoconfigures the relay and
+starts it with the application. Both wire from `tandem.*` properties — see the [Spring sample](#try-it),
+[LLD-spring-producer.md](docs/LLD-spring-producer.md) and [LLD-spring-config.md](docs/LLD-spring-config.md).
 
 ## Logging
 
@@ -279,7 +282,7 @@ tandem-sample-spring\run.cmd
 | `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
 | `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
 | `tandem-spring-producer` | Spring Boot autoconfig for the write side — the four usage tiers — see [LLD-spring-producer.md](docs/LLD-spring-producer.md) | 🚧 in progress — not yet released |
-| `tandem-spring-relay` | Spring Boot autoconfig for the relay — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🔜 planned |
+| `tandem-spring-relay` | Spring Boot autoconfig for the relay — started with the application — see [LLD-spring-config.md](docs/LLD-spring-config.md) | 🚧 in progress — not yet released |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
 | `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |
