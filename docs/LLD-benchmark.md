@@ -484,6 +484,20 @@ scales with `offered rate × hot fraction × drive time`, not the milder scaling
 backlog) but then timed out waiting for that same, now-smaller backlog to drain within the *original*
 (too-short-relative-to-10s) window. Found by actually running a `duration=150s` demo, not by inspection.
 
+**No scenario measures idle-path dispatch latency, and S2 is not it.** S2 holds ~50% of a sustainable
+rate for its whole window, so its buckets are continuously busy — and a busy worker never sleeps
+`pollInterval` (it claims back-to-back while work remains, LLD-jdbc §3.1). S2 therefore measures the
+`claim → encode → publish → consume` path with the discovery term already at ~0, which is the right
+thing for a "latency at normal load" number but leaves the **other** regime unmeasured: a bucket that
+was drained, whose worker is sleeping, pays a discovery delay uniform in `[0, pollInterval]` (mean ~50 ms
+at the default) before its first row is even seen. That regime is what any post-commit wakeup mechanism
+would improve, so **there is currently no measurement that would show such an improvement — or its
+absence** (dispatch-latency.md, Q-D). A scenario for it would need a shape none of S1–S8 have: drive a
+low, sparse rate (one event every few seconds per aggregate, well below any drain rate) and report the
+distribution of `commit → first claim`, not just the end-to-end percentile. Deliberately not added in
+this round — the mechanism it would evaluate is itself undecided, and an idle-path number is only
+meaningful against the §5 reference baseline, not a laptop.
+
 ### 8.1 Observations from a `--demo --duration=150s` run (this Mac, 2026-07-02, all 6 scenarios, ~28 min)
 
 Every scenario passed correctness (zero ordering violations, zero missing keys, all six). The
@@ -708,7 +722,8 @@ HLD-load-testing.md §2.3); a `tandem-micrometer`-based telemetry path (stays th
 `BenchmarkEnvironment` (§3); a real per-worker (rather than whole-instance) kill for S5; S8 with more
 than two instances or a throughput-scaling comparison (currently correctness/partitioning only, §8.2);
 any fix to the `LEASE` new-joiner-starvation finding (§8.2) — that is `tandem-jdbc` scope, not this
-harness's.
+harness's; an idle-path dispatch-latency scenario (§8, dispatch-latency.md Q-D — the mechanism it would
+evaluate is undecided, and the number needs the reference baseline to mean anything).
 
 ---
 
