@@ -243,7 +243,11 @@ class WorkerPoolTest {
 
         pool.start();
         try {
-            awaitUpTo(Duration.ofSeconds(20), () -> metrics.activeWorkers() == 2);
+            // Wait for the state under assertion, not merely for some reading to exist: the first
+            // reading is taken the instant the relay starts, which can be before the head is claimed —
+            // and then all three rows are still waiting.
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1 && metrics.lag() == 2);
         } finally {
             pool.stop();
         }
@@ -251,6 +255,7 @@ class WorkerPoolTest {
         // The head is in flight; its two successors are still waiting, and have been for 30s.
         assertThat(metrics.lag()).isEqualTo(2);
         assertThat(metrics.lagAgeSeconds()).isEqualTo(30);
+        assertThat(metrics.activeWorkers()).isEqualTo(2);
     }
 
     @Test
