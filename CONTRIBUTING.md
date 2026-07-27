@@ -48,6 +48,7 @@ characteristics:
 
 | Module | Purpose |
 |---|---|
+| `tandem-bom` | Bill of Materials — version constraints for every published module, no code. |
 | `tandem-core` | Ports and domain types — no I/O, no external dependencies. |
 | `tandem-jdbc` | Write-side outbox INSERT, relay polling/claiming, PostgreSQL adapter. |
 | `tandem-kafka` | CloudEvents publication to Kafka. |
