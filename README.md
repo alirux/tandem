@@ -305,6 +305,69 @@ tandem-sample-spring\run.cmd
 > capabilities (causal ordering, attempt archive, tracing, Micrometer) have their ports in
 > `tandem-core` but resolve to no-op defaults until their adapters land.
 
+## Known issues & limitations
+
+What is *missing* is in the table above. This section is the other half: behaviours of what **is**
+shipped that can surprise you in production. Each one is a deliberate trade-off or a tracked gap —
+none is a bug report.
+
+- **A permanently failed event stops its aggregate.** The claim query only takes a row when no
+  earlier row of the same `aggregate_id` is still PENDING, IN_FLIGHT or FAILED — that is what
+  preserves per-aggregate order, and it means a row that exhausts `maxAttempts` (default 10, roughly
+  7 minutes with the jittered backoff ladder) leaves every later event of that aggregate
+  undelivered. Other aggregates are unaffected: the blast radius is one aggregate, by design.
+  **Resolution:** until the Admin API lands there is no supported operator action — you inspect
+  `last_error` and move the row to `status = 4` (DISCARDED) with SQL to unblock the chain.
+
+- **Ordering within an aggregate is only as good as your write-side.** Tandem relays rows in `id`
+  order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
+  two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
+  second, the relay will already have published the later event. The contract is that writers to one
+  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, or an optimistic version
+  check — and that `seq` is that aggregate's version. See [HLD §4.2](docs/HLD.md).
+
+- **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
+  and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox
+  pattern pays to never diverge.
+
+- **A reclaimed row has a brief double-ownership window.** `markDone`/`markForRetry`/`markFailed`
+  update by `id` without an `AND locked_by = :me` fence, so after a lease expiry and reclaim a late
+  write from the previous owner can still land on a row another instance now owns. The effect is
+  bounded to at most a duplicate publish — never a reorder — which is why the fence is tracked as
+  hardening rather than a fix ([IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) §6).
+
+- **Idle latency is bounded by `pollInterval`, not by the commit.** There is no post-commit wakeup
+  yet: a bucket that was drained waits on average `pollInterval / 2` (≈ 50 ms at the 100 ms default,
+  100 ms worst case) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
+  worker loop only sleeps when a claim comes back empty. Lowering `pollInterval` trades this against
+  idle query load across all instances and workers; the full analysis, and the wakeup options, are in
+  [dispatch-latency.md](docs/dispatch-latency.md).
+
+- **`bucketCount` is immutable after the first deploy.** Changing it re-maps aggregates onto
+  different buckets and would split one aggregate's events across workers, so the startup guard
+  refuses a mismatch rather than accepting it — and re-sharding an existing outbox is not supported.
+  Pick `B` once (default 256, comfortable to well past the parallelism most deployments need).
+
+- **Cleanup and lease reclaim are not bucket-scoped.** Every relay instance scans the whole
+  `tandem_outbox` for expired leases (every 5 s) and for terminal rows past the retention window
+  (every 15 min, default retention 14 days). It is safe — the work is idempotent and keyed by
+  `id`/`status` — just redundant under `LEASE` with N instances ([LLD-jdbc §3.2/§3.7](docs/LLD-jdbc.md)).
+  Terminal rows also stay in the table for the whole retention window, which is what keeps the table
+  large enough to be worth an index-only dispatch scan.
+
+- **No runtime controls.** Configuration is read at startup: there is no pause/resume, and no way to
+  retune the relay without restarting the process. Today, taking a misbehaving relay out of the
+  picture means stopping it — which also stops the buckets that were perfectly healthy.
+
+- **Blocking JDBC only.** The relay is a thread-per-worker pool over a `DataSource`; R2DBC and
+  reactive pipelines are not supported.
+
+- **Five published types do nothing yet.** The `AttemptRecorder`, `TracePropagator` and
+  `CausalContext` ports, plus `AttemptStatus` and `AttemptOutcome`, ship in `tandem-core` and show up
+  in IDE autocomplete, but nothing outside that island references them — they belong to capabilities that are designed
+  ([HLD-tracing.md](docs/HLD-tracing.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),
+  [causal-ordering.md](docs/causal-ordering.md)) and not yet implemented. Treat them as reserved API.
+
 ## Documentation
 
 | Document | Contents |
