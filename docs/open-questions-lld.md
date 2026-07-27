@@ -135,9 +135,9 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   block the aggregate (excluded from the poison-gate). *(tandem-core / jdbc / admin; HLD §5.3, HLD-admin-api)*
 - [ ] **Q25 (P2)** — **`AdminService` signatures** (1:1 with the OpenAPI `operationId`s), cursor
   pagination encoding, relay-control table schema (see Q16). *(tandem-admin; admin-api.openapi.yaml)*
-- [ ] **Q30 (P2)** — **Two admin endpoints for the lag gauges.** The relay reads them on a fixed
-  `metricsInterval` (default 10s, LLD-jdbc §4), which leaves an operator two gaps the metrics alone
-  cannot close — hence, API-first, two additions to design **in the OpenAPI before implementing**:
+- [ ] **Q30 (P2)** — **Three admin additions around the lag gauges.** The relay reads them on a fixed
+  `metricsInterval` (default 10s, LLD-jdbc §4), which leaves an operator gaps the metrics alone
+  cannot close — hence, API-first, three additions to design **in the OpenAPI before implementing**:
   1. **Change `metricsInterval` at runtime**, without a restart: raise the resolution while
      investigating an incident, lower it again afterwards. Design points: it is a *relay* control like
      pause/resume (Q16, `tandem_relay_control`), so it must reach **every** instance, not just the one
@@ -149,7 +149,19 @@ resolved (or consciously deferred) to write correct per-module LLDs.
      stale. Design points: whether it also pushes the value through `TandemMetrics` (so a scrape sees
      it) or only returns it; per-bucket breakdown (the port has no per-bucket reading — see the
      backlog); and its cost, since `min(created_at)` is unindexed and therefore proportional to the
-     backlog. *(tandem-admin; admin-api.openapi.yaml, HLD §7, LLD-jdbc §4)*
+     backlog.
+  3. **`RelayStatus` must be able to say "no relay is alive".** Its `state` enum is `RUNNING | PAUSED`
+     today, which cannot express the case an operator most needs the endpoint for — and which the lag
+     gauges cannot cover either, since they are emitted *by* the relay (HLD §7). Adding an enum value
+     is additive and allowed (§1.4 requires readers to tolerate unknown enum values), so this is a
+     design decision, not a breaking change. Two harder parts come with it: **who answers** when the
+     relay is down (an Admin API embedded in the relay's own process cannot), and **how the state is
+     determined**, which is not uniform across coordination modes — under `LEASE` the heartbeats in
+     `tandem_relay_member` witness liveness from the database, whereas under `SINGLE` no table records
+     that a relay exists at all, so "not running" and "never configured" are indistinguishable from
+     the data. Either accept and document that limit for `SINGLE`, or make `tandem_relay_member` no
+     longer a `LEASE`-only structure — a cost imposed on the default mode, so a Pareto decision
+     (§1.1), not an obvious win. *(tandem-admin; admin-api.openapi.yaml, HLD §3.2/§7, LLD-jdbc §3.2)*
 
 ## F. tandem-test
 

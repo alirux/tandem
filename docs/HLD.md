@@ -639,6 +639,38 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
 
+**Telling the three "the backlog is growing" cases apart.** A rising backlog has three very different
+causes, and the metrics separate them only when read together — the value alone is not enough:
+
+| | `lag.age_seconds` | `published.rate` | `workers.active` |
+|---|---|---|---|
+| **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent |
+| **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 |
+| **Relay under-provisioned** — working flat out, losing | present, **climbing** | high, saturated | > 0 |
+
+The last two separate cleanly, because throughput and backlog age are independent signals: an age that
+climbs *while the relay publishes at full rate* means too little relay for the load, whereas an age
+that climbs while nothing is published means the relay is wedged (broker unreachable, DB contention,
+buckets uncovered).
+
+The first case is different in kind: it is diagnosed from the **presence** of the series, never from
+its value, and presence is ambiguous — a missing series equally means the relay has not started yet,
+was disabled (`tandem.relay.enabled=false`), refused to start on a failed invariant, has no metrics
+adapter wired at all, or the whole application is down. Two correlations disambiguate it: the
+application's own liveness signal, and `tandem.relay.config.invalid`, which is recorded **once at
+startup even on the failure path**, before the relay aborts — so it is present exactly in the
+"refused to start" case and absent in the others. The startup window itself is narrow by design: the
+first reading is taken when the relay starts, not one `metricsInterval` later, so a healthy
+just-started relay does not masquerade as an absent one.
+
+**Detecting an absent relay from outside the process depends on the coordination mode (§3.2).** Under
+`LEASE`, `tandem_relay_member` carries each instance's heartbeat, so an external observer — the Admin
+API, or a plain query — can see that no member is fresh and conclude the relay is gone rather than
+slow. Under `SINGLE` there is no such table: nothing in the database records that a relay was ever
+supposed to exist, so "no relay running" and "no relay ever configured" are indistinguishable from the
+data alone, and the only witness is the process that is missing. An operator running `SINGLE` must
+therefore rely on application-level liveness for that case.
+
 ### 7.1 Attempt Archive (optional, off by default)
 
 Metrics answer *"is the system healthy?"*; they do not let an operator reconstruct *what
