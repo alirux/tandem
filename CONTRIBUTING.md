@@ -44,6 +44,16 @@ characteristics:
 ./gradlew :tandem-benchmark:loadTest
 ```
 
+The same module also carries a demo that prints the relay's lag gauges (backlog size, backlog age,
+live workers) through a build-up, a drain and a steady-load phase. It measures nothing and gates
+nothing — it exists so the *shape* of the signal can be judged by looking at it, which a passing
+assertion cannot do. Run it when you change what the gauges report or how often they are read
+([LLD-benchmark.md](docs/LLD-benchmark.md) §6.2); it takes ~50s and needs Docker:
+
+```bash
+./gradlew :tandem-benchmark:lagGaugeDemo
+```
+
 ## Project layout
 
 | Module | Purpose |
