@@ -621,6 +621,21 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 
 **Alerting guidance:**
 - `lag.age_seconds` > threshold (e.g. 60s) → relay is stalled or under-provisioned
+- **`lag.*` stale or absent → alert on that too.** The lag gauges are read *by the relay*, on a
+  periodic reading (`metricsInterval`, default 10s). A relay that is down therefore does not report
+  a growing backlog — it reports **nothing**, and the gauges freeze at their last value or disappear
+  entirely, while the backlog keeps growing unseen. The one failure this signal cannot cover on its
+  own is the one where the whole relay is gone, so an operator must also alert on the *absence* of a
+  fresh reading (a staleness / `absent()` rule), not only on a high value. Under `LEASE` a surviving
+  peer keeps reporting and `bucket.uncovered` covers the partial case; with a single relay there is
+  no such witness. A lag reading computed **outside** the relay — the Admin API (§7.3), which queries
+  the same table — is the natural complement, and the reason not to treat these gauges as sufficient.
+- **A burst shorter than `metricsInterval` is invisible by design.** The reading is periodic, not
+  event-driven, so a backlog that builds and drains between two readings never appears. The gauges
+  are a trend and alerting signal, not a diagnostic trace; lower the interval where finer resolution
+  is worth the cost. That cost is not flat: `count(*)` uses the partial index on `status = 0`, but
+  `min(created_at)` is not indexed, so the query is proportional to the backlog — most expensive
+  exactly when the backlog is large.
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
 

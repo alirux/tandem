@@ -87,3 +87,14 @@ tasks.named<Test>("test") {
 tasks.named("check") {
     dependsOn(integrationTest)
 }
+
+// Prints the relay's lag gauges over a build-up/drain/steady run so their shape can be inspected
+// (LLD-benchmark §6.2). Separate from `loadTest`: it measures nothing and gates nothing, it shows.
+tasks.register<JavaExec>("lagGaugeDemo") {
+    description = "Prints the relay's lag gauge series (LagGaugeDemo). Requires Docker."
+    group = "verification"
+    mainClass.set("com.codingful.tandem.benchmark.LagGaugeDemo")
+    classpath = sourceSets["main"].runtimeClasspath
+    standardOutput = System.out
+    errorOutput = System.err
+}

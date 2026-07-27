@@ -135,6 +135,21 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   block the aggregate (excluded from the poison-gate). *(tandem-core / jdbc / admin; HLD §5.3, HLD-admin-api)*
 - [ ] **Q25 (P2)** — **`AdminService` signatures** (1:1 with the OpenAPI `operationId`s), cursor
   pagination encoding, relay-control table schema (see Q16). *(tandem-admin; admin-api.openapi.yaml)*
+- [ ] **Q30 (P2)** — **Two admin endpoints for the lag gauges.** The relay reads them on a fixed
+  `metricsInterval` (default 10s, LLD-jdbc §4), which leaves an operator two gaps the metrics alone
+  cannot close — hence, API-first, two additions to design **in the OpenAPI before implementing**:
+  1. **Change `metricsInterval` at runtime**, without a restart: raise the resolution while
+     investigating an incident, lower it again afterwards. Design points: it is a *relay* control like
+     pause/resume (Q16, `tandem_relay_control`), so it must reach **every** instance, not just the one
+     answering the request — the DB is the coordination point; bounds and validation on the accepted
+     value; whether it persists across restarts or reverts to the configured default.
+  2. **Take a lag reading on demand**, returning it in the response. This is the one that also covers
+     the **dead-relay** case (HLD §7 alerting): a reading computed by the admin layer querying
+     `tandem_outbox` needs no relay to be alive, so it answers precisely when the gauges have gone
+     stale. Design points: whether it also pushes the value through `TandemMetrics` (so a scrape sees
+     it) or only returns it; per-bucket breakdown (the port has no per-bucket reading — see the
+     backlog); and its cost, since `min(created_at)` is unindexed and therefore proportional to the
+     backlog. *(tandem-admin; admin-api.openapi.yaml, HLD §7, LLD-jdbc §4)*
 
 ## F. tandem-test
 

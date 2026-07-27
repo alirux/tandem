@@ -1,6 +1,6 @@
 # Tandem — `tandem-benchmark` LLD
 
-**Version:** 0.2 (Implemented & smoke-verified 2026-07-02)  
+**Version:** 0.3 (Implemented & smoke-verified; gauge demo added)  
 **Module:** `tandem-benchmark` · package `com.codingful.tandem.benchmark`  
 **Depends on:** `tandem-test` (transitively pulls `tandem-core`, `tandem-jdbc`, `tandem-kafka`,
 `kafka-clients`, and the Testcontainers Postgres+Kafka runtime), HdrHistogram, HikariCP; JUnit 6 +
@@ -263,30 +263,26 @@ lock-free concurrent recording), lossless, reporting p50/p95/p99/p99.9 via `snap
 
 ---
 
-## 6. `BenchmarkMetrics` — counters only; lag comes from `LagProbe`
+## 6. `BenchmarkMetrics` — the relay's own readings; `LagProbe` — an independent one
 
-**Correction vs. the original design:** the original plan for this section described
-`TandemMetrics.recordLagAgeSeconds` as the signal `RampController` and a "steady-state detector"
-consume. **While implementing this, it became clear no code in the product ever calls that method** —
-`RelayWorker`/`WorkerPool` only ever call `incrementPublished`, `incrementRetry`, `recordFailed`,
-`incrementLeaseExpired`, and `recordConfigInvalid` (grep-verified against `tandem-jdbc`). Lag/lag-age
-was never something the relay self-reports; it is purely something an external observer (this harness,
-or a future Admin API) has to compute from the table.
+Two sources of the same figures, kept deliberately separate so each can check the other:
 
-So the as-built split is:
-
-- **`BenchmarkMetrics`** implements `TandemMetrics` and is registered with the relay purely as a
-  **counter sink**: `publishedCount`, `failedCount`, `retryCount`, `leaseExpiredCount`,
-  `configInvalidCount`, plus `publishedSinceLast()` (a sample-and-reset counter for a throughput
-  window). It has no lag concept at all.
-- **`LagProbe`** (§6.1) is the *only* source of lag/backlog signal, entirely via direct SQL over
-  `tandem_outbox` — both the global signal `RampController` uses and the per-bucket signal S3 uses.
+- **`BenchmarkMetrics`** implements `TandemMetrics` and is registered with the relay, so it receives
+  whatever the relay reports: the counters (`publishedCount`, `failedCount`, `retryCount`,
+  `leaseExpiredCount`, `configInvalidCount`, plus `publishedSinceLast()` — a sample-and-reset counter
+  for a throughput window) and the gauges the relay reads periodically (backlog, backlog age, live
+  workers; LLD-jdbc §4). A gauge reads `-1` until the relay has reported one, which is itself
+  informative: a stopped relay reports nothing at all.
+- **`LagProbe`** (§6.1) computes backlog signals from `tandem_outbox` directly, without going through
+  the product at all. It stays for three reasons: it is the harness's **independent** check on what
+  the relay reports (§6.2), it answers **per-bucket** questions the port still cannot (S3), and it
+  works **while the relay is stopped**, which several scenarios need.
 
 ### 6.1 `LagProbe` — direct-SQL lag observation
 
-The core port exposes no per-bucket lag metric today (product-side observability gap, tracked in the
-project backlog), and as §6 established, it exposes no lag signal of any kind that the product itself
-populates. `LagProbe` therefore queries `tandem_outbox` directly for everything:
+The core port reports a global backlog reading but no **per-bucket** one (product-side observability
+gap, tracked in the project backlog), and its readings only exist while the relay runs. `LagProbe`
+therefore queries `tandem_outbox` directly for everything it needs:
 
 | Method | Query shape | Used by |
 |---|---|---|
@@ -306,6 +302,85 @@ Two design points only became clear once real Docker runs exposed the failure mo
 - **Every drain-related query must be namespace-scoped** (§4.3) for the same cross-scenario-collision
   reason: S6's permanently-stuck poisoned backlog must not count against *another* scenario's own
   drain-completeness check when they share one `tandem_outbox` table.
+
+### 6.2 `LagGaugeDemo` — showing what the gauges look like
+
+`./gradlew :tandem-benchmark:lagGaugeDemo` prints the relay's lag gauges over a scripted run. It
+**measures nothing and gates nothing**, and it is deliberately not a test: its purpose is to let the
+shape of the signal be judged by looking at it, which a passing assertion cannot do. A test proves a
+value matched an expectation; it says nothing about whether the metric is *useful* to someone
+watching a dashboard — whether the scale, the units, the update frequency and the behaviour under
+real load make sense. That judgement needs the actual output.
+
+The run has three phases, sampled every 500ms. The reading interval is lowered from its 10s default
+for the same reason the demo exists: at 10s the whole build-up and drain would fall between two
+readings and the curve would collapse into a handful of points.
+
+1. **relay down** — load runs with no relay at all. Only `LagProbe` sees anything.
+2. **draining** — the relay starts and works off what piled up.
+3. **steady load** — a rate the relay absorbs comfortably, then a settling window so the inserts still
+   in flight land before the generator closes (closing interrupts them mid-transaction, which litters
+   the report with driver stack traces).
+
+Each line prints the relay's own last reported reading beside `LagProbe`'s SQL taken at that instant,
+so the two independent implementations of the same two figures can be read against each other. The
+program prints its own legend, reproduced here in full because the column names alone do not carry
+their meaning:
+
+```
+What the columns mean
+  time      seconds since the run started
+  phase     what is being done to the relay at that moment
+  waiting   events still to be published (rows in status PENDING)
+  oldest    how long the oldest of those events has been waiting, in seconds
+  workers   relay worker threads alive
+
+  The left block is what the RELAY ITSELF last reported through TandemMetrics —
+  what a dashboard would show, up to one reading interval old, and '-' until the
+  relay has reported at all. The right block is the same two figures recomputed by
+  the harness with its own SQL, at the instant the line is printed.
+
+                      |   reported by the relay     |   measured now
+   time  phase        |   waiting   oldest workers  |   waiting   oldest
+------------------------------------------------------------------------------
+   0.0s  relay down   |         -        -       -  |         0      0.0
+   0.5s  relay down   |         -        -       -  |       202      0.5
+   4.1s  relay down   |         -        -       -  |      1618      4.1
+   8.2s  draining     |         -        -       -  |      3249      8.2
+   8.7s  draining     |      2494      8.4       8  |      2666      8.7
+   9.2s  draining     |      1223      7.4       8  |      1421      8.2
+   9.7s  draining     |       287      6.8       8  |       270      6.8
+  10.2s  draining     |        60      5.9       8  |        46      5.6
+  10.8s  draining     |         5      4.2       8  |         4      4.2
+  11.3s  draining     |         0      0.0       8  |         0      0.0
+  27.0s  draining     |         0      0.0       8  |         0      0.0
+  31.5s  steady load  |         4      0.1       8  |         4      0.1
+  36.1s  steady load  |         3      0.1       8  |         4      0.1
+  45.2s  settling     |         0      0.0       8  |         0      0.0
+```
+
+How to read it, and what the run establishes:
+
+- **Until 8.2s the relay is down, so its half of the table is empty.** The backlog is real and
+  growing — the probe watches it reach 3249 events aged 8.2s — but the relay reports *nothing*,
+  because the reading is taken by the relay itself. This is the shape of the one failure these gauges
+  cannot cover on their own, and the reason HLD §7's alerting guidance also requires alerting on a
+  **stale or absent** reading, not only on a high one.
+- **At 8.7s the relay starts and immediately reports** what it inherited: 2494 waiting, oldest 8.4s,
+  8 workers alive. The first reading is taken at startup rather than one interval later precisely so
+  that this moment is visible.
+- **While draining, `oldest` falls** — 8.4 → 7.4 → 6.8 → 5.9 → 4.2 → 0 — because each pass removes the
+  oldest rows, so the oldest *remaining* row is younger every time. A backlog age that drops is the
+  system catching up; one that climbs is the alerting condition.
+- **Steady state is a handful of rows at ~0.1s.** That is one poll cycle's breathing, not a problem —
+  useful to know before setting an alert threshold, since a naive "waiting > 0" rule would fire
+  constantly.
+- **The two sources agree wherever the figure is stable** (287 vs 270, 5 vs 4, 0 vs 0, and throughout
+  steady state) **and diverge only mid-drain** (2494 vs 2666), where the backlog halves between one
+  sample and the next so the two readings land at genuinely different instants. That divergence is the
+  reading interval making itself visible, not a computation error — and the agreement everywhere else
+  is the strongest available check that the relay's query and the harness's independent SQL compute
+  the same thing.
 
 ---
 
@@ -543,6 +618,9 @@ no measurable time. No product code involved.
   `test`/`check` lifecycle** — slow, resource-hungry, not meant for shared CI runners. Pass
   `LoadTestRunner` args through Gradle with `--args`, e.g.
   `./gradlew :tandem-benchmark:loadTest --args="--demo S1,S2,S5,S6"`.
+- **Gauge demo:** `./gradlew :tandem-benchmark:lagGaugeDemo` → `LagGaugeDemo.main` (§6.2). Also out of
+  `test`/`check`, and out of `loadTest`: it is a ~50s look at the shape of the lag gauges, not a
+  measurement.
 - **`--duration=<seconds>`** overrides whichever base config's `duration` (applied after
   `--smoke`/`--demo`) — for a run longer than `--demo`'s 20s but far short of the 10-minute full-run
   default. S3 is safe to include regardless: its own drive phase and drain timeout are both capped
@@ -639,9 +717,11 @@ harness's.
 Recorded here so the reasoning isn't re-derived later. All were found via real Docker-container runs
 (`SmokeLoadTest`, and later `LoadTestRunner --demo`), not by inspection:
 
-1. **`TandemMetrics.recordLagAgeSeconds` is never called by the product** (§6) — the original design
-   assumed it was the ramp signal; it isn't populated by anything, so `LagProbe` (direct SQL) is the
-   sole lag source instead.
+1. **The lag signal had no product-side source at all** (§6) — the original design assumed
+   `TandemMetrics.recordLagAgeSeconds` was the ramp signal, but nothing in the relay called it, so
+   `LagProbe`'s direct SQL became the harness's only lag source. The relay reports the backlog itself
+   since 2026-07-27 (LLD-jdbc §4); `LagProbe` stays as the independent cross-check (§6.2), for the
+   per-bucket signal the port still lacks, and because it works while the relay is stopped.
 2. **Aggregate-id collisions across scenarios sharing one environment cause a permanent hang** (§4.3) —
    fixed by namespacing every generated aggregate id and every drain-related `LagProbe` query per
    scenario.
