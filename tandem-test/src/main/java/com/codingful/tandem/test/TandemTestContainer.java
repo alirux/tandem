@@ -36,7 +36,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Integration-test harness (LLD-test §3): starts a real <b>PostgreSQL</b> and a real <b>Kafka</b>
+ * Integration-test harness (LLD-test §4): starts a real <b>PostgreSQL</b> and a real <b>Kafka</b>
  * (KRaft) container, applies the committed baseline DDL, and exposes the {@link DataSource} +
  * bootstrap servers plus convenience factories for the {@link JdbcOutboxRepository}, the
  * {@link WorkerPool} relay and a Kafka consumer — so an end-to-end test can insert, run the relay,

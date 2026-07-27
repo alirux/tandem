@@ -9,6 +9,7 @@ import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.test.ControllableClock;
 import com.codingful.tandem.test.InMemoryOutbox;
 import com.codingful.tandem.test.RecordingDispatcher;
+import com.codingful.tandem.test.RecordingMetrics;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;

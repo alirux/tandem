@@ -144,6 +144,9 @@ public interface OutboxStore {
     void markFailed(long id, String error);                           // → FAILED
     int  reclaimExpiredLeases();                                       // → PENDING; returns count
     int  cleanup(Instant doneBefore, int batchSize);                  // housekeeping (Q12)
+    default Optional<LagSnapshot> lag() { return Optional.empty(); }   // backlog reading for the
+                                                                      // lag gauges; read only while
+                                                                      // metrics are on (LLD-jdbc §4)
 }
 ```
 

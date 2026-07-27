@@ -40,6 +40,7 @@ public final class RelayConfig {
     private final int cleanupBatchSize;
     private final Duration reclaimInterval;
     private final Duration cleanupInterval;
+    private final Duration metricsInterval;
     private final long deliveryTimeoutMs;
 
     private RelayConfig(Builder b) {
@@ -56,6 +57,7 @@ public final class RelayConfig {
         this.cleanupBatchSize = b.cleanupBatchSize;
         this.reclaimInterval = b.reclaimInterval;
         this.cleanupInterval = b.cleanupInterval;
+        this.metricsInterval = b.metricsInterval;
         this.deliveryTimeoutMs = b.deliveryTimeoutMs;
     }
 
@@ -118,6 +120,10 @@ public final class RelayConfig {
 
     public Duration cleanupInterval() {
         return cleanupInterval;
+    }
+
+    public Duration metricsInterval() {
+        return metricsInterval;
     }
 
     public long deliveryTimeoutMs() {
@@ -223,6 +229,7 @@ public final class RelayConfig {
         private int cleanupBatchSize = 1000;
         private Duration reclaimInterval = Duration.ofSeconds(5);
         private Duration cleanupInterval = Duration.ofMinutes(15);
+        private Duration metricsInterval = Duration.ofSeconds(10);
         private long deliveryTimeoutMs = 30_000;   // Kafka producer default (LLD-kafka §1)
 
         private Builder() {
@@ -322,6 +329,15 @@ public final class RelayConfig {
         /** How often the maintenance job reclaims expired leases. Default 5s. */
         public Builder reclaimInterval(Duration reclaimInterval) {
             this.reclaimInterval = Objects.requireNonNull(reclaimInterval, "reclaimInterval");
+            return this;
+        }
+
+        /**
+         * How often the lag gauges are read. Default 10s. Only used when a metrics adapter is wired —
+         * with the no-op default the reading job is never scheduled, so the query never runs (§4).
+         */
+        public Builder metricsInterval(Duration metricsInterval) {
+            this.metricsInterval = Objects.requireNonNull(metricsInterval, "metricsInterval");
             return this;
         }
 

@@ -1,10 +1,12 @@
 package com.codingful.tandem.core.port;
 
+import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxRecord;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -58,4 +60,14 @@ public interface OutboxStore {
 
     /** Housekeeping: delete {@code DONE} rows older than {@code doneBefore}, up to {@code batchSize}; returns the count deleted. */
     int cleanup(Instant doneBefore, int batchSize);
+
+    /**
+     * Read the current backlog for the lag gauges (LLD-jdbc §4). The relay calls this only while a
+     * metrics adapter is wired, so a store that cannot answer cheaply may keep the default.
+     *
+     * @return the reading, or empty if this store does not report lag — the relay then emits nothing
+     */
+    default Optional<LagSnapshot> lag() {
+        return Optional.empty();
+    }
 }

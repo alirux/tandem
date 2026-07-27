@@ -66,9 +66,11 @@ If the relay crashes after publishing but before marking the row done, it republ
 - **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
   programmatic Java API (`ReplayService`); a REST equivalent arrives with the Admin API.
 - **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published, failed and retried
-  counts, plus config-validation failures, with a no-op default. The Micrometer adapter is 🔜 planned,
-  and the lag, active-worker and uncovered-bucket signals are declared on the port but **not yet
-  emitted** by the relay.
+  counts, config-validation failures, and the backlog signals an operator actually alerts on: how many
+  events are waiting, how long the oldest has been waiting, and how many relay workers are alive. The
+  backlog is read periodically and **only when an adapter is wired**, so a no-op default costs nothing.
+  The Micrometer adapter is 🔜 planned, and the uncovered-bucket signal is declared on the port but
+  **not yet emitted**.
 - **Optional, opt-in capabilities, designed but 🔜 not yet implemented** — cross-aggregate causal
   ordering via Lamport clocks, a forensic per-attempt archive, W3C trace/correlation propagation and
   an API-first REST Admin API each have a design document and, where relevant, a port in
@@ -319,6 +321,7 @@ tandem-sample-spring\run.cmd
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [causal-ordering.md](docs/causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
+| [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
 | [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith |
 | [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
 | [IMPLEMENTATION-PLAN-basic-round.md](docs/IMPLEMENTATION-PLAN-basic-round.md) | Execution plan, scope fence, and per-module done-ness for the first milestone |

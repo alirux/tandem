@@ -2,6 +2,7 @@ package com.codingful.tandem.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
@@ -138,6 +139,33 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
         assertThat(quarantining.reclaimExpiredLeases()).isEqualTo(1);
         assertThat(statusOf(id)).isEqualTo(OutboxStatus.FAILED.code());
         assertThat(attemptsOf(id)).isEqualTo(2);
+    }
+
+    @Test
+    void GIVEN_an_empty_outbox_WHEN_the_backlog_is_read_THEN_it_reports_nothing_waiting() {
+        LagSnapshot lag = store.lag().orElseThrow();
+
+        assertThat(lag.pending()).isZero();
+        assertThat(lag.oldestSince()).isEmpty();
+        assertThat(lag.ageSecondsAt(Instant.now())).isZero();
+    }
+
+    @Test
+    void GIVEN_events_waiting_and_others_in_flight_or_delivered_WHEN_the_backlog_is_read_THEN_only_the_waiting_ones_count() {
+        insert("order-1", 1);   // id 1 — becomes IN_FLIGHT below
+        insert("order-2", 1);   // id 2 — becomes DONE below
+        insert("order-3", 1);   // id 3 — stays PENDING
+        insert("order-4", 1);   // id 4 — stays PENDING
+        claim(2);               // claims the two lowest ids, leaving 3 and 4 waiting
+        store.markDone(2);
+
+        LagSnapshot lag = store.lag().orElseThrow();
+
+        // order-1 is in flight: work in progress, not backlog. If its relay dies, the reclaim puts it
+        // back to PENDING and it re-enters this count on its own.
+        assertThat(lag.pending()).isEqualTo(2);
+        assertThat(lag.oldestSince()).isPresent();
+        assertThat(lag.ageSecondsAt(lag.oldestSince().orElseThrow().plusSeconds(45))).isEqualTo(45);
     }
 
     @Test

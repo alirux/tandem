@@ -442,13 +442,16 @@ itself becomes measurably expensive at scale.
 ## 4. Metrics
 
 Emitted through the `TandemMetrics` port (no Micrometer dependency here). Mapping to HLD §7:
-`recordLag` / `recordLagAgeSeconds` (from a periodic count of PENDING rows and the oldest `created_at`),
+`recordLag` / `recordLagAgeSeconds` (both from `OutboxStore.lag()` — a **single** query returning the
+count of PENDING rows and the oldest `created_at`, so the two gauges always describe the same instant;
+read every `metricsInterval`, default 10 s),
 `incrementPublished` (on `markDoneBatch`), `recordFailed`, `incrementRetry`, `incrementLeaseExpired`
 (reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (buckets in `tandem_bucket_lease` with an
 expired/NULL owner but having PENDING rows).
 
-**Basic round = no-op metrics.** With no `tandem-micrometer` adapter wired, the `TandemMetrics` port is
-the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — like the
+**No adapter = no cost.** With no `tandem-micrometer` adapter wired, the `TandemMetrics` port is
+the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — the lag
+reading goes further and is **never scheduled at all**, so its query never runs — like the
 attempt-archive guard (HLD §7.1) — and does not run. In particular the slightly heavier
 `recordUncoveredBuckets` aggregation (join `tandem_bucket_lease` × per-bucket PENDING lag) is a **stub in
 the basic round**; its exact query is specified together with `tandem-micrometer`. The `config.invalid`
@@ -484,6 +487,7 @@ The defaults the basic round needs (the full property reference is the `tandem.*
 | `rowLease` | 60 s | row IN_FLIGHT lease; **hard invariant `rowLease > delivery.timeout.ms`** (default = 2×); relay fail-fasts otherwise (§3.5) |
 | backoff | base 1 s, ×2, cap ~5 min, max 10 attempts | full jitter (§3.6) |
 | `retention` | 14 days | cleanup of DONE/DISCARDED (§3.7) |
+| `metricsInterval` | 10 s | how often the lag gauges are read; the job is **only scheduled when a metrics adapter is wired** (§4) |
 | `topicSuffix` | `-topic` | LLD-kafka §5 |
 | `defaultContentType` | `application/json` | LLD-kafka §3.2 |
 
@@ -532,7 +536,7 @@ relay.start();
 JSON default ships in `tandem-spring-producer`; LLD-core §2.4). So in the basic round the client **serializes
 the payload to `byte[]` itself** and passes the bytes (optionally setting `contentType`, persisted to
 `headers["content-type"]`, §2). The end-to-end `TandemTestContainer` test does the same — it serializes
-a sample payload to bytes and asserts the CloudEvent body on the topic (LLD-test §3).
+a sample payload to bytes and asserts the CloudEvent body on the topic (LLD-test §4).
 
 `tandem-spring-producer` later automates exactly this wiring; nothing here requires it.
 

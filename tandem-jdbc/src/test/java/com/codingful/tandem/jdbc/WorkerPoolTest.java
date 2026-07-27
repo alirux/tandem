@@ -3,6 +3,7 @@ package com.codingful.tandem.jdbc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
@@ -13,6 +14,7 @@ import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.test.ControllableClock;
 import com.codingful.tandem.test.InMemoryOutbox;
 import com.codingful.tandem.test.RecordingDispatcher;
+import com.codingful.tandem.test.RecordingMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,6 +22,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -218,20 +221,68 @@ class WorkerPoolTest {
         assertThat(attempts).hasValueGreaterThan(1);   // at-least-once: the stalled attempt was retried
     }
 
-    /** A real {@link OutboxStore} that lets the first claim kill its worker thread, then delegates. */
-    private static final class CrashingOnceStore implements OutboxStore {
-        private final InMemoryOutbox delegate;
-        private final AtomicBoolean crashed = new AtomicBoolean();
+    @Test
+    void GIVEN_a_backlog_and_a_metrics_adapter_WHEN_the_relay_runs_THEN_it_reports_the_backlog_its_age_and_the_live_workers() {
+        ControllableClock clock = ControllableClock.atEpochDay();
+        InMemoryOutbox outbox = new InMemoryOutbox(BUCKETS, InMemoryOutbox.DEFAULT_MAX_ATTEMPTS, clock);
+        // One chain: only its head is claimable, so the two successors stay PENDING no matter how many
+        // workers run — a backlog that does not depend on claim timing.
+        for (int seq = 1; seq <= 3; seq++) {
+            outbox.insert(OutboxMessage.builder()
+                    .aggregateId("order-1").aggregateType("Order").seq(seq).payload("{}".getBytes()).build());
+        }
+        clock.advance(Duration.ofSeconds(30));   // the backlog has been waiting half a minute
+        RecordingMetrics metrics = new RecordingMetrics();
+        // Nothing ever completes, so the backlog stays put and the reading is stable to assert.
+        OutboxDispatcher stalls = record -> new CompletableFuture<>();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(2).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(50)).build();
+        WorkerPool pool = new WorkerPool(outbox, stalls, cfg, metrics, clock,
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
 
-        CrashingOnceStore(InMemoryOutbox delegate) {
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> metrics.activeWorkers() == 2);
+        } finally {
+            pool.stop();
+        }
+
+        // The head is in flight; its two successors are still waiting, and have been for 30s.
+        assertThat(metrics.lag()).isEqualTo(2);
+        assertThat(metrics.lagAgeSeconds()).isEqualTo(30);
+    }
+
+    @Test
+    void GIVEN_no_metrics_adapter_WHEN_the_relay_runs_THEN_the_backlog_is_never_queried() {
+        CountingStore store = new CountingStore(new InMemoryOutbox());
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(store, new RecordingDispatcher(), cfg);   // metrics: the no-op default
+
+        pool.start();
+        try {
+            // 20 poll cycles at a 10ms interval leave ample room for a 10ms metrics tick to have fired.
+            awaitUpTo(Duration.ofSeconds(20), () -> store.claims() >= 20);
+        } finally {
+            pool.stop();
+        }
+
+        // An outbox nobody is watching must not pay for the gauges — not even one query.
+        assertThat(store.lagQueries()).isZero();
+    }
+
+    /** Delegates every call to a real {@link InMemoryOutbox}; each subclass bends exactly one of them. */
+    private abstract static class DelegatingStore implements OutboxStore {
+        private final InMemoryOutbox delegate;
+
+        DelegatingStore(InMemoryOutbox delegate) {
             this.delegate = delegate;
         }
 
         @Override
         public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
-            if (crashed.compareAndSet(false, true)) {
-                throw new Error("simulated fatal failure while claiming");
-            }
             return delegate.claimBatch(buckets, workerId, lease, batchSize);
         }
 
@@ -263,6 +314,58 @@ class WorkerPoolTest {
         @Override
         public int cleanup(Instant doneBefore, int batchSize) {
             return delegate.cleanup(doneBefore, batchSize);
+        }
+
+        @Override
+        public Optional<LagSnapshot> lag() {
+            return delegate.lag();
+        }
+    }
+
+    /** Counts how often the relay claimed work and how often it read the lag gauge. */
+    private static final class CountingStore extends DelegatingStore {
+        private final AtomicInteger claims = new AtomicInteger();
+        private final AtomicInteger lagQueries = new AtomicInteger();
+
+        CountingStore(InMemoryOutbox delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+            claims.incrementAndGet();
+            return super.claimBatch(buckets, workerId, lease, batchSize);
+        }
+
+        @Override
+        public Optional<LagSnapshot> lag() {
+            lagQueries.incrementAndGet();
+            return super.lag();
+        }
+
+        int claims() {
+            return claims.get();
+        }
+
+        int lagQueries() {
+            return lagQueries.get();
+        }
+    }
+
+    /** Lets the first claim kill its worker thread with an {@link Error}, then behaves normally. */
+    private static final class CrashingOnceStore extends DelegatingStore {
+        private final AtomicBoolean crashed = new AtomicBoolean();
+
+        CrashingOnceStore(InMemoryOutbox delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+            if (crashed.compareAndSet(false, true)) {
+                throw new Error("simulated fatal failure while claiming");
+            }
+            return super.claimBatch(buckets, workerId, lease, batchSize);
         }
 
         boolean crashed() {

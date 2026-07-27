@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.codingful.tandem.core.exception.TandemConfigurationException;
+import com.codingful.tandem.test.RecordingMetrics;
 import java.lang.System.Logger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;

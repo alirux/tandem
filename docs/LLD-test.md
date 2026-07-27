@@ -38,7 +38,15 @@ already-completed for recorded successes, completed-exceptionally with the chose
 `OutboxDispatchException` for forced failures — and a controllable variant that completes futures on
 demand, so the relay's **overlapping in-flight dispatch** (LLD-jdbc §3.4) is exercised as in production.
 
-## 3. `TandemTestContainer` — integration tests
+## 3. `RecordingMetrics` — enabled `TandemMetrics`
+
+An **enabled** `TandemMetrics` that keeps what it was told: counters accumulate, gauges keep their
+latest reading. Being enabled is the point — every metric call in the relay sits behind
+`isEnabled()`, and the lag reading is not even scheduled without an adapter (LLD-jdbc §4), so a test
+running on the no-op default exercises none of that code. A real collaborator, not a mock; also
+usable by an adopter to check their own adapter is reached.
+
+## 4. `TandemTestContainer` — integration tests
 
 A Testcontainers helper (tagged `@Tag("integration")`) that:
 - starts a real **PostgreSQL** and a real **Kafka** (KRaft) container,
@@ -49,8 +57,8 @@ A Testcontainers helper (tagged `@Tag("integration")`) that:
 so an end-to-end test can: insert in a transaction → run the relay → assert the CloudEvent landed on
 the topic in per-aggregate order.
 
-## 4. Scope (minimal, for the basic round)
+## 5. Scope (minimal, for the basic round)
 
-In: the three helpers above — enough to unit-test write-side + relay loop and integration-test the
+In: the four helpers above — enough to unit-test write-side + relay loop and integration-test the
 full path. Out (later): MySQL container variants, causal-ordering/attempt-archive/admin test fixtures,
 property-based/fuzz harnesses.

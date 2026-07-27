@@ -113,6 +113,14 @@ public final class WorkerPool {
         long cleanupMs = cfg.cleanupInterval().toMillis();
         scheduler.scheduleWithFixedDelay(this::cleanupTick, cleanupMs, cleanupMs, TimeUnit.MILLISECONDS);
         scheduler.scheduleWithFixedDelay(this::heartbeatTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
+        if (metrics.isEnabled()) {
+            // Scheduled only when an adapter is wired: with the no-op default the lag query never runs,
+            // so an outbox nobody is watching pays nothing for the gauges (§4). The first reading is
+            // taken immediately rather than one interval in: a relay that just started may be inheriting
+            // a backlog from the instance it replaced, and that is the moment worth seeing.
+            long metricsMs = cfg.metricsInterval().toMillis();
+            scheduler.scheduleWithFixedDelay(this::metricsTick, 0, metricsMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     /** This worker's slice of the instance's currently-owned buckets: {@code bucket % workerCount == index}. */
@@ -198,6 +206,34 @@ public final class WorkerPool {
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Cleanup failed", e);
         }
+    }
+
+    /**
+     * Read the lag gauges and report how many workers are actually alive (§4). Failing here must never
+     * disturb delivery — an unreadable gauge is a monitoring problem, not a relay problem — so, like
+     * the other maintenance jobs, it swallows the failure after logging it.
+     */
+    private void metricsTick() {
+        try {
+            store.lag().ifPresent(lag -> {
+                metrics.recordLag(lag.pending());
+                metrics.recordLagAgeSeconds(lag.ageSecondsAt(clock.instant()));
+            });
+            metrics.recordActiveWorkers(aliveWorkers());
+        } catch (Exception e) {
+            LOG.log(Level.ERROR, "Reading relay metrics failed", e);
+        }
+    }
+
+    /** Alive, not configured: a worker whose thread died and has not been restarted yet must not count. */
+    private synchronized int aliveWorkers() {
+        int alive = 0;
+        for (Thread t : threads) {
+            if (t != null && t.isAlive()) {
+                alive++;
+            }
+        }
+        return alive;
     }
 
     private void heartbeatTick() {

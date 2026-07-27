@@ -1,6 +1,7 @@
 package com.codingful.tandem.test;
 
 import com.codingful.tandem.core.BucketHash;
+import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
@@ -17,6 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -296,6 +298,25 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
                 out.add(e.record);
             }
             return out;
+        }
+    }
+
+    /** Same reading as the JDBC store: {@code PENDING} rows only, and the oldest one's creation time. */
+    @Override
+    public Optional<LagSnapshot> lag() {
+        synchronized (lock) {
+            long pending = 0;
+            Instant oldest = null;
+            for (Entry e : rows.values()) {
+                if (e.record.status() != OutboxStatus.PENDING) {
+                    continue;
+                }
+                pending++;
+                if (oldest == null || e.record.createdAt().isBefore(oldest)) {
+                    oldest = e.record.createdAt();
+                }
+            }
+            return Optional.of(new LagSnapshot(pending, Optional.ofNullable(oldest)));
         }
     }
 

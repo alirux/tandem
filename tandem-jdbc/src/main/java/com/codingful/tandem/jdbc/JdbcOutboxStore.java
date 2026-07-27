@@ -1,5 +1,6 @@
 package com.codingful.tandem.jdbc;
 
+import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.exception.TandemException;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import javax.sql.DataSource;
 
@@ -79,6 +81,11 @@ public final class JdbcOutboxStore implements OutboxStore {
                     + "       status = CASE WHEN attempts + 1 >= ? THEN 3 ELSE 0 END,"
                     + "       locked_by = NULL, locked_until = NULL"
                     + " WHERE status = 1 AND locked_until < now()";
+
+    // Backlog = PENDING only: an IN_FLIGHT row is work in progress, and if its relay dies the lease
+    // reclaim returns it to PENDING, so it re-enters this reading on its own (HLD §7, §3.5).
+    private static final String LAG_SQL =
+            "SELECT count(*) AS pending, min(created_at) AS oldest FROM tandem_outbox WHERE status = 0";
 
     private static final String CLEANUP_SQL =
             "DELETE FROM tandem_outbox"
@@ -191,6 +198,25 @@ public final class JdbcOutboxStore implements OutboxStore {
             return ps.executeUpdate();
         } catch (SQLException e) {
             throw new TandemException("reclaimExpiredLeases failed", e);
+        }
+    }
+
+    /**
+     * Both gauges in one statement, so the count and the oldest row always describe the same instant
+     * (§4). Named columns, never {@code SELECT *} (§1.4).
+     */
+    @Override
+    public Optional<LagSnapshot> lag() {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(LAG_SQL);
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();   // an aggregate without GROUP BY always returns exactly one row
+            long pending = rs.getLong(1);
+            OffsetDateTime oldest = rs.getObject(2, OffsetDateTime.class);   // NULL when nothing is pending
+            return Optional.of(new LagSnapshot(pending,
+                    Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
+        } catch (SQLException e) {
+            throw new TandemException("lag failed", e);
         }
     }
 
