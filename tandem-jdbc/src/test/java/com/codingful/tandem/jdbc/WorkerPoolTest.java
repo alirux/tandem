@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
@@ -88,7 +89,9 @@ class WorkerPoolTest {
         pool.start();
         try {
             int total = aggregates * perAggregate;
-            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.DONE).size() == total);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "all " + total + " events delivered, got " + outbox.statusCounts(),
+                    () -> outbox.byStatus(OutboxStatus.DONE).size() == total);
         } finally {
             pool.stop();
         }
@@ -161,7 +164,10 @@ class WorkerPoolTest {
 
         pool.start();
         try {
-            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the waiting event to be delivered after the worker restart, got "
+                            + outbox.statusCounts() + ", crashed:" + store.crashed(),
+                    () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
         } finally {
             pool.stop();
         }
@@ -185,7 +191,9 @@ class WorkerPoolTest {
         pool.start();
         try {
             // Delivered is not enough — the rows must actually leave the table, or the outbox grows forever.
-            awaitUpTo(Duration.ofSeconds(20), () -> outbox.size() == 0);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "an empty outbox, still holding " + outbox.statusCounts(),
+                    () -> outbox.size() == 0);
         } finally {
             pool.stop();
         }
@@ -211,9 +219,14 @@ class WorkerPoolTest {
 
         pool.start();
         try {
-            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the event to be claimed, got " + outbox.statusCounts(),
+                    () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1);
             clock.advance(rowLease.plusSeconds(1));
-            awaitUpTo(Duration.ofSeconds(20), () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the reclaimed event to be delivered, got " + outbox.statusCounts()
+                            + ", attempts:" + attempts.get(),
+                    () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
         } finally {
             pool.stop();
         }
@@ -243,19 +256,31 @@ class WorkerPoolTest {
 
         pool.start();
         try {
-            // Wait for the state under assertion, not merely for some reading to exist: the first
-            // reading is taken the instant the relay starts, which can be before the head is claimed —
-            // and then all three rows are still waiting.
+            // Wait for a *complete* reading taken after the head was claimed. Two things make a
+            // partial one visible: the first reading is taken the instant the relay starts, which can
+            // be before the head is claimed (all three rows still waiting), and a reading is three
+            // separate gauge writes, so a tick can be caught half-written — every gauge must have
+            // been set at least once before any of them is worth asserting.
             awaitUpTo(Duration.ofSeconds(20),
-                    () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1 && metrics.lag() == 2);
+                    () -> "a complete metrics reading of the claimed backlog, observed lag:" + metrics.lag()
+                            + ", lagAgeSeconds:" + metrics.lagAgeSeconds()
+                            + ", activeWorkers:" + metrics.activeWorkers()
+                            + ", inFlight:" + outbox.byStatus(OutboxStatus.IN_FLIGHT).size(),
+                    () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1
+                            && metrics.lag() == 2
+                            && metrics.lagAgeSeconds() >= 0
+                            && metrics.activeWorkers() >= 0);
+
+            // Assert on the running relay, never after the stop: the gauges keep their latest reading,
+            // and a metrics tick that races stop() reports the workers it finds already interrupted —
+            // a truthful reading of a stopping relay, but not the one under test here.
+            // The head is in flight; its two successors are still waiting, and have been for 30s.
+            assertThat(metrics.lag()).isEqualTo(2);
+            assertThat(metrics.lagAgeSeconds()).isEqualTo(30);
+            assertThat(metrics.activeWorkers()).isEqualTo(2);
         } finally {
             pool.stop();
         }
-
-        // The head is in flight; its two successors are still waiting, and have been for 30s.
-        assertThat(metrics.lag()).isEqualTo(2);
-        assertThat(metrics.lagAgeSeconds()).isEqualTo(30);
-        assertThat(metrics.activeWorkers()).isEqualTo(2);
     }
 
     @Test
@@ -269,7 +294,9 @@ class WorkerPoolTest {
         pool.start();
         try {
             // 20 poll cycles at a 10ms interval leave ample room for a 10ms metrics tick to have fired.
-            awaitUpTo(Duration.ofSeconds(20), () -> store.claims() >= 20);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "20 poll cycles, reached only " + store.claims(),
+                    () -> store.claims() >= 20);
         } finally {
             pool.stop();
         }
@@ -405,19 +432,27 @@ class WorkerPoolTest {
         }
     }
 
-    private static void awaitUpTo(Duration timeout, BooleanSupplier condition) {
+    /**
+     * Waits for {@code condition}, and on timeout fails naming what was awaited and what was actually
+     * observed — {@code expected} is a supplier so it can render live state at the moment of failure.
+     * A bare "condition not met" is what turns a timing flake into a mystery; worse, a caller that
+     * asserts the same state afterwards reports the mismatch, not the timeout that caused it.
+     */
+    private static void awaitUpTo(Duration timeout, Supplier<String> expected, BooleanSupplier condition) {
         long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
+        while (true) {
             if (condition.getAsBoolean()) {
                 return;
+            }
+            if (System.nanoTime() >= deadline) {   // checked after the condition: never time out unseen
+                throw new AssertionError("Timed out after " + timeout + " awaiting " + expected.get());
             }
             try {
                 Thread.sleep(20);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted while awaiting condition", e);
+                throw new IllegalStateException("interrupted while awaiting " + expected.get(), e);
             }
         }
-        throw new AssertionError("condition not met within " + timeout);
     }
 }
