@@ -11,12 +11,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
@@ -58,14 +60,17 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
         pool2.start();
         try {
             awaitUpTo(Duration.ofSeconds(30),
+                    () -> "every event to be dispatched across the two instances; " + delivery(disp1, disp2),
                     () -> disp1.dispatchCount() + disp2.dispatchCount() == TOTAL);
 
             // Ownership is lease-partitioned and self-registration rebalances a plain scale-up: await the
             // steady state — disjoint (no bucket owned by both) and full coverage (every bucket owned by
             // exactly one instance). A brief rebalance window can leave released-not-yet-reclaimed buckets
             // momentarily free, so await rather than sample once.
-            awaitUpTo(Duration.ofSeconds(10), () -> disjoint(buckets1, buckets2)
-                    && union(buckets1.ownedBuckets(), buckets2.ownedBuckets()).size() == BUCKETS);
+            awaitUpTo(Duration.ofSeconds(10),
+                    () -> "a disjoint two-way split covering the whole ring; " + ownership(buckets1, buckets2),
+                    () -> disjoint(buckets1, buckets2)
+                            && union(buckets1.ownedBuckets(), buckets2.ownedBuckets()).size() == BUCKETS);
 
             Set<Integer> owned1 = buckets1.ownedBuckets();
             Set<Integer> owned2 = buckets2.ownedBuckets();
@@ -127,11 +132,13 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
             // even learned its peers exist (round 1 of the converge-over-several-heartbeats algorithm,
             // §3.2) — which would let the test "kill" a victim owning zero buckets, a vacuous exercise
             // of the reclaim path. Found by this test itself flaking on that exact snapshot.
-            awaitUpTo(Duration.ofSeconds(10), () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
-                    && disjoint(buckets2, buckets3)
-                    && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
-                    && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
-                    && hasAFairShare(buckets3, 3, BUCKETS));
+            awaitUpTo(Duration.ofSeconds(10),
+                    () -> fairThreeWaySplit(buckets1, buckets2, buckets3),
+                    () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
+                            && disjoint(buckets2, buckets3)
+                            && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
+                            && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
+                            && hasAFairShare(buckets3, 3, BUCKETS));
             assertThat(buckets3.ownedBuckets()).as("instance-3 must actually own something before the kill").isNotEmpty();
 
             // kill(), not stop(): simulates an abrupt crash — instance-3's buckets and presence stay
@@ -140,13 +147,18 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
 
             // The survivors only learn instance-3 is gone once its lease (2s) actually expires, not
             // immediately — this is the point of the test (contrast the graceful-stop scenario above).
-            awaitUpTo(Duration.ofSeconds(20), () -> disjoint(buckets1, buckets2)
-                    && union(buckets1.ownedBuckets(), buckets2.ownedBuckets()).size() == BUCKETS
-                    && hasAFairShare(buckets1, 2, BUCKETS) && hasAFairShare(buckets2, 2, BUCKETS));
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the two survivors to absorb relay-3's share into a fair, disjoint split of the whole"
+                            + " ring, fairShareFloor:" + fairShareFloor(2, BUCKETS) + "; "
+                            + ownership(buckets1, buckets2),
+                    () -> disjoint(buckets1, buckets2)
+                            && union(buckets1.ownedBuckets(), buckets2.ownedBuckets()).size() == BUCKETS
+                            && hasAFairShare(buckets1, 2, BUCKETS) && hasAFairShare(buckets2, 2, BUCKETS));
 
             // Every event still gets delivered — including whatever instance-3 had already claimed but
             // not yet dispatched, redelivered once the survivors reclaim its (former) buckets.
             awaitUpTo(Duration.ofSeconds(20),
+                    () -> "every event to be delivered despite the crash; " + delivery(disp1, disp2, disp3),
                     () -> disp1.dispatchCount() + disp2.dispatchCount() + disp3.dispatchCount() >= TOTAL);
         } finally {
             pool1.stop();
@@ -196,11 +208,13 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
         try {
             // Wait for a genuinely fair three-way split, so the two victims each actually own a share
             // before the kill (see the one-kill test for why disjoint+coverage alone is too weak).
-            awaitUpTo(Duration.ofSeconds(10), () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
-                    && disjoint(buckets2, buckets3)
-                    && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
-                    && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
-                    && hasAFairShare(buckets3, 3, BUCKETS));
+            awaitUpTo(Duration.ofSeconds(10),
+                    () -> fairThreeWaySplit(buckets1, buckets2, buckets3),
+                    () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
+                            && disjoint(buckets2, buckets3)
+                            && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
+                            && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
+                            && hasAFairShare(buckets3, 3, BUCKETS));
             assertThat(buckets2.ownedBuckets()).as("victim relay-2 must own something before the kill").isNotEmpty();
             assertThat(buckets3.ownedBuckets()).as("victim relay-3 must own something before the kill").isNotEmpty();
 
@@ -211,11 +225,14 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
 
             // Once both dead leases expire, the sole survivor prunes both stale members, recomputes its
             // fair share as ceil(B / 1) = B, and reclaims the ENTIRE ring — two dead shares at once.
-            awaitUpTo(Duration.ofSeconds(20), () -> buckets1.ownedBuckets().size() == BUCKETS);
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the sole survivor to reclaim the entire ring; " + ownership(buckets1),
+                    () -> buckets1.ownedBuckets().size() == BUCKETS);
 
             // All events still get delivered — whatever the dead instances left behind is drained by the
             // survivor once it owns their former buckets.
             awaitUpTo(Duration.ofSeconds(20),
+                    () -> "every event to be delivered despite the double crash; " + delivery(disp1, disp2, disp3),
                     () -> disp1.dispatchCount() + disp2.dispatchCount() + disp3.dispatchCount() >= TOTAL);
         } finally {
             pool1.stop();
@@ -264,9 +281,12 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
         pool2.start();
         pool3.start();
         try {
-            awaitUpTo(Duration.ofSeconds(10), () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
-                    && disjoint(buckets2, buckets3)
-                    && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS);
+            awaitUpTo(Duration.ofSeconds(10),
+                    () -> "a disjoint three-way split covering the whole ring; "
+                            + ownership(buckets1, buckets2, buckets3),
+                    () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
+                            && disjoint(buckets2, buckets3)
+                            && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS);
 
             // Simulate an emergency: the whole fleet crashes at once (no graceful release — every
             // instance's buckets and presence linger in the DB until their leases expire).
@@ -284,12 +304,16 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
                 p.start();
             }
 
-            awaitUpTo(Duration.ofSeconds(20), () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
-                    && disjoint(buckets2, buckets3)
-                    && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
-                    && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
-                    && hasAFairShare(buckets3, 3, BUCKETS));
             awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the restarted fleet to re-converge on " + fairThreeWaySplit(buckets1, buckets2, buckets3),
+                    () -> disjoint(buckets1, buckets2) && disjoint(buckets1, buckets3)
+                            && disjoint(buckets2, buckets3)
+                            && union(union(buckets1.ownedBuckets(), buckets2.ownedBuckets()), buckets3.ownedBuckets()).size() == BUCKETS
+                            && hasAFairShare(buckets1, 3, BUCKETS) && hasAFairShare(buckets2, 3, BUCKETS)
+                            && hasAFairShare(buckets3, 3, BUCKETS));
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "every event to be delivered despite the fleet-wide crash; "
+                            + delivery(disp1, disp2, disp3),
                     () -> disp1.dispatchCount() + disp2.dispatchCount() + disp3.dispatchCount() >= TOTAL);
         } finally {
             pool1.stop();
@@ -342,7 +366,67 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
 
     /** True once {@code source} owns at least half of an even {@code bucketCount / liveInstances} split. */
     private static boolean hasAFairShare(BucketSource source, int liveInstances, int bucketCount) {
-        return source.ownedBuckets().size() >= bucketCount / (liveInstances * 2);
+        return source.ownedBuckets().size() >= fairShareFloor(liveInstances, bucketCount);
+    }
+
+    /** The per-instance bucket count {@link #hasAFairShare} demands — half of an even split. */
+    private static int fairShareFloor(int liveInstances, int bucketCount) {
+        return bucketCount / (liveInstances * 2);
+    }
+
+    /**
+     * Live ownership, rendered into a timeout message: how many buckets each instance owns, how much of
+     * the ring is covered, and which buckets are uncovered or owned twice — the three facts that tell a
+     * rebalance that stalled apart from one that never started. Instances are labelled by argument
+     * position, matching the {@code relay-N} ids these tests assign, and only the instances the awaited
+     * condition looks at are passed (a killed instance's stale view would distort coverage).
+     */
+    private static String ownership(BucketSource... instances) {
+        List<Set<Integer>> owned = Arrays.stream(instances).map(BucketSource::ownedBuckets).toList();
+        Set<Integer> covered = new HashSet<>();
+        Set<Integer> ownedTwice = new HashSet<>();
+        for (Set<Integer> one : owned) {
+            for (Integer bucket : one) {
+                if (!covered.add(bucket)) {
+                    ownedTwice.add(bucket);
+                }
+            }
+        }
+        Set<Integer> uncovered = IntStream.range(0, BUCKETS).boxed()
+                .filter(bucket -> !covered.contains(bucket)).collect(Collectors.toSet());
+        StringBuilder rendered = new StringBuilder();
+        for (int i = 0; i < owned.size(); i++) {
+            rendered.append("owned-relay-").append(i + 1).append(':').append(owned.get(i).size()).append(", ");
+        }
+        return rendered.append("covered:").append(covered.size()).append('/').append(BUCKETS)
+                .append(", uncovered:").append(preview(uncovered))
+                .append(", ownedTwice:").append(preview(ownedTwice))
+                .toString();
+    }
+
+    /** The steady state every three-instance scenario waits on, next to the ownership actually reached. */
+    private static String fairThreeWaySplit(BucketSource b1, BucketSource b2, BucketSource b3) {
+        return "a fair, disjoint three-way split covering the whole ring, fairShareFloor:"
+                + fairShareFloor(3, BUCKETS) + "; " + ownership(b1, b2, b3);
+    }
+
+    /** Live delivery, rendered into a timeout message: the running total against {@link #TOTAL}, then the split. */
+    private static String delivery(RecordingDispatcher... instances) {
+        StringBuilder rendered = new StringBuilder("dispatched:")
+                .append(Arrays.stream(instances).mapToInt(RecordingDispatcher::dispatchCount).sum())
+                .append('/').append(TOTAL);
+        for (int i = 0; i < instances.length; i++) {
+            rendered.append(", dispatched-relay-").append(i + 1).append(':').append(instances[i].dispatchCount());
+        }
+        return rendered.toString();
+    }
+
+    /** At most eight ids, sorted, so a 256-bucket ring cannot bury the rest of the message. */
+    private static String preview(Set<Integer> buckets) {
+        List<Integer> sorted = buckets.stream().sorted().toList();
+        return sorted.size() <= 8
+                ? sorted.toString()
+                : sorted.subList(0, 8) + "...(" + sorted.size() + " total)";
     }
 
     private static Set<Integer> intersection(Set<Integer> a, Set<Integer> b) {
@@ -359,7 +443,13 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
         return java.util.stream.Stream.concat(a.stream(), b.stream()).toList();
     }
 
-    private static void awaitUpTo(Duration timeout, BooleanSupplier condition) {
+    /**
+     * Awaits {@code condition}, failing with whatever live state {@code expected} renders at the deadline —
+     * these are timing-sensitive coordination scenarios, so a timeout must say what it actually saw rather
+     * than only that it waited. The condition is re-checked once after the deadline, so a state reached
+     * during the final sleep still passes instead of failing on the sampling gap.
+     */
+    private static void awaitUpTo(Duration timeout, Supplier<String> expected, BooleanSupplier condition) {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
             if (condition.getAsBoolean()) {
@@ -372,6 +462,9 @@ class EmbeddedLeaseIT extends AbstractPostgresIT {
                 throw new IllegalStateException("interrupted while awaiting condition", e);
             }
         }
-        throw new AssertionError("condition not met within " + timeout);
+        if (condition.getAsBoolean()) {
+            return;
+        }
+        throw new AssertionError("Timed out after " + timeout + " awaiting " + expected.get());
     }
 }
