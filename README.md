@@ -162,6 +162,20 @@ where the relay runs — each brings its own tier of the stack and leaves Spring
 application's versions. See [Modules](#modules) for the full list. What changed between versions,
 breaking changes included, is on the [Releases](https://github.com/alirux/tandem/releases) page.
 
+### Spring Boot compatibility
+
+`tandem-spring-producer` and `tandem-spring-relay` ship **one artifact for both Spring Boot
+generations** — Spring is `compileOnly`, so your application's own Boot BOM controls the runtime
+version, and Tandem never appears in your dependency tree.
+
+| | Spring Boot |
+|---|---|
+| Compiled against (baseline) | 3.3.5 |
+| Verified via `bootFourTest` | 4.1.0 |
+
+Any Boot 3.x ≥ 3.3.5 or Boot 4.x ≥ 4.1.0 is expected to work; CI pins and tests exactly these two
+versions, not every intermediate release.
+
 ## Usage
 
 **Write-side** — insert the event inside your own transaction (the relay never runs here):
