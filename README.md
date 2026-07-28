@@ -10,7 +10,8 @@
 [![codecov](https://codecov.io/github/alirux/tandem/graph/badge.svg?token=YKA7T7YCFD)](https://codecov.io/github/alirux/tandem)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#)
-[![Status](https://img.shields.io/badge/status-basic%20round%20implemented-brightgreen.svg)](docs/IMPLEMENTATION-PLAN-basic-round.md)
+[![Maven Central](https://img.shields.io/maven-central/v/com.codingful/tandem-core.svg?label=maven)](https://central.sonatype.com/artifact/com.codingful/tandem-core)
+[![Status](https://img.shields.io/badge/status-0.x%20—%20API%20evolving-yellow.svg)](https://github.com/alirux/tandem/releases)
 
 </div>
 
@@ -21,7 +22,9 @@
 > end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md)).
 > The **Spring Boot integration** ships alongside it and is tested against **both Boot 3.x and 4.x**:
 > `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
-> `tandem-spring-relay` (the relay autoconfiguration, started with the application). All of it is
+> `tandem-spring-relay` (the relay autoconfiguration, started with the application). The relay also
+> reports its own backlog — pending count, backlog age, live workers — through the `TandemMetrics`
+> port. All of it is
 > **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
 > The prebuilt standalone relay, the Admin API, MySQL support, and the optional adapters are
 > **not yet implemented**.
@@ -119,7 +122,7 @@ Tandem is published to Maven Central under the `com.codingful` group. Import the
 
 ```kotlin
 dependencies {
-    implementation(platform("com.codingful:tandem-bom:0.2.0"))
+    implementation(platform("com.codingful:tandem-bom:0.3.0"))
     implementation("com.codingful:tandem-jdbc")     // write-side + relay engine (PostgreSQL)
     implementation("com.codingful:tandem-kafka")    // Kafka publish + CloudEvents binding
     testImplementation("com.codingful:tandem-test") // in-memory doubles + Testcontainers helper
@@ -134,7 +137,7 @@ dependencies {
     <dependency>
       <groupId>com.codingful</groupId>
       <artifactId>tandem-bom</artifactId>
-      <version>0.2.0</version>
+      <version>0.3.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
