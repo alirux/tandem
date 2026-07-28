@@ -50,9 +50,9 @@ the classpath.**
   is `application/json`. An application on a different format supplies its own `PayloadSerializer` bean
   and the conditional backs off.
 - **Object payloads require a serializer; the absence is loud, not silent.** When a tier is handed an
-  object payload and **no** `PayloadSerializer` bean exists, it fails fast at the call site with a clear
-  message (`PayloadSerializationException`: "no PayloadSerializer configured — add a JSON library, supply
-  a PayloadSerializer bean, or pass byte[]"). It never guesses an encoding.
+  object payload and **no** `PayloadSerializer` bean exists, it fails fast at the call site with a
+  `PayloadSerializationException` naming the three ways out — add a JSON library, supply a
+  `PayloadSerializer` bean, or record a pre-built `OutboxMessage`. It never guesses an encoding.
 - **`byte[]` always works with zero dependencies.** Every tier also accepts a pre-built `OutboxMessage`
   (or raw bytes), so the whole footprint-free path stays open — the serializer is a convenience, not a
   requirement.
@@ -177,7 +177,8 @@ transaction the composed `@Transactional` opened, before commit. Concretely:
 1. the aspect is an `@Around` advisor that `proceed()`s the method, then extracts and inserts;
 2. it must be **inner** to Spring's transaction advisor (which by default sits at
    `Ordered.LOWEST_PRECEDENCE`), so that when control returns from `proceed()` the transaction is still
-   open. The outbox advisor is registered to sort accordingly;
+   open. No explicit `@Order` is declared — Spring's default ordering already places the aspect there
+   (§8), and the backstop below is what keeps a wrong order from ever being silent;
 3. **backstop (loud, not silent):** immediately after `proceed()` the aspect asserts
    `TransactionSynchronizationManager.isActualTransactionActive()` and throws if it is not — so any
    misordering surfaces as an error, never as a non-atomic insert. The invariant is pinned by an
@@ -218,9 +219,13 @@ public void place(OrderId id) {
   bug and fails fast.
 
 **Mapper resolution.** Mappers are Spring beans. At startup the module builds a registry keyed by each
-mapper's resolved `T` (via `ResolvableType` over the bean type). Lookup is by the event's runtime class,
-walking to the most specific registered supertype; **two mappers matching the same event ambiguously
-fail fast at startup**, not per-event.
+mapper's resolved `T` (via `ResolvableType` over the bean type). Two mappers registered for the **same**
+`T` fail fast **at startup** — the collision is visible without an event. Lookup is otherwise by the
+event's runtime class, walking to the most specific registered supertype; an event that matches two
+*equally specific* supertypes is ambiguous and fails **on the first such event**, not at startup: which
+mappers compete depends on the runtime type published, which the registry cannot enumerate in advance.
+Both failures are loud (`OutboxInsertException`), and the per-event one rolls back the caller's
+transaction rather than emitting a guessed row.
 
 **Which events are intercepted — the mapper registration *is* the opt-in.** The listener is scoped to
 **exactly** the types it can handle — `OutboxMessage` and every type with a registered mapper (realised
@@ -237,6 +242,12 @@ model behaves like every other `@EventListener` rather than surprising users. Cr
 **not** weaken any Tandem delivery guarantee: loudness applies once a row is in the outbox (it is
 delivered or loudly stalls), not to whether the application wired its Spring events — that stays
 ordinary application configuration.
+
+**The scoping works on payload events only.** The listener resolves events through Spring's
+`PayloadApplicationEvent` wrapper — the one `publishEvent(Object)` creates for an ordinary POJO. A
+domain event that itself extends `ApplicationEvent` is published unwrapped and is therefore **never**
+intercepted, even with a mapper registered for it. Publish plain objects (the idiom this tier is built
+around), or an `OutboxMessage` directly.
 
 **Fail-fasts (atomicity, loud).**
 

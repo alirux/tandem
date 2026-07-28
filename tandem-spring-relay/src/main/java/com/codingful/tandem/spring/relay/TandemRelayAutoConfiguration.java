@@ -1,5 +1,6 @@
 package com.codingful.tandem.spring.relay;
 
+import com.codingful.tandem.core.exception.TandemConfigurationException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
@@ -110,6 +111,14 @@ public class TandemRelayAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     OutboxDispatcher tandemOutboxDispatcher(TandemKafkaProperties kafka, TopicRouter topicRouter) {
+        // tandem.kafka.source is the one key with no default. Checked here so the failure names the
+        // property the operator has to set, instead of surfacing as a NullPointerException from the
+        // CloudEvents config, several frames away from the configuration that caused it.
+        if (kafka.source() == null) {
+            throw new TandemConfigurationException("Missing required configuration: `tandem.kafka.source`"
+                    + " — the CloudEvents source URI identifying this application (e.g. /orders/service)."
+                    + " Set it in your application configuration (LLD-spring-config §2.3).");
+        }
         Map<String, Object> producerConfig = new HashMap<>(kafka.producer());
         KafkaRelayConfig kafkaConfig =
                 new KafkaRelayConfig(kafka.source(), kafka.defaultContentType(), kafka.defaultDataSchema());

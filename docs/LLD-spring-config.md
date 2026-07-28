@@ -118,15 +118,30 @@ under test — and neither recompiles the module's main jar. Running the in-memo
 not a doubled build.
 
 **The dual-run tests are lightweight `ApplicationContextRunner` tests** — no full context, no
-container. Per module they assert:
+container. What they actually assert, per module:
 
-- the autoconfiguration applies and its beans exist — `tandem-spring-producer`: an `OutboxRepository`;
-  `tandem-spring-relay`: the `OutboxStore`, `TopicRouter`, `OutboxDispatcher`, `WorkerPool`;
-- the `tandem.*` properties bind (e.g. `tandem.outbox.bucket-count`, `tandem.relay.batch-size` →
-  `RelayConfig`);
-- the conditionals behave — `tandem.relay.enabled=false` contributes no relay; a user `@Bean` replaces
-  the autoconfigured one (`@ConditionalOnMissingBean`, §4);
-- the bucket-count guard runs at startup.
+- `tandem-spring-producer`: the autoconfiguration applies and each tier's bean exists (the Jackson
+  `PayloadSerializer`, the Template, the `@TransactionalOutbox` aspect, the events listener + registry);
+  `tandem.outbox.bucket-count` binds, default included; the conditionals behave (no `DataSource`, no
+  transaction manager, a user `@Bean` replacing the autoconfigured one).
+- `tandem-spring-relay`: the whole engine is wired from a `DataSource` plus the Kafka settings — router,
+  dispatcher (a **real** Kafka producer, constructed), store, bucket source, pool, `RelayConfig`,
+  `TandemMetrics.NOOP`; `tandem.outbox.*`/`tandem.relay.*` bind onto `RelayConfig` through Spring, with
+  unset keys keeping `RelayConfig`'s own defaults; a user `TopicRouter` replaces the autoconfigured one;
+  and it backs off with no `DataSource`, when disabled, or fails naming a missing `tandem.kafka.source`.
+  The relay's tests replace exactly one bean, `RelayLifecycle`, with a non-starting one — starting the
+  pool opens the database, which is the integration test's job.
+
+One thing the matrix deliberately does **not** cover, so nobody reads more into a green run: the
+**bucket-count guard never executes** in it (the producer's positive cases supply their own
+`OutboxRepository`, so the JDBC bean that runs the guard backs off; the relay's guard runs from the
+`RelayLifecycle` those tests neutralise). It is covered by `BucketCountGuardIT` and by each module's
+integration test.
+
+**The matrix earns its keep, concretely.** Constructing the real Kafka producer under the 4.x line is
+what caught Kafka 4's change of the default `linger.ms`, which had made Tandem's fixed
+`delivery.timeout.ms` unable to build a producer at all on `kafka-clients` 4.x (LLD-kafka §1) — a
+break no baseline-only run could see, because the Boot 4 BOM is what pulls the newer client in.
 
 **Wiring alone is a weak claim, so the matrix also runs behaviour.** Beans existing does not prove the
 machinery works, and a major version is most likely to break the machinery. `tandem-spring-producer`
@@ -136,12 +151,11 @@ manager. They pin the two mechanisms most exposed to a Spring major: **AspectJ p
 not intercept, nothing would reach the outbox) and the **composed `@Transactional`** of the annotation (if
 Spring did not see it through `@AliasFor`, the aspect's active-transaction guard would throw).
 
-**The matrix's signal is uneven, and that matters.** `tandem-spring-producer` carries the real signal: its
-context-runner tests assert the autoconfiguration *applies* and each tier's beans exist, so a moved or
-re-signed Spring symbol fails loudly. `tandem-spring-relay`'s no-Docker tests are mostly *negative* (the
-relay backs off with no `DataSource`, or when disabled) and would pass even if the autoconfiguration
-never loaded — so a green relay run alone proves little. Read the two together, and prefer adding
-positive assertions to the relay's suite over trusting its colour.
+**Both modules now carry real signal.** Each one's context-runner tests assert the autoconfiguration
+*applies* and that its beans exist, so a moved or re-signed Spring symbol fails loudly on either side.
+That was not always true — the relay's suite was once purely negative (backs off with no `DataSource`,
+or when disabled), which would have passed even if the autoconfiguration never loaded. Keep it that way:
+a conditional-only test proves the absence of a relay, never the presence of one.
 
 **A green matrix is necessary, not sufficient.** It exercises what the tests *do*, so it cannot see a
 mismatch that only degrades declared metadata — the relocated-autoconfiguration case of §1.1, rule 1, is
@@ -226,7 +240,7 @@ dedicated relay process, selected by configuration.
 
 | Property | Type | Default |
 |---|---|---|
-| `tandem.kafka.source` | URI | **required** — no default; startup fails if absent |
+| `tandem.kafka.source` | URI | **required** — no default; startup fails, naming the key, if absent |
 | `tandem.kafka.default-content-type` | String | `application/json` |
 | `tandem.kafka.default-data-schema` | URI | unset (omitted from the envelope) |
 | `tandem.kafka.topic-suffix` | String | `-topic` |
@@ -236,6 +250,20 @@ dedicated relay process, selected by configuration.
 hardening step unchanged: it validates the unsafe-override invariants (`enable.idempotence` must not
 be false, `acks` must be `all`/`-1`, `max.in.flight.requests.per.connection` ≤ 5), fills the safe
 defaults, and forces the serializers the CloudEvents binary binding requires.
+
+`tandem.kafka.source` is the only key here with no default. Its absence is checked by the
+autoconfiguration itself and fails context refresh with a message naming `tandem.kafka.source` —
+not with the `NullPointerException` the CloudEvents config would otherwise raise several frames away
+from the configuration that caused it.
+
+**Tuning the producer stays safe by construction, including the timeout interaction.** The filled-in
+`delivery.timeout.ms` grows to `max(30s, linger.ms + request.timeout.ms)`, so neither setting
+`linger.ms` through this map nor running a newer `kafka-clients` (whose default `linger.ms` is no
+longer 0) collides with Kafka's own `delivery.timeout.ms ≥ linger.ms + request.timeout.ms` rule
+(LLD-kafka §1). This matters most in a Spring Boot 4 application, which resolves `kafka-clients` 4.x
+through its own BOM. Because the relay validates `rowLease` against the *effective* timeout, a
+producer that outgrows `tandem.relay.row-lease` fails loudly at startup instead of quietly shrinking
+the safety margin.
 
 Spring Boot's own `spring.kafka.producer.*` is deliberately **not** reused. Tandem mandates producer
 settings and fails fast on unsafe overrides, so consuming Spring's defaults would mean reconciling
@@ -261,21 +289,37 @@ Tools) use for property-name completion, type checking, default display, and the
 shows each property's description. The obligation this places on the code: **every property carries a
 non-empty Javadoc description** — an undocumented property yields an empty tooltip.
 
-**What the processor cannot infer — `additional-spring-configuration-metadata.json`.** A hand-written
-`META-INF/additional-spring-configuration-metadata.json` (merged into the generated file at build)
-covers what the processor misses:
-- the raw map key `tandem.kafka.producer.*` (dynamic keys the processor cannot enumerate) — documented
-  with a description and, ideally, `providers` hints pointing at the Kafka `ProducerConfig` keys;
-- any default that is computed rather than a literal (e.g. `workers-per-instance` = `availableProcessors() * 2`);
+**What the processor cannot infer — `META-INF/additional-spring-configuration-metadata.json`.** A
+hand-written file, merged into the generated one at build time, covers the processor's blind spots. Only
+`tandem-spring-relay` needs one today (the producer's single key is fully inferred); it declares:
+- `tandem.relay.enabled` — it gates the whole autoconfiguration via `@ConditionalOnProperty` and binds
+  to no properties type, so the processor cannot see it at all. Without this entry the IDE would neither
+  complete nor document the supported way to deploy the relay module without a relay;
+- the raw map key `tandem.kafka.producer.*` (dynamic keys the processor cannot enumerate) — a description
+  plus **value hints** (`tandem.kafka.producer.keys`) naming the producer settings a user actually
+  reaches for, each with the Tandem-specific caveat where there is one;
 - **deprecations** — when a property is renamed under the compatibility rule (§6), its old name stays
   bound with a `deprecation` entry (level + replacement), so the IDE flags it and points at the new name.
 
-**Reference file — a documented `application.yml`.** The contract ships a reference configuration that
-lists every `tandem.*` property with its default and a one-line explanation, as a starting point a user
-copies and trims. It is generated from / kept in sync with the same property tables (§2.1–§2.3) — it is
-a rendering of the contract, not a second definition. Committed under the module (e.g.
-`src/main/resources/tandem-reference.yml`) and/or reproduced as an appendix here; whichever, it has no
-independent authority over the Javadoc.
+A computed default (`workers-per-instance` = `availableProcessors() * 2`) has no metadata expression:
+JSON holds literals only, so the Javadoc description carries it in prose and the reference file below
+repeats it.
+
+**Build trap, load-bearing:** under Gradle the processor reads that file from the *processed* resources,
+so `compileJava` must take `processResources` as an input. Without it the file is **silently ignored** —
+the build stays green and the keys it documents simply vanish from the metadata.
+
+**Reference file — a documented `application.yml`.** Each module ships one, listing every `tandem.*`
+key it binds with its default and a one-line explanation, as a starting point a user copies and trims:
+`tandem-producer-reference.yml` and `tandem-relay-reference.yml`, at the root of each module's
+resources (distinct names, because both land on the classpath of an application that runs a relay).
+Every key is shown commented out at its default, so a deployment that sets none of them behaves exactly
+as the file describes; only the required `tandem.kafka.source` is active.
+
+The file is a **rendering** of the contract, not a second definition — it has no authority over the
+Javadoc. What keeps it from drifting is not discipline but a test: each module asserts, in both
+directions, that the reference names exactly the keys the **generated metadata** declares. Adding,
+renaming or removing a property without touching the reference fails the build.
 
 ---
 
@@ -299,11 +343,14 @@ call, the Spring layer only binds `tandem.outbox.bucket-count` (§2.1) into the 
 ## 4. Autoconfiguration
 
 Each module ships one `@AutoConfiguration` class, registered through
-`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. Both declare
-`@AutoConfiguration(after = DataSourceAutoConfiguration.class)` so the application's `DataSource` is
-already defined when Tandem's beans are created. Every contributed bean is `@ConditionalOnMissingBean`,
-so an application can replace any single piece — most usefully a custom `TopicRouter` — without
-abandoning the autoconfiguration.
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. Both order
+themselves after Spring Boot's `DataSourceAutoConfiguration` — the producer after
+`TransactionAutoConfiguration` too (§4.3) — so the application's `DataSource` and transaction manager
+are already defined when Tandem's beans are created. The ordering is declared with **`afterName`,
+listing both generations' coordinates**, never a class literal (§1.1, rule 1).
+
+Every contributed bean is `@ConditionalOnMissingBean`, so an application can replace any single piece —
+most usefully a custom `TopicRouter` — without abandoning the autoconfiguration.
 
 ### 4.1 The `DataSource` both modules bind to
 
@@ -350,8 +397,10 @@ its own. The autoconfiguration is ordered `after` `TransactionAutoConfiguration`
 transaction manager the Template tier needs exists before its `@ConditionalOnBean` is evaluated.
 
 The higher tiers (`TransactionalOutboxTemplate`, the `@TransactionalOutbox` aspect, the Spring-events
-listener, the Jackson `PayloadSerializer`) are **Q22** and are not part of this increment (§7); a
-`tandem-spring-producer` built to this LLD gives the *Plain* tier (HLD §3.1) and the guard, no more.
+listener, the Jackson `PayloadSerializer`) were **Q22**, excluded from *this* increment because the
+configuration contract is what they bind onto. They now ship in the same autoconfiguration class,
+specified in [LLD-spring-producer.md](LLD-spring-producer.md) §6 — read the two sections together for
+the module's full bean list.
 
 ### 4.4 `tandem-spring-relay` beans
 

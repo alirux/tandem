@@ -201,8 +201,11 @@ relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lea
 Spring users write none of the above. `tandem-spring-producer` autoconfigures the write side (running
 the bucket-count guard for you) and adds the `TransactionalOutboxTemplate`, the `@TransactionalOutbox`
 annotation, and the Spring application-events tier; `tandem-spring-relay` autoconfigures the relay and
-starts it with the application. Both wire from `tandem.*` properties — see the [Spring sample](#try-it),
-[LLD-spring-producer.md](docs/LLD-spring-producer.md) and [LLD-spring-config.md](docs/LLD-spring-config.md).
+starts it with the application. Both wire from `tandem.*` properties, with IDE completion and hover help
+from the metadata each module ships; each also ships a commented reference configuration
+(`tandem-producer-reference.yml`, `tandem-relay-reference.yml`) listing every key it binds with its
+default. See the [Spring sample](#try-it), [LLD-spring-producer.md](docs/LLD-spring-producer.md) and
+[LLD-spring-config.md](docs/LLD-spring-config.md).
 
 ## Logging
 

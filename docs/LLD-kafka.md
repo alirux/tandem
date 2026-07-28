@@ -25,10 +25,30 @@ them to unsafe values — they protect the no-loss + ordering guarantees:
 | `acks` | `all` | the row is marked DONE only after a durable ack (§4.5); `0`/`1` risk loss → rejected |
 | `max.in.flight.requests.per.connection` | ≤ 5 | required for idempotent ordering; >5 rejected |
 | `retries` | high (default `Integer.MAX_VALUE`) | transient errors are retried by the producer, bounded by ↓ |
-| `delivery.timeout.ms` | **30s** (default) | caps the producer's retry window before a send fails; **must stay below `rowLease`** so a row's lease cannot expire mid-send — relay fail-fasts if `rowLease ≤ delivery.timeout.ms` (LLD-jdbc §3.5) |
+| `delivery.timeout.ms` | **30s** (Tandem's default, below Kafka's own 2 min) | caps the producer's retry window before a send fails; **must stay below `rowLease`** so a row's lease cannot expire mid-send — relay fail-fasts if `rowLease ≤ delivery.timeout.ms` (LLD-jdbc §3.5) |
 
 Everything else (bootstrap servers, security, compression, batching) is user-supplied and passed
-through. Within an aggregate the relay keeps **only the head row in flight** and never sends the
+through.
+
+**The filled-in `delivery.timeout.ms` grows with the floor Kafka enforces.** Kafka rejects a producer
+whose `delivery.timeout.ms < linger.ms + request.timeout.ms`, and Tandem's 30 s default sits exactly on
+that floor when `linger.ms` is 0 and `request.timeout.ms` is 30 s. Filling it in blindly therefore
+breaks producer construction — with a raw Kafka `ConfigException` — as soon as anything raises the
+floor: an ordinary `linger.ms` (the batching knob explicitly "passed through" above), **or simply a
+newer client**. Kafka 4 moved the default `linger.ms` from 0 to 5 ms, which is enough on its own: a
+consumer on `kafka-clients` 4.x could not construct a producer at all with Tandem's default.
+
+So when the user set no `delivery.timeout.ms`, Tandem fills in `max(30s, linger.ms +
+request.timeout.ms)`, taking those two values from the user's config or, failing that, from
+**Kafka's own declared defaults** (`ProducerConfig.configDef()`) rather than from copies of them —
+copying "linger defaults to 0" into Tandem is what made this break on a client upgrade. An explicit
+`delivery.timeout.ms` is always left untouched.
+
+The relay reads the **effective** value for the `rowLease` invariant (§2), so a producer that outgrows
+the row lease still fails loudly at startup, with the diagnostic of LLD-jdbc §3.5 that names the fix —
+never silently.
+
+Within an aggregate the relay keeps **only the head row in flight** and never sends the
 next before its ack (§6/E6); **across the distinct aggregates of a claimed batch it overlaps sends
 on the single async producer** — up to `batch_size` records in flight, the per-shard concurrency
 window. That overlap (not one-at-a-time publishing) is where per-shard throughput comes from

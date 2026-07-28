@@ -1,0 +1,59 @@
+{
+  "properties": [
+    {
+      "name": "tandem.relay.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether this application runs a relay. Set to false to load the module without starting one — the supported way to deploy a single image both as a write-side service and as a dedicated relay process. Gates the whole autoconfiguration, so it binds to no configuration-properties type and the annotation processor cannot see it."
+    },
+    {
+      "name": "tandem.kafka.producer",
+      "type": "java.util.Map<java.lang.String,java.lang.String>",
+      "description": "Raw Kafka producer properties, passed through to the producer the relay publishes with (e.g. bootstrap.servers, security and compression settings). Tandem hardens the values that protect the no-loss and ordering guarantees — enable.idempotence, acks, max.in.flight.requests.per.connection — and rejects unsafe overrides at startup."
+    }
+  ],
+  "hints": [
+    {
+      "name": "tandem.kafka.producer.keys",
+      "values": [
+        {
+          "value": "bootstrap.servers",
+          "description": "Comma-separated host:port list of brokers. Required in practice — the relay cannot publish without it."
+        },
+        {
+          "value": "compression.type",
+          "description": "Compression for produced batches: none (default), gzip, snappy, lz4, zstd."
+        },
+        {
+          "value": "linger.ms",
+          "description": "How long the producer waits to batch records. Raising it raises the filled-in delivery.timeout.ms with it, which must stay below tandem.relay.row-lease."
+        },
+        {
+          "value": "batch.size",
+          "description": "Maximum bytes batched per partition before a send."
+        },
+        {
+          "value": "delivery.timeout.ms",
+          "description": "Total time a send may take before it fails. Must stay below tandem.relay.row-lease — the relay validates the invariant against this effective value at startup."
+        },
+        {
+          "value": "request.timeout.ms",
+          "description": "Per-request broker timeout. Counts towards the minimum delivery.timeout.ms Kafka accepts."
+        },
+        {
+          "value": "security.protocol",
+          "description": "PLAINTEXT, SSL, SASL_PLAINTEXT or SASL_SSL."
+        },
+        {
+          "value": "sasl.mechanism",
+          "description": "SASL mechanism when security.protocol selects SASL (e.g. PLAIN, SCRAM-SHA-512)."
+        }
+      ],
+      "providers": [
+        {
+          "name": "any"
+        }
+      ]
+    }
+  ]
+}

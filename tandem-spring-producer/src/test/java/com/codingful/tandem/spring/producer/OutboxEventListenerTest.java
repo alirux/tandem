@@ -10,6 +10,7 @@ import com.codingful.tandem.test.InMemoryOutbox;
 import java.util.Collection;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEvent;
 import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.core.ResolvableType;
@@ -68,6 +69,21 @@ class OutboxEventListenerTest {
         assertThat(listener.supportsEventType(
                 ResolvableType.forClassWithGenerics(PayloadApplicationEvent.class, String.class))).isFalse();
         assertThat(listener.supportsEventType(ResolvableType.forClass(ContextRefreshedEvent.class))).isFalse();
+    }
+
+    /**
+     * A domain event that extends {@code ApplicationEvent} is published unwrapped, so the tier does not
+     * see it even with a mapper registered — the documented boundary of this tier (LLD-spring-producer §5).
+     */
+    @Test
+    void GIVEN_a_mapped_event_published_as_its_own_application_event_WHEN_asked_THEN_it_is_not_supported() {
+        assertThat(listener.supportsEventType(ResolvableType.forClass(SelfPublishingOrderPlaced.class))).isFalse();
+    }
+
+    private static final class SelfPublishingOrderPlaced extends ApplicationEvent {
+        private SelfPublishingOrderPlaced() {
+            super("test-source");
+        }
     }
 
     @Test

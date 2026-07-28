@@ -1,0 +1,16 @@
+# Tandem — reference configuration for tandem-spring-producer (LLD-spring-config §2).
+#
+# The write side binds one namespace only. Everything else it needs — the DataSource, the transaction
+# manager, the ObjectMapper behind object payloads — is the application's own, never Tandem's to
+# configure. The relay engine and the Kafka publishing settings live in tandem-spring-relay's own
+# reference file; a write-side-only service has no use for them.
+#
+# The same text is available as IDE completion and hover help from the generated configuration metadata.
+
+tandem:
+  outbox:
+    # tandem.outbox.bucket-count — number of virtual buckets work is sharded over. Default: 256.
+    # Baked into every stored row's bucket: never change it after the first deployment. The relay
+    # must bind the identical value — the startup guard fails loudly if the two ever diverge, rather
+    # than letting the write side insert into buckets the relay never polls.
+    bucket-count: 256

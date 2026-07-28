@@ -20,8 +20,12 @@ final class KafkaProducerConfig {
     /** Max in-flight requests allowed with idempotence (LLD-kafka §1). */
     static final int MAX_IN_FLIGHT_LIMIT = 5;
 
-    /** Kafka producer default for {@code delivery.timeout.ms} (also Tandem's default). */
+    /**
+     * Tandem's default {@code delivery.timeout.ms} — deliberately below Kafka's own 2-minute default, so
+     * that it stays under the 60 s default {@code rowLease} the invariant of LLD-jdbc §3.5 requires.
+     */
     static final long DEFAULT_DELIVERY_TIMEOUT_MS = 30_000;
+
 
     private static final Set<String> SAFE_ACKS = Set.of("all", "-1");
 
@@ -50,12 +54,38 @@ final class KafkaProducerConfig {
         config.putIfAbsent(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         config.putIfAbsent(ProducerConfig.ACKS_CONFIG, "all");
         config.putIfAbsent(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
-        config.putIfAbsent(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, (int) DEFAULT_DELIVERY_TIMEOUT_MS);
+        config.putIfAbsent(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, (int) fillInDeliveryTimeoutMs(config));
 
         // The CloudEvents binary binding produces String keys and byte[] values — fixed, not user-tunable.
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         return config;
+    }
+
+    /**
+     * The {@code delivery.timeout.ms} to fill in when the user set none. Kafka rejects a producer whose
+     * {@code delivery.timeout.ms < linger.ms + request.timeout.ms}, and Tandem's 30 s default is only just
+     * above that floor: filling it in blindly breaks producer construction with a raw Kafka error as soon
+     * as anything pushes the floor up — an ordinary {@code linger.ms}, or simply a newer client (Kafka 4
+     * moved the default {@code linger.ms} from 0 to 5 ms, which is enough on its own). So the fill-in
+     * grows to whatever the floor requires, and the relay's {@code rowLease > delivery.timeout.ms} check
+     * then runs against that real value — a producer that outgrows the row lease fails loudly, with the
+     * diagnostic that names the fix.
+     *
+     * <p>The floor is computed from <b>Kafka's own declared defaults</b> rather than copies of them:
+     * hardcoding "linger defaults to 0" is exactly what made this break on a client upgrade.
+     */
+    private static long fillInDeliveryTimeoutMs(Map<String, ?> config) {
+        Map<String, Object> kafkaDefaults = ProducerConfig.configDef().defaultValues();
+        long linger = effective(config, kafkaDefaults, ProducerConfig.LINGER_MS_CONFIG);
+        long requestTimeout = effective(config, kafkaDefaults, ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+        return Math.max(DEFAULT_DELIVERY_TIMEOUT_MS, linger + requestTimeout);
+    }
+
+    /** The user's value for {@code key} if set, else the one Kafka's own config definition declares. */
+    private static long effective(Map<String, ?> config, Map<String, Object> kafkaDefaults, String key) {
+        Object value = config.get(key);
+        return parseInt(value != null ? value : kafkaDefaults.get(key));
     }
 
     /** The effective {@code delivery.timeout.ms} after hardening — the relay reads it for the rowLease invariant (LLD-jdbc §3.5). */

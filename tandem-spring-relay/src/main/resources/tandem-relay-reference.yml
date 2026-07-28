@@ -1,0 +1,100 @@
+# Tandem — reference configuration for tandem-spring-relay (LLD-spring-config §2).
+#
+# Every `tandem.*` key this module binds, in one place, with its default. Copy what you need and delete
+# the rest: every key shown commented out is already in force at the value noted, so a deployment that
+# sets none of them behaves exactly like this file describes.
+#
+# Only `tandem.kafka.source` has no default — startup fails, naming the key, if it is absent.
+# The same IDE completion and hover text comes from the module's generated configuration metadata.
+
+tandem:
+
+  # ----------------------------------------------------------------------------------------------
+  # tandem.outbox — the values the write side and the relay MUST agree on.
+  # ----------------------------------------------------------------------------------------------
+  outbox:
+    # tandem.outbox.bucket-count — number of virtual buckets work is sharded over. Default: 256.
+    # Baked into every stored row: never change it after the first deployment. The write side must
+    # bind the identical value; a divergence fails startup instead of stalling delivery silently.
+    bucket-count: 256
+
+  # ----------------------------------------------------------------------------------------------
+  # tandem.relay — the relay engine.
+  # ----------------------------------------------------------------------------------------------
+  relay:
+    # tandem.relay.enabled — whether this application runs a relay. Default: true.
+    # Set false to load the module without starting a relay (one image, two roles).
+    # enabled: true
+
+    # tandem.relay.coordination — SINGLE (default) or LEASE: how concurrent relay instances share
+    # buckets. SINGLE assumes one active relay; LEASE lets several instances split the buckets.
+    # coordination: SINGLE
+
+    # tandem.relay.instance-id — this instance's unique LEASE owner id, max 64 chars.
+    # Default: derived, tandem-<host>-<pid>-<rand>. Set it for stability across restarts.
+    # instance-id: tandem-orders-relay-1
+
+    # tandem.relay.bucket-lease — how long a LEASE bucket claim is held. Default: 30s.
+    # bucket-lease: 30s
+
+    # tandem.relay.workers-per-instance — worker threads. Default: availableProcessors() * 2.
+    # workers-per-instance: 8
+
+    # tandem.relay.poll-interval — idle backoff between empty claims. Default: 100ms.
+    # poll-interval: 100ms
+
+    # tandem.relay.batch-size — per-shard in-flight window. Default: 100.
+    # batch-size: 100
+
+    # tandem.relay.row-lease — per-row claim lease. Default: 60s.
+    # Hard invariant: must exceed the producer's effective delivery.timeout.ms (2x recommended),
+    # or a row's lease could expire mid-send and the row be delivered twice. Checked at startup.
+    # row-lease: 60s
+
+    # tandem.relay.max-attempts — delivery attempts before a row is quarantined. Default: 10.
+    # max-attempts: 10
+
+    # tandem.relay.retention — how long DONE rows are kept before cleanup. Default: 14d.
+    # retention: 14d
+
+    # tandem.relay.cleanup-batch-size — rows deleted per cleanup pass. Default: 1000.
+    # cleanup-batch-size: 1000
+
+    # tandem.relay.reclaim-interval — how often expired row leases are reclaimed. Default: 5s.
+    # reclaim-interval: 5s
+
+    # tandem.relay.cleanup-interval — how often DONE rows are cleaned up. Default: 15m.
+    # cleanup-interval: 15m
+
+    # tandem.relay.metrics-interval — how often backlog, backlog age and live workers are reported.
+    # Default: 10s.
+    # metrics-interval: 10s
+
+  # ----------------------------------------------------------------------------------------------
+  # tandem.kafka — the CloudEvents envelope and the Kafka producer.
+  # ----------------------------------------------------------------------------------------------
+  kafka:
+    # tandem.kafka.source — REQUIRED. The CloudEvents `source` of every published event: the URI
+    # identifying this application as the producer. No default.
+    source: /orders/service
+
+    # tandem.kafka.default-content-type — `datacontenttype` for a row that stored none.
+    # Default: application/json.
+    # default-content-type: application/json
+
+    # tandem.kafka.default-data-schema — default CloudEvents `dataschema` URI.
+    # Default: unset, omitted from the envelope.
+    # default-data-schema: https://schemas.example.com/orders/v1.json
+
+    # tandem.kafka.topic-suffix — appended to the kebab-cased aggregate type to form the topic name,
+    # so `OrderLine` publishes to `order-line-topic`. Default: -topic.
+    # topic-suffix: -topic
+
+    # tandem.kafka.producer.* — raw Kafka producer properties, passed through. Tandem hardens what
+    # protects no-loss and ordering (enable.idempotence, acks, max.in.flight.requests.per.connection)
+    # and rejects unsafe overrides at startup. Default: empty.
+    producer:
+      bootstrap.servers: localhost:9092
+      # compression.type: lz4
+      # linger.ms: 5
+      # security.protocol: SASL_SSL

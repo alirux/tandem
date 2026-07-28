@@ -26,6 +26,14 @@ dependencies {
     testImplementation(project(":tandem-test"))
 }
 
+// The configuration processor reads META-INF/additional-spring-configuration-metadata.json (the hand-written
+// entries of LLD-spring-config §2.4) off the *processed* resources, so the resources must be there before
+// compileJava runs — without this the file is silently ignored and the keys it documents vanish from the
+// metadata the IDE reads.
+tasks.named("compileJava") {
+    inputs.files(tasks.named("processResources"))
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Dual-generation matrix (LLD-spring-config §1.2)
 //
