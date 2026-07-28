@@ -216,6 +216,7 @@ programmatic builder never drift:
 | `tandem.relay.cleanup-batch-size` | int | `1000` |
 | `tandem.relay.reclaim-interval` | Duration | `5s` |
 | `tandem.relay.cleanup-interval` | Duration | `15m` |
+| `tandem.relay.metrics-interval` | Duration | `10s` |
 
 `tandem.relay.enabled=false` is the supported way to deploy the relay module without running a relay
 — for example when the same application image is deployed both as a write-side service and as a
@@ -445,8 +446,11 @@ shared between two versions stays usable by both.
   optional object-payload serialization. It was excluded from *this* increment on purpose — the
   configuration contract is what everything else binds to, so it was specified and reviewed first.
 - **Micrometer.** A `TandemMetrics` implementation backed by Micrometer belongs to
-  `tandem-micrometer`, not here. Note that several port methods have no caller in the relay today,
-  so wiring an adapter alone would not produce lag telemetry.
+  `tandem-micrometer`, not here. The relay bean is contributed with `@ConditionalOnMissingBean`
+  (§4.4), so such an adapter replaces `TandemMetrics.NOOP` with no change to this module. Wiring one
+  is now enough to get telemetry: the relay reports the backlog, its age and the live worker count on
+  `tandem.relay.metrics-interval` (LLD-jdbc §4). The one signal still without a caller is
+  `recordUncoveredBuckets`, whose query is specified together with that module.
 - **`tandem.relay.coordination=LEASE` in a Spring context.** Behaviourally identical to manual
   assembly, but the derived `instance-id` deserves a review against typical container deployments,
   where hostnames may be recycled.

@@ -38,5 +38,6 @@ public record TandemRelayProperties(
         Duration retention,
         Integer cleanupBatchSize,
         Duration reclaimInterval,
-        Duration cleanupInterval) {
+        Duration cleanupInterval,
+        Duration metricsInterval) {
 }

@@ -95,6 +95,9 @@ public class TandemRelayAutoConfiguration {
         if (relay.cleanupInterval() != null) {
             builder.cleanupInterval(relay.cleanupInterval());
         }
+        if (relay.metricsInterval() != null) {
+            builder.metricsInterval(relay.metricsInterval());
+        }
         return builder.build();
     }
 
