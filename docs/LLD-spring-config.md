@@ -318,8 +318,14 @@ as the file describes; only the required `tandem.kafka.source` is active.
 
 The file is a **rendering** of the contract, not a second definition — it has no authority over the
 Javadoc. What keeps it from drifting is not discipline but a test: each module asserts, in both
-directions, that the reference names exactly the keys the **generated metadata** declares. Adding,
-renaming or removing a property without touching the reference fails the build.
+directions, that the reference names exactly the keys the **generated metadata** declares. The
+parsing/comparison logic itself is written once — `ConfigurationMetadataReference`, a `tandem-test`
+**test fixture** (`java-test-fixtures`, not `tandem-test`'s published main sources), since the two
+modules' own tests are its only callers and neither may depend on the other (the write side must
+never pull `tandem-kafka`). Kept out of the published jar entirely — the build explicitly skips the
+`testFixtures*` component variants, since `java-test-fixtures` publishes them by default otherwise.
+
+Adding, renaming or removing a property without touching the reference fails the build.
 
 ---
 

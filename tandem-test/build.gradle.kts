@@ -1,5 +1,24 @@
 description = "Tandem test support — in-memory collaborators and the Testcontainers helper"
 
+// Internal-only helpers shared across modules' own test suites (currently: the Spring modules'
+// configuration-reference check), never published — a Tandem consumer has no use for it. Kept out of
+// `main` so it never enters the published jar's API surface or javadoc, unlike the real collaborators
+// above; consuming modules add `testImplementation(testFixtures(project(":tandem-test")))`.
+apply(plugin = "java-test-fixtures")
+
+// java-test-fixtures otherwise publishes its jar (and sources jar) as extra artifacts of the "java"
+// component by default — the opposite of "internal-only" above. Skip every testFixtures variant
+// explicitly; the module still builds and is consumable in-repo via testFixtures(project(...)).
+// Deferred to afterEvaluate: the maven-publish plugin (applied by the root convention, before this
+// script runs) registers these configurations lazily, so looking them up eagerly here is too early.
+afterEvaluate {
+    components.withType<AdhocComponentWithVariants>().configureEach {
+        listOf("testFixturesApiElements", "testFixturesRuntimeElements", "testFixturesSourcesElements")
+                .mapNotNull { configurations.findByName(it) }
+                .forEach { withVariantsFromConfiguration(it) { skip() } }
+    }
+}
+
 dependencies {
     api(project(":tandem-core"))
 

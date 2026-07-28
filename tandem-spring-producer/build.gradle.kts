@@ -36,6 +36,9 @@ dependencies {
     // AbstractDataSource is the real base the wiring tests' stub DataSource extends (test-only).
     testImplementation(libs.spring.jdbc)
     testImplementation(project(":tandem-test"))
+    // The reference-configuration check shared with tandem-spring-relay (LLD-spring-config §2.4) —
+    // internal-only, not published (see tandem-test/build.gradle.kts).
+    testImplementation(testFixtures(project(":tandem-test")))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -60,6 +63,7 @@ dependencies {
     bootFourTestRuntimeClasspath(libs.jackson.databind)
     bootFourTestRuntimeClasspath(libs.slf4j.api)
     bootFourTestRuntimeClasspath(project(":tandem-test"))
+    bootFourTestRuntimeClasspath(testFixtures(project(":tandem-test")))
     bootFourTestRuntimeClasspath(platform(libs.junit.bom))
     bootFourTestRuntimeClasspath(libs.junit.jupiter)
     bootFourTestRuntimeClasspath(libs.junit.platform.launcher)
