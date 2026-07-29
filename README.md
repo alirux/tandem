@@ -23,8 +23,8 @@
 > The **Spring Boot integration** ships alongside it and is tested against **both Boot 3.x and 4.x**:
 > `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
 > `tandem-spring-relay` (the relay autoconfiguration, started with the application). The relay also
-> reports its own backlog — pending count, backlog age, live workers — through the `TandemMetrics`
-> port. All of it is
+> reports its own health through the `TandemMetrics` port — backlog, backlog age, permanently failed
+> rows, live workers, and, under `LEASE` coordination, uncovered buckets. All of it is
 > **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
 > The prebuilt standalone relay, the Admin API, MySQL support, and the optional adapters are
 > **not yet implemented**.
@@ -313,7 +313,7 @@ tandem-sample-spring\run.cmd
 | `tandem-spring-relay` | Spring Boot autoconfig for the relay — started with the application — see [LLD-spring-config.md](docs/LLD-spring-config.md) | ✅ released |
 | `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
 | `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
-| `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port | 🔜 planned |
+| `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port — see [LLD-micrometer.md](docs/LLD-micrometer.md) | 🚧 in progress — not yet released |
 | `tandem-kafka-streams` / `tandem-flink` / `tandem-tracing-otel` | Optional adapters | 🔜 planned |
 
 > **Database support: PostgreSQL only today.** The shipped schema, the claim/lease SQL, and every
