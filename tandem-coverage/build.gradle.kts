@@ -57,4 +57,11 @@ val aggregatedCoverageReport = tasks.register<JacocoReport>("aggregatedCoverageR
         xml.outputLocation.set(layout.buildDirectory.file("reports/jacoco/aggregated/aggregated.xml"))
         html.outputLocation.set(layout.buildDirectory.dir("reports/jacoco/aggregated/html"))
     }
+
+    // Never restore this report from the Gradle build cache. A cache hit would silently hand CI a
+    // report generated on some earlier run (potentially long before the current commit), which
+    // Codecov then rejects as an upload older than its 12h max-age window. The report is cheap to
+    // regenerate (it only merges already-produced .exec files), so always running it fresh costs
+    // nothing that matters.
+    outputs.doNotCacheIf("Must reflect the current CI run so the Codecov upload isn't stale") { true }
 }
