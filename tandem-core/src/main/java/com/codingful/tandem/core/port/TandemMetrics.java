@@ -16,11 +16,11 @@ public interface TandemMetrics {
         return false;
     }
 
-    /** @param pending the current count of not-yet-DONE rows */
+    /** @param pending the current count of {@code PENDING} rows */
     default void recordLag(long pending) {
     }
 
-    /** @param age seconds since the oldest pending row was created */
+    /** @param age seconds since the oldest {@code PENDING} row was created */
     default void recordLagAgeSeconds(double age) {
     }
 
