@@ -122,9 +122,9 @@ final class RelayWorker {
             }
         } else {
             store.markFailed(record.id(), message);
-            if (metrics.isEnabled()) {
-                metrics.recordFailed(1);
-            }
+            // No metrics call here: failed.count is a live count of FAILED rows (WorkerPool.metricsTick,
+            // via OutboxStore.failedCount()), not a tally of failure events — a row can later leave
+            // FAILED (moved to DISCARDED by an operator), and only a fresh read reflects that.
         }
     }
 

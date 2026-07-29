@@ -612,7 +612,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.lag.count` | Gauge | Number of rows with `status=PENDING` | High |
 | `tandem.outbox.lag.age_seconds` | Gauge | Age of the oldest PENDING row in seconds | **Critical** |
 | `tandem.outbox.published.rate` | Counter | Rows transitioned to `status=DONE` per second | High |
-| `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` | High |
+| `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
 | `tandem.outbox.workers.active` | Gauge | Number of active relay workers | Medium |

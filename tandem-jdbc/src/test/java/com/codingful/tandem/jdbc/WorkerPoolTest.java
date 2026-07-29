@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -284,6 +285,52 @@ class WorkerPoolTest {
     }
 
     @Test
+    void GIVEN_a_permanently_failing_dispatch_WHEN_the_relay_runs_THEN_it_reports_the_row_as_failed() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+        RecordingDispatcher dispatcher = new RecordingDispatcher().failAll(false);   // permanent
+        RecordingMetrics metrics = new RecordingMetrics();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(20)).build();
+        WorkerPool pool = new WorkerPool(outbox, dispatcher, cfg, metrics, Clock.systemUTC(),
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "failed:" + metrics.failed(), () -> metrics.failed() == 1);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_the_stores_failed_count_drops_WHEN_the_relay_reads_it_again_THEN_the_reported_value_drops_too() {
+        // The property a tally-of-events implementation cannot have: a live read must be able to go
+        // down, exactly as it would once an operator resolves a stuck row (moved out of FAILED,
+        // LLD-core §1.2) — a count that only ever grows would misreport a resolved incident forever.
+        StubFailedCountStore store = new StubFailedCountStore(new InMemoryOutbox());
+        store.setFailedCount(3);
+        RecordingMetrics metrics = new RecordingMetrics();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(20)).build();
+        WorkerPool pool = new WorkerPool(store, new RecordingDispatcher(), cfg, metrics, Clock.systemUTC(),
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "failed:" + metrics.failed(), () -> metrics.failed() == 3);
+
+            store.setFailedCount(0);
+            awaitUpTo(Duration.ofSeconds(20), () -> "failed:" + metrics.failed(), () -> metrics.failed() == 0);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
     void GIVEN_no_metrics_adapter_WHEN_the_relay_runs_THEN_the_backlog_is_never_queried() {
         CountingStore store = new CountingStore(new InMemoryOutbox());
         RelayConfig cfg = RelayConfig.builder()
@@ -352,6 +399,11 @@ class WorkerPoolTest {
         public Optional<LagSnapshot> lag() {
             return delegate.lag();
         }
+
+        @Override
+        public OptionalLong failedCount() {
+            return delegate.failedCount();
+        }
     }
 
     /** Counts how often the relay claimed work and how often it read the lag gauge. */
@@ -402,6 +454,24 @@ class WorkerPoolTest {
 
         boolean crashed() {
             return crashed.get();
+        }
+    }
+
+    /** Reports whatever {@code failedCount} was last set to, independent of the delegate's own rows. */
+    private static final class StubFailedCountStore extends DelegatingStore {
+        private final AtomicLong failedCount = new AtomicLong();
+
+        StubFailedCountStore(InMemoryOutbox delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public OptionalLong failedCount() {
+            return OptionalLong.of(failedCount.get());
+        }
+
+        void setFailedCount(long value) {
+            failedCount.set(value);
         }
     }
 

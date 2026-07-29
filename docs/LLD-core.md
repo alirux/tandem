@@ -147,6 +147,9 @@ public interface OutboxStore {
     default Optional<LagSnapshot> lag() { return Optional.empty(); }   // backlog reading for the
                                                                       // lag gauges; read only while
                                                                       // metrics are on (LLD-jdbc §4)
+    default OptionalLong failedCount() { return OptionalLong.empty(); }  // live count of FAILED rows
+                                                                      // for failed.count; same
+                                                                      // read-only-while-on rule
 }
 ```
 

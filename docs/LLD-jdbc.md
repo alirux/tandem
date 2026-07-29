@@ -444,8 +444,11 @@ itself becomes measurably expensive at scale.
 Emitted through the `TandemMetrics` port (no Micrometer dependency here). Mapping to HLD §7:
 `recordLag` / `recordLagAgeSeconds` (both from `OutboxStore.lag()` — a **single** query returning the
 count of PENDING rows and the oldest `created_at`, so the two gauges always describe the same instant;
-read every `metricsInterval`, default 10 s),
-`incrementPublished` (on `markDoneBatch`), `recordFailed`, `incrementRetry`, `incrementLeaseExpired`
+read every `metricsInterval`, default 10 s), `recordFailed` (from `OutboxStore.failedCount()`, the same
+cadence — a **live** count of `FAILED` rows, not a tally of failure events: a row can leave `FAILED`
+via the admin `DISCARDED` transition, and only a fresh read reflects that; an event-driven counter
+would never go back down, permanently misreporting a resolved incident as still open),
+`incrementPublished` (on `markDoneBatch`), `incrementRetry`, `incrementLeaseExpired`
 (reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (buckets in `tandem_bucket_lease` with an
 expired/NULL owner but having PENDING rows).
 

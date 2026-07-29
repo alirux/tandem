@@ -28,7 +28,7 @@ public interface TandemMetrics {
     default void incrementPublished(long n) {
     }
 
-    /** @param count rows that hit a permanent failure ({@code FAILED}) since the last call */
+    /** @param count the current count of {@code FAILED} rows — a live reading, not a delta since the last call */
     default void recordFailed(long count) {
     }
 

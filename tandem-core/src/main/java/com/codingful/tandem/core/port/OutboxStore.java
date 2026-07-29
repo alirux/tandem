@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -69,5 +70,17 @@ public interface OutboxStore {
      */
     default Optional<LagSnapshot> lag() {
         return Optional.empty();
+    }
+
+    /**
+     * Read the current count of {@code FAILED} rows for the {@code failed.count} gauge (HLD §7). Unlike
+     * {@link #lag()} this is a live count, not an accumulated total: a row counted here can later leave
+     * {@code FAILED} (moved to {@code DISCARDED} by an operator, LLD-core §1.2), and the next reading
+     * must reflect that — a running total of failure events would never go back down.
+     *
+     * @return the count, or empty if this store does not report it — the relay then emits nothing
+     */
+    default OptionalLong failedCount() {
+        return OptionalLong.empty();
     }
 }

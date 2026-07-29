@@ -209,9 +209,9 @@ public final class WorkerPool {
     }
 
     /**
-     * Read the lag gauges and report how many workers are actually alive (§4). Failing here must never
-     * disturb delivery — an unreadable gauge is a monitoring problem, not a relay problem — so, like
-     * the other maintenance jobs, it swallows the failure after logging it.
+     * Read the lag and failed-count gauges and report how many workers are actually alive (§4). Failing
+     * here must never disturb delivery — an unreadable gauge is a monitoring problem, not a relay
+     * problem — so, like the other maintenance jobs, it swallows the failure after logging it.
      */
     private void metricsTick() {
         try {
@@ -219,6 +219,7 @@ public final class WorkerPool {
                 metrics.recordLag(lag.pending());
                 metrics.recordLagAgeSeconds(lag.ageSecondsAt(clock.instant()));
             });
+            store.failedCount().ifPresent(metrics::recordFailed);
             metrics.recordActiveWorkers(aliveWorkers());
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Reading relay metrics failed", e);

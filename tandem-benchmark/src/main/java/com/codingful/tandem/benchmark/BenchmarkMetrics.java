@@ -8,17 +8,16 @@ import java.util.concurrent.atomic.LongAdder;
 /**
  * In-process {@link TandemMetrics} sink registered with the relay (HLD-load-testing.md §2.1): the
  * real {@code tandem-micrometer} adapter stays a future module, so the harness counts the relay's
- * published/retry/failed/lease-expired events itself.
+ * published/retry/lease-expired events itself.
  *
- * <p>It also keeps the <b>gauges</b> the relay now reports — backlog, backlog age, live workers
- * (LLD-jdbc §4). Those are read from the relay's own periodic reading, which makes them directly
- * comparable with {@link LagProbe}'s independent SQL over the same table: two computations of the
- * same figure, and a benchmark run is where they can be checked against each other.
+ * <p>It also keeps the <b>gauges</b> the relay now reports — backlog, backlog age, failed-row count,
+ * live workers (LLD-jdbc §4). Those are read from the relay's own periodic reading, which makes them
+ * directly comparable with {@link LagProbe}'s independent SQL over the same table: two computations of
+ * the same figure, and a benchmark run is where they can be checked against each other.
  */
 public final class BenchmarkMetrics implements TandemMetrics {
 
     private final LongAdder published = new LongAdder();
-    private final LongAdder failed = new LongAdder();
     private final LongAdder retries = new LongAdder();
     private final LongAdder leaseExpired = new LongAdder();
     private final LongAdder configInvalid = new LongAdder();
@@ -27,6 +26,7 @@ public final class BenchmarkMetrics implements TandemMetrics {
     private final AtomicLong lag = new AtomicLong(-1);
     private final AtomicLong lagAgeMillis = new AtomicLong(-1);
     private final AtomicInteger activeWorkers = new AtomicInteger(-1);
+    private final AtomicLong failed = new AtomicLong(-1);
 
     @Override
     public boolean isEnabled() {
@@ -55,7 +55,7 @@ public final class BenchmarkMetrics implements TandemMetrics {
 
     @Override
     public void recordFailed(long count) {
-        failed.add(count);
+        failed.set(count);
     }
 
     @Override
@@ -77,8 +77,9 @@ public final class BenchmarkMetrics implements TandemMetrics {
         return published.sum();
     }
 
+    /** Latest live count of {@code FAILED} rows the relay reported, or {@code -1} before its first reading. */
     public long failedCount() {
-        return failed.sum();
+        return failed.get();
     }
 
     public long retryCount() {

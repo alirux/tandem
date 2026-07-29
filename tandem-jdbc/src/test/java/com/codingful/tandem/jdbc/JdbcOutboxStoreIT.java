@@ -169,6 +169,24 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_a_permanently_failed_head_WHEN_the_failed_count_is_read_THEN_it_reflects_the_live_table() {
+        insert("order-1", 1);
+        insert("order-2", 1);
+        long first = claim(10).get(0).id();
+
+        assertThat(store.failedCount()).hasValue(0);
+
+        store.markFailed(first, "poison");
+        assertThat(store.failedCount()).hasValue(1);
+
+        // A live read, not a tally of failure events: the row leaving FAILED (an operator's DISCARD,
+        // simulated here by the raw UPDATE the Admin API will issue — Q24) must bring the count back
+        // down. A count that only ever grows would misreport a resolved incident as still-open forever.
+        setStatus(first, 4);   // DISCARDED
+        assertThat(store.failedCount()).hasValue(0);
+    }
+
+    @Test
     void GIVEN_terminal_rows_older_than_the_cutoff_WHEN_cleaned_up_THEN_they_are_deleted_and_others_kept() {
         insert("order-1", 1);   // id 1 → DONE
         insert("order-2", 1);   // id 2 → DONE
@@ -291,6 +309,18 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
 
     private static int attemptsOf(long id) {
         return intColumn("SELECT attempts FROM tandem_outbox WHERE id = ?", id);
+    }
+
+    /** Sets the raw status code directly — stands in for an Admin API transition not yet built (Q24). */
+    private static void setStatus(long id, int statusCode) {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement("UPDATE tandem_outbox SET status = ? WHERE id = ?")) {
+            ps.setInt(1, statusCode);
+            ps.setLong(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static int intColumn(String sql, long id) {

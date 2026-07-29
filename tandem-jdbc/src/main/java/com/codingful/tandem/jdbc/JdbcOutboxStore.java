@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import javax.sql.DataSource;
 
@@ -86,6 +87,10 @@ public final class JdbcOutboxStore implements OutboxStore {
     // reclaim returns it to PENDING, so it re-enters this reading on its own (HLD §7, §3.5).
     private static final String LAG_SQL =
             "SELECT count(*) AS pending, min(created_at) AS oldest FROM tandem_outbox WHERE status = 0";
+
+    // Live, not accumulated: a FAILED row can later move to DISCARDED (admin-only), and the next
+    // reading must reflect that — a running total of failure events would never go back down.
+    private static final String FAILED_COUNT_SQL = "SELECT count(*) FROM tandem_outbox WHERE status = 3";
 
     private static final String CLEANUP_SQL =
             "DELETE FROM tandem_outbox"
@@ -217,6 +222,18 @@ public final class JdbcOutboxStore implements OutboxStore {
                     Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
         } catch (SQLException e) {
             throw new TandemException("lag failed", e);
+        }
+    }
+
+    @Override
+    public OptionalLong failedCount() {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(FAILED_COUNT_SQL);
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();   // an aggregate without GROUP BY always returns exactly one row
+            return OptionalLong.of(rs.getLong(1));
+        } catch (SQLException e) {
+            throw new TandemException("failedCount failed", e);
         }
     }
 

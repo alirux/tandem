@@ -204,6 +204,9 @@ class RelayWorkerTest {
         drain(worker(attempts -> Duration.ZERO, metrics));
 
         assertThat(metrics.published()).isEqualTo(1);
-        assertThat(metrics.failed()).isEqualTo(1);
+        // Not retried: a permanent failure never calls incrementRetry. failed.count itself is not
+        // this worker's job — it's a live read of the store (WorkerPool.metricsTick, LLD-jdbc §4),
+        // not something RelayWorker reports per event, so it is exercised at that level instead.
+        assertThat(metrics.retries()).isZero();
     }
 }

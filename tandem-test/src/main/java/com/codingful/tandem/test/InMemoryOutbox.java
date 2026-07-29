@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -317,6 +318,20 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
                 }
             }
             return Optional.of(new LagSnapshot(pending, Optional.ofNullable(oldest)));
+        }
+    }
+
+    /** Same reading as the JDBC store: a live count, not an accumulated total (§4). */
+    @Override
+    public OptionalLong failedCount() {
+        synchronized (lock) {
+            long failed = 0;
+            for (Entry e : rows.values()) {
+                if (e.record.status() == OutboxStatus.FAILED) {
+                    failed++;
+                }
+            }
+            return OptionalLong.of(failed);
         }
     }
 

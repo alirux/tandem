@@ -268,11 +268,13 @@ lock-free concurrent recording), lossless, reporting p50/p95/p99/p99.9 via `snap
 Two sources of the same figures, kept deliberately separate so each can check the other:
 
 - **`BenchmarkMetrics`** implements `TandemMetrics` and is registered with the relay, so it receives
-  whatever the relay reports: the counters (`publishedCount`, `failedCount`, `retryCount`,
-  `leaseExpiredCount`, `configInvalidCount`, plus `publishedSinceLast()` — a sample-and-reset counter
-  for a throughput window) and the gauges the relay reads periodically (backlog, backlog age, live
-  workers; LLD-jdbc §4). A gauge reads `-1` until the relay has reported one, which is itself
-  informative: a stopped relay reports nothing at all.
+  whatever the relay reports: the counters (`publishedCount`, `retryCount`, `leaseExpiredCount`,
+  `configInvalidCount`, plus `publishedSinceLast()` — a sample-and-reset counter for a throughput
+  window) and the gauges the relay reads periodically (backlog, backlog age, **failed-row count**,
+  live workers; LLD-jdbc §4) — `failedCount` is a live read of `OutboxStore.failedCount()`, not a
+  tally of failure events, so it can drop back to zero once a stuck row is resolved. A gauge reads
+  `-1` until the relay has reported one, which is itself informative: a stopped relay reports nothing
+  at all.
 - **`LagProbe`** (§6.1) computes backlog signals from `tandem_outbox` directly, without going through
   the product at all. It stays for three reasons: it is the harness's **independent** check on what
   the relay reports (§6.2), it answers **per-bucket** questions the port still cannot (S3), and it
