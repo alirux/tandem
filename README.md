@@ -397,6 +397,7 @@ none is a bug report.
 | [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
 | [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive |
 | [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
+| [LLD-micrometer.md](docs/LLD-micrometer.md) | Micrometer metrics adapter — meter mapping, gauge registration mechanics, Spring autoconfiguration |
 | [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
 | [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |
 | [LLD-spring-producer.md](docs/LLD-spring-producer.md) | Spring write-side ergonomics — the Template, `@TransactionalOutbox`, and Spring-events tiers, plus optional payload serialization |
