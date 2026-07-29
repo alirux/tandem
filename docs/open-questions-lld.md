@@ -170,10 +170,44 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   collaborator), `RecordingDispatcher` (in-memory `OutboxDispatcher` with forced failures), and
   `TandemTestContainer` (Postgres + Kafka via Testcontainers, applies baseline DDL). *(tandem-test)*
 
-## G. Optional adapters (kafka-streams, flink, tracing-otel)
+## G. Optional adapters (kafka-streams, flink, tracing-otel, micrometer)
 
 - [ ] **Q27 (P3)** — **`lamport` (BIGINT) → engine timestamp (long ms).** Representation/overflow,
   header naming (`ce_logicalclock` vs `ce_*`), concrete extractor/assigner classes. *(tandem-kafka-streams, tandem-flink; HLD §9.4)*
+- [ ] **Q31 (P2)** — **`tandem-micrometer` design.** The module is reserved (`docs/LLD-base.md`:
+  artifactId + package `com.codingful.tandem.micrometer`) but has no LLD, no dependency-catalog entry,
+  and no wiring decision — it survived only as a trailing clause of the metrics work (HLD §7,
+  LLD-jdbc §4) until 2026-07-28.
+  - **✅ Resolved 2026-07-29: `tandem-spring-relay` autoconfigures the adapter bean; the user does not
+    wire it by hand.** The precedent is `JacksonPayloadSerializer` (`tandem-spring-producer`) — an
+    optional-library-backed port implementation gated by `@ConditionalOnClass`, contributed by the
+    Spring module itself, never left to manual `@Bean` wiring — and every other capability in this
+    Spring integration follows the same "classpath presence is the opt-in signal, zero config once
+    present" shape (`TopicRouter`, `WorkerPool`, the Template, the annotation and events tiers). No
+    minimal-footprint concern either way: `tandem-micrometer` is relay-side only, so the write-side is
+    unaffected regardless (HLD §1.3, "wired only where the relay runs").
+  - **New structural fact this creates, to design carefully, not just repeat:** unlike Jackson —
+    where `JacksonPayloadSerializer` lives *inside* the module that conditions on it, so only one
+    `@ConditionalOnClass` is needed — the Micrometer adapter lives in a **separate** module.
+    `tandem-spring-relay` therefore needs a new **optional (`compileOnly`) dependency on a sibling
+    Tandem module**, gated by a **second** condition (Micrometer's `MeterRegistry` present *and* the
+    adapter class itself present) — the first time any Tandem module optionally depends on another;
+    every existing sibling dependency (`tandem-jdbc`, `tandem-kafka`) is mandatory (`api`). Confirm the
+    two-condition ordering doesn't reopen the nested-`@Configuration`/class-literal traps already
+    documented in LLD-spring-config §1.1, and that it's included in the dual-generation `bootFourTest`
+    classpath once built.
+  - **Still needed before code:** the LLD itself — mapping each `TandemMetrics` method to a Micrometer
+    meter name/type/tags (HLD §7's own type column needs the `failed.count` correction folded in,
+    2026-07-29), the gauge-registration mechanics consistent with the push-on-timer decision (the
+    adapter keeps the last value the relay pushed, never queries on scrape), and `recordUncoveredBuckets`
+    — the one signal LLD-jdbc §4 defers here explicitly.
+  - **Verified, not assumed:** Micrometer stays on the same major across both Spring Boot lines this
+    project supports — Boot 3.3.5 manages **1.13.6**, Boot 4.1.0 manages **1.17.0** (read from the real
+    `spring-boot-dependencies` POMs). Lower cross-generation risk than the Framework 6→7 jump, but per
+    this repo's own 2026-07-27 lesson (a green single-version run doesn't prove compatibility with the
+    other), that still wants a real dual-generation test once the module exists, not just this
+    version-number argument. *(tandem-micrometer, tandem-spring-relay; HLD §1.3/§7, LLD-jdbc §4,
+    LLD-spring-config §1.1/§4.4, LLD-base)*
 
 ## H. Minor inconsistencies / cleanup
 
