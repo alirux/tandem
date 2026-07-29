@@ -155,6 +155,8 @@ interface BucketSource {
     Set<Integer> ownedBuckets();          // this instance's currently-owned buckets
     default void heartbeat() {}            // renew/reconcile leases (no-op under SINGLE)
     default void release() {}              // release on shutdown (no-op under SINGLE)
+    default OptionalInt uncoveredBuckets() { return OptionalInt.empty(); }  // bucket.uncovered (§4);
+                                                                             // empty under SINGLE
 }
 ```
 
@@ -449,16 +451,18 @@ cadence — a **live** count of `FAILED` rows, not a tally of failure events: a 
 via the admin `DISCARDED` transition, and only a fresh read reflects that; an event-driven counter
 would never go back down, permanently misreporting a resolved incident as still open),
 `incrementPublished` (on `markDoneBatch`), `incrementRetry`, `incrementLeaseExpired`
-(reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (buckets in `tandem_bucket_lease` with an
-expired/NULL owner but having PENDING rows).
+(reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (from `BucketSource.uncoveredBuckets()`,
+same cadence as `lag()`/`failedCount()` — a bucket that is free/expired in `tandem_bucket_lease` **and**
+has `PENDING` rows waiting; the `EXISTS` against `tandem_outbox` rides the existing
+`idx_tandem_outbox_dispatch` partial index, so the query scans only `tandem_bucket_lease`'s `B` rows, no
+new index needed. Empty under `SINGLE` — there is no lease table to stall; `BucketLeaseManager` is the
+only implementation).
 
 **No adapter = no cost.** With no `tandem-micrometer` adapter wired, the `TandemMetrics` port is
-the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — the lag
-reading goes further and is **never scheduled at all**, so its query never runs — like the
-attempt-archive guard (HLD §7.1) — and does not run. In particular the slightly heavier
-`recordUncoveredBuckets` aggregation (join `tandem_bucket_lease` × per-bucket PENDING lag) is a **stub in
-the basic round**; its exact query is specified together with `tandem-micrometer`. The `config.invalid`
-fail-fast metric (§3.5) is the one exception — it is recorded once at startup regardless, before aborting.
+the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — the lag,
+failed-count, and uncovered-bucket readings go further and are **never scheduled at all**, so their
+queries never run — like the attempt-archive guard (HLD §7.1). The `config.invalid` fail-fast metric
+(§3.5) is the one exception — it is recorded once at startup regardless, before aborting.
 
 ---
 

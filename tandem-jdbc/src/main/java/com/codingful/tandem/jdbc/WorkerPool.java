@@ -220,6 +220,7 @@ public final class WorkerPool {
                 metrics.recordLagAgeSeconds(lag.ageSecondsAt(clock.instant()));
             });
             store.failedCount().ifPresent(metrics::recordFailed);
+            bucketSource.uncoveredBuckets().ifPresent(metrics::recordUncoveredBuckets);
             metrics.recordActiveWorkers(aliveWorkers());
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Reading relay metrics failed", e);

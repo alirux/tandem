@@ -12,6 +12,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.Set;
 import javax.sql.DataSource;
 
@@ -78,6 +79,14 @@ public final class BucketLeaseManager implements BucketSource {
 
     private static final String RELEASE_ALL_SQL =
             "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL, updated_at = now() WHERE owner = ?";
+
+    // A bucket is a coverage stall when it is free/expired (same predicate as CLAIM_DEFICIT_SQL) AND
+    // has work waiting — the EXISTS rides tandem_outbox's own idx_tandem_outbox_dispatch partial index
+    // (bucket, id) WHERE status = 0, so this scans only tandem_bucket_lease's B rows, never the outbox.
+    private static final String UNCOVERED_BUCKETS_SQL =
+            "SELECT count(*) FROM tandem_bucket_lease bl"
+                    + " WHERE (bl.owner IS NULL OR bl.lease_until < now())"
+                    + "   AND EXISTS (SELECT 1 FROM tandem_outbox o WHERE o.bucket = bl.bucket AND o.status = 0)";
 
     private final DataSource dataSource;
     private final String ownerId;
@@ -170,6 +179,18 @@ public final class BucketLeaseManager implements BucketSource {
             return owned;
         } catch (SQLException e) {
             throw new TandemException("reading owned buckets failed", e);
+        }
+    }
+
+    @Override
+    public OptionalInt uncoveredBuckets() {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(UNCOVERED_BUCKETS_SQL);
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();   // an aggregate without GROUP BY always returns exactly one row
+            return OptionalInt.of(rs.getInt(1));
+        } catch (SQLException e) {
+            throw new TandemException("uncoveredBuckets failed", e);
         }
     }
 

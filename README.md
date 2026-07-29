@@ -68,12 +68,12 @@ If the relay crashes after publishing but before marking the row done, it republ
   (binary mode), interoperable with the wider ecosystem.
 - **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
   programmatic Java API (`ReplayService`); a REST equivalent arrives with the Admin API.
-- **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published, failed and retried
-  counts, config-validation failures, and the backlog signals an operator actually alerts on: how many
-  events are waiting, how long the oldest has been waiting, and how many relay workers are alive. The
-  backlog is read periodically and **only when an adapter is wired**, so a no-op default costs nothing.
-  The Micrometer adapter is 🔜 planned, and the uncovered-bucket signal is declared on the port but
-  **not yet emitted**.
+- **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published and retried counts,
+  config-validation failures, and the signals an operator actually alerts on: how many events are
+  waiting, how long the oldest has been waiting, how many are permanently failed right now, how many
+  relay workers are alive, and — under `LEASE` coordination — how many buckets have work waiting but
+  no live owner. All of it is read periodically and **only when an adapter is wired**, so a no-op
+  default costs nothing. The Micrometer adapter itself is 🔜 planned.
 - **Optional, opt-in capabilities, designed but 🔜 not yet implemented** — cross-aggregate causal
   ordering via Lamport clocks, a forensic per-attempt archive, W3C trace/correlation propagation and
   an API-first REST Admin API each have a design document and, where relevant, a port in

@@ -3,6 +3,7 @@ package com.codingful.tandem.jdbc;
 import com.codingful.tandem.core.port.TandemMetrics;
 import java.lang.System.Logger;
 import java.util.HashSet;
+import java.util.OptionalInt;
 import java.util.Set;
 import javax.sql.DataSource;
 
@@ -36,6 +37,18 @@ public interface BucketSource {
      * present and seeded to {@code bucketCount}.
      */
     default void validateOnStart(TandemMetrics metrics, Logger logger) {
+    }
+
+    /**
+     * Count of buckets with {@code PENDING} rows but no live owner — a coverage stall — for the
+     * {@code bucket.uncovered} gauge (HLD §7). Empty under {@link Coordination#SINGLE}: there is no
+     * lease table to stall, and supervised worker-thread restart (LLD-jdbc §3.1) keeps coverage there;
+     * {@code lag.age_seconds} is that mode's backstop signal instead.
+     *
+     * @return the count, or empty if this mode has no such notion — the relay then emits nothing
+     */
+    default OptionalInt uncoveredBuckets() {
+        return OptionalInt.empty();
     }
 
     /**

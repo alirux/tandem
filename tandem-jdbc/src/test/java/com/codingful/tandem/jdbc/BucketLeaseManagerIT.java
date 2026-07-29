@@ -9,6 +9,7 @@ import com.codingful.tandem.test.RecordingMetrics;
 import java.lang.System.Logger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -51,6 +52,52 @@ class BucketLeaseManagerIT extends AbstractPostgresIT {
                 .hasMessageContaining("128");
         assertThat(metrics.configInvalidChecks())
                 .containsExactly(BucketLeaseManager.CHECK_BUCKET_LEASE_SEEDED);
+    }
+
+    @Test
+    void GIVEN_a_pending_row_in_a_bucket_no_one_owns_WHEN_uncovered_is_read_THEN_that_bucket_counts() {
+        // resetTables() leaves every lease row owner=NULL, so bucket 5 starts free by default.
+        insertPending(5);
+        // A free bucket with nothing waiting must not count — only the combination is a stall.
+        insertPending(6);
+        claimBucket(6, "instance-1");
+
+        assertThat(manager("instance-2").uncoveredBuckets()).hasValue(1);
+    }
+
+    @Test
+    void GIVEN_no_bucket_has_both_a_live_owner_gap_and_pending_work_WHEN_uncovered_is_read_THEN_it_is_zero() {
+        insertPending(7);
+        claimBucket(7, "instance-1");   // owned: a pending row here is not a stall
+
+        assertThat(manager("instance-2").uncoveredBuckets()).hasValue(0);
+    }
+
+    /** Inserts a bare PENDING row directly into the given bucket — bypasses the hash so the bucket is exact. */
+    private static void insertPending(int bucket) {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO tandem_outbox (aggregate_id, aggregate_type, bucket, seq, payload)"
+                             + " VALUES (?, 'Order', ?, 1, '{}')")) {
+            ps.setString(1, "order-bucket-" + bucket);
+            ps.setInt(2, bucket);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Gives a bucket a live owner directly, without a full heartbeat cycle. */
+    private static void claimBucket(int bucket, String owner) {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE tandem_bucket_lease SET owner = ?, lease_until = now() + interval '1 minute' WHERE bucket = ?")) {
+            ps.setString(1, owner);
+            ps.setInt(2, bucket);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

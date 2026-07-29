@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -331,6 +332,32 @@ class WorkerPoolTest {
     }
 
     @Test
+    void GIVEN_the_bucket_sources_uncovered_count_changes_WHEN_the_relay_reads_it_again_THEN_it_reports_the_new_value() {
+        StubUncoveredBucketsSource buckets = new StubUncoveredBucketsSource(BUCKETS);
+        buckets.setUncoveredBuckets(2);
+        RecordingMetrics metrics = new RecordingMetrics();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(20)).build();
+        WorkerPool pool = new WorkerPool(new InMemoryOutbox(), new RecordingDispatcher(), cfg, metrics,
+                Clock.systemUTC(), BackoffStrategy.fullJitter(), buckets);
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "uncoveredBuckets:" + metrics.uncoveredBuckets(),
+                    () -> metrics.uncoveredBuckets() == 2);
+
+            // Coverage stalls resolve (a heartbeat rebalances, or an operator scales the fleet) — the
+            // reported value must follow, not stick at whatever it first observed.
+            buckets.setUncoveredBuckets(0);
+            awaitUpTo(Duration.ofSeconds(20), () -> "uncoveredBuckets:" + metrics.uncoveredBuckets(),
+                    () -> metrics.uncoveredBuckets() == 0);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
     void GIVEN_no_metrics_adapter_WHEN_the_relay_runs_THEN_the_backlog_is_never_queried() {
         CountingStore store = new CountingStore(new InMemoryOutbox());
         RelayConfig cfg = RelayConfig.builder()
@@ -472,6 +499,33 @@ class WorkerPoolTest {
 
         void setFailedCount(long value) {
             failedCount.set(value);
+        }
+    }
+
+    /** Reports whatever {@code uncoveredBuckets} was last set to; owns every bucket unconditionally. */
+    private static final class StubUncoveredBucketsSource implements BucketSource {
+        private final Set<Integer> all;
+        private final AtomicInteger uncovered = new AtomicInteger();
+
+        StubUncoveredBucketsSource(int bucketCount) {
+            all = new HashSet<>();
+            for (int b = 0; b < bucketCount; b++) {
+                all.add(b);
+            }
+        }
+
+        @Override
+        public Set<Integer> ownedBuckets() {
+            return all;
+        }
+
+        @Override
+        public OptionalInt uncoveredBuckets() {
+            return OptionalInt.of(uncovered.get());
+        }
+
+        void setUncoveredBuckets(int value) {
+            uncovered.set(value);
         }
     }
 

@@ -611,13 +611,13 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 |---|---|---|---|
 | `tandem.outbox.lag.count` | Gauge | Number of rows with `status=PENDING` | High |
 | `tandem.outbox.lag.age_seconds` | Gauge | Age of the oldest PENDING row in seconds | **Critical** |
-| `tandem.outbox.published.rate` | Counter | Rows transitioned to `status=DONE` per second | High |
+| `tandem.outbox.published` | Counter | Rows transitioned to `status=DONE`, cumulative — a throughput *rate* is a query the TSDB derives (e.g. Prometheus `rate()`), not something Tandem computes, hence no `.rate` suffix on a plain counter | High |
 | `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
 | `tandem.outbox.workers.active` | Gauge | Number of active relay workers | Medium |
 | `tandem.outbox.bucket.uncovered` | Gauge | Buckets with PENDING rows but no live owner (coverage stall); derived from `tandem_bucket_lease`, so reported under the **`LEASE`** coordination mode (§3.2) — standalone, or embedded-with-`LEASE`. Under `SINGLE` there is no lease table; supervised worker-thread restart (LLD-jdbc §3.1) keeps coverage and `lag.age_seconds` is the backstop | High |
-| `tandem.relay.config.invalid` | Gauge | Set to 1 (tagged `check`) when a startup config invariant is violated — e.g. `rowLease ≤ delivery.timeout.ms`; the relay then fail-fasts (§12, LLD-jdbc §3.5) | High |
+| `tandem.relay.config.invalid` | Gauge | Set to 1 (tagged `check`) when a startup config invariant is violated — e.g. `rowLease ≤ delivery.timeout.ms`; the relay then fail-fasts (§12, LLD-jdbc §3.5). Registered like any other gauge, with one accepted gap: it is set once, immediately before the process aborts, so a pull-based scraper (Prometheus) can race the process exit and never read it. The relay's own `ERROR` log line at the same call site is the durable channel for this specific case; the metric still helps a continuous-poll backend or a sidecar that reads the registry directly | High |
 
 **Alerting guidance:**
 - `lag.age_seconds` > threshold (e.g. 60s) → relay is stalled or under-provisioned
@@ -642,7 +642,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 **Telling the three "the backlog is growing" cases apart.** A rising backlog has three very different
 causes, and the metrics separate them only when read together — the value alone is not enough:
 
-| | `lag.age_seconds` | `published.rate` | `workers.active` |
+| | `lag.age_seconds` | `published` | `workers.active` |
 |---|---|---|---|
 | **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent |
 | **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 |
