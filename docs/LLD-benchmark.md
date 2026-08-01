@@ -45,6 +45,7 @@ publishing** exactly like `tandem-sample` (root `build.gradle.kts` collects both
 tandem-benchmark/
   build.gradle.kts                      // not published; application plugin for the loadTest entrypoint
   src/main/resources/bench-schema.sql   // the benchmark-owned bench_aggregate table (§4.1)
+  src/main/resources/grafana/tandem-dashboard.json  // §6.3 — the provisioned dashboard, ≤2 panels per row
   src/main/java/com/codingful/tandem/benchmark/
     BenchmarkConfig.java                // §10 — the harness sizing knobs + toSmoke()/toDemo()
     AggregateSelector.java              // §4.2 — namespaced uniform/skewed aggregate-id generators
@@ -56,7 +57,10 @@ tandem-benchmark/
     CorrelationConsumer.java            // §5   — Kafka consumer: latency capture + correctness verifier
     BenchmarkMetrics.java               // §6   — in-process TandemMetrics adapter (counters only)
     LagProbe.java                       // §6.1 — direct-SQL lag/backlog observation
-    FaultInjector.java / FaultInjectingDispatcher.java  // §8 — S6's poison-injection seam
+    FaultInjector.java / FaultInjectingDispatcher.java  // §8 — the fault seam: permanent/retriable/stall
+    MetricsExporter.java                // §6.3 — one relay instance's Prometheus /metrics endpoint
+    ObservabilityStack.java             // §6.3 — Prometheus + Grafana containers, provisioned
+    MetricsDashboardDemo.java           // §6.3 — the scripted run behind metricsDashboardDemo
     RampController.java                 // §7   — adaptive lag-feedback rate controller (S1)
     BenchmarkEnvironment.java           // §3   — containers + Hikari + relay wiring
     RelayInstance.java                  // §3   — one simulated relay instance (pool + BucketSource + producer), S8
@@ -384,6 +388,114 @@ How to read it, and what the run establishes:
   is the strongest available check that the relay's query and the harness's independent SQL compute
   the same thing.
 
+### 6.3 `MetricsDashboardDemo` — every meter, on a real dashboard
+
+`./gradlew :tandem-benchmark:metricsDashboardDemo` runs the relay against a real Micrometer →
+Prometheus → Grafana pipeline and holds it open (press Enter to stop, or pass
+`--args="--hold=<seconds>"`). Same intent as §6.2 one level up: §6.2 prints two numbers to a terminal,
+this shows all of them on the surface an operator actually watches. It **measures nothing and gates
+nothing** — its purpose is that a signal's *usefulness* can only be judged by looking at it.
+
+**Shape.** Two `MetricsExporter`s — a `PrometheusMeterRegistry` behind the JDK's own `HttpServer`, no
+Spring or Actuator — publish `/metrics` for one relay instance each; `ObservabilityStack` starts
+Prometheus (scraping both host ports through `host.testcontainers.internal`, 1s interval) and Grafana
+with a provisioned datasource and the committed dashboard. **One exporter per instance, deliberately:**
+`workers.active` is per-instance while `lag.count` is a global reading every instance reports, so a
+single shared registry would silently collapse the first kind to whichever instance wrote last.
+
+Seven scripted phases walk the relay through the states each meter exists to reveal: a backlog with no
+relay behind it, a drain, steady load, an aggregate that fails, a second instance joining, a crash with
+rows still in flight, recovery. `tandem.relay.config.invalid` is the one meter not driven — it fires
+once and aborts the process by design (LLD-micrometer §4), leaving nothing for a scraper to read.
+
+Driving the failure paths needed `FaultInjector` to grow from one fault to three. The original
+permanent-only fault could never move `retry.count`, and no fault at all could put rows in the state
+lease reclaim needs to see:
+
+| Fault | What it does | What it makes visible |
+|---|---|---|
+| `PERMANENT` | fails with `retriable = false` | `failed.count`, and the blocked chain behind it |
+| `RETRIABLE` | fails with `retriable = true` | `retry.count`, then `failed.count` once attempts run out |
+| `STALL` | returns a future that never completes | rows pinned `IN_FLIGHT` under a row lease, so `lease_expired.count` can be exercised at all |
+
+`STALL` is what finally exercised the reclaim path: §8.1 records that S5's interesting case
+(`reclaimed > 0`) had never fired across runs, because a dispatch that merely fails releases its row
+long before any crash. A dispatch that hangs does not.
+
+**The fault is per-aggregate, not per-instance, so `lease_expired.count` can climb more than once from
+one `STALL` call.** `stallAggregate` stays armed until `Recovery` explicitly clears it (§3: `BenchmarkEnvironment` holds
+one `FaultInjector`, shared by every dispatcher `newRelayInstance` builds). Whichever
+instance next claims that aggregate's head-of-chain row — including the survivor, once it inherits the
+dead instance's buckets — hangs on it too, and its own `rowLease` eventually expires and gets reclaimed
+the same way. Watched directly on a run with a 40s crash-to-recovery window and `rowLease = 20s`:
+reclaims landed at t+0s (the killed instance's own abandoned row), then again at +20s and +40s (the
+survivor re-claiming, stalling, and losing its own lease) — three events, 20s apart, from a single
+`stallAggregate` call, stopping only once `Recovery` calls `clear()`. Not a bug: it is what "the fault
+follows the aggregate, not the process" actually looks like when the crash-to-clear window is a few
+multiples of `rowLease` rather than a fraction of it.
+
+**What the first real runs established** — the reason the demo exists, and none of it visible in a
+passing assertion:
+
+- **A single `FAILED` row breaks both lag gauges permanently.** One poisoned aggregate left a run at
+  1 530 rows `DONE`, 1 `FAILED` and 73 `PENDING` — all 73 behind that one failure, since a `FAILED`
+  head blocks its chain for good. `lag.count` never returns to zero and `lag.age_seconds` climbs at one
+  second per second for ever, drawing a perfectly straight line on the dashboard, while the relay
+  delivers every other aggregate normally. HLD §7's own alerting rule (`lag.age_seconds > 60s → relay
+  stalled or under-provisioned`) would therefore latch on after the first poison message and never
+  clear. This is what `blocked.count` was added for, and the dashboard's "waiting: claimable vs blocked"
+  panel is where the distinction is read. (First observed at a ~10× larger offered rate, with the same
+  shape and the same straight line — the effect is structural, not a function of volume.)
+- **`bucket.uncovered` is a sustained-stall detector, not a failover detector.** At 1s resolution across
+  a whole run it was non-zero exactly twice: 56 buckets for ~5s when the relay started onto an inherited
+  backlog, and 16→27 for ~5s while a joining second instance rebalanced. It never moved during the
+  crash. The gap between a dead owner's lease expiring and the survivor's next heartbeat claiming those
+  buckets is bounded by `reclaimInterval` (5s default) — routinely shorter than one reading. The demo
+  therefore leaves `reclaimInterval` at its default rather than shortening it the way S8 does: a
+  sub-second value would close the gap faster than any reading could sample it, and the gauge would read
+  a flat zero through a failover that genuinely happened.
+- **`lag.count` must never be summed across instances.** Two relays reported 46 and 45 at the same
+  moment — the same global backlog, read a beat apart. A panel using `sum()` would have claimed 91 rows
+  waiting when there were 46. The dashboard uses `max()` for every global gauge and `sum()` only for the
+  per-instance counters.
+- **A crashed relay must stop being a scrape target, not report zeroes.** Killing only the worker pool
+  left the exporter alive, so Prometheus kept scraping frozen gauges — `workers.active` still reading 8
+  for an instance that was gone. The demo now closes the crashed instance's endpoint with it, which is
+  what a dying process does, and makes "relay instances reporting" drop from 2 to 1.
+- **Every meter's `# HELP` is empty**, because `MicrometerTandemMetrics` never calls
+  `.description(...)`. Cosmetic, additive, not yet done.
+- **The `config.invalid` panel was dropped, not left empty.** It fires once, immediately before the
+  relay aborts (LLD-micrometer §4), so this demo — which never triggers that path — can only ever show
+  it as "never seen." A panel that is permanently empty by construction teaches nothing by being
+  looked at; the meter itself is unaffected and still documented in the meter-mapping table (§2 of
+  LLD-micrometer).
+- **Phase markers (a vertical line per phase) took two independent fixes, and the second was the
+  Grafana version.** Annotations are posted to Grafana's HTTP API at each phase boundary. Two things
+  had to be true before any line appeared, and each failed *silently* — the API returned 200, the
+  frontend fetched the annotations, and nothing was drawn:
+  1. **The annotation must carry `dashboardUID`.** A global annotation matched by a dashboard-level
+     `type: "tags"` query is fetched but not painted. Every dashboard load also fires an *implicit*,
+     always-on query scoped to `dashboardUID == <this dashboard>`; scoping the POST to it is what
+     draws the line. That makes a custom tag query redundant (it would double-render the marker), so
+     the dashboard JSON declares no `annotations.list` entry at all.
+  2. **Grafana must be ≥ 11.6.0.** With (1) already correct, 11.3.0 still painted nothing;
+     A/B-verified on this exact dashboard against the same Prometheus and the same annotation — lines
+     on 11.6.0, none on 11.3.0. The container image is pinned accordingly.
+- **A 2s refresh needs two settings, neither of them the dashboard's `refresh` field alone.** Grafana
+  enforces a server-side floor (`min_refresh_interval`, default 5s) — set via
+  `GF_DASHBOARDS_MIN_REFRESH_INTERVAL` — *and* its refresh picker offers a fixed list that starts at
+  5s, so 2s must additionally be declared in the dashboard's `timepicker.refresh_intervals`. With only
+  the `refresh` field set, the dashboard silently falls back and the interval is not even selectable.
+- **The offered rate had to come *down* for the demo to read well, which is why §6.3's config is not
+  `toDemo()`.** An early version built the opening backlog at 300 events/s, and the blocked chain then
+  drew as a thin sliver against a ~6000-row burst peak on a shared y-axis: correct (verified by direct
+  Prometheus queries — `lag_count == blocked_count`, `claimable == 0`) but only legible by zooming the
+  panel. At 20 events/s the burst peaks near 400 and the blocked chain settles around 70, which reads
+  on the same axis without any interaction. **`aggregateCardinality` has to fall with the rate**: the
+  blocked chain grows at roughly `rate / cardinality`, so a small rate over a large aggregate universe
+  leaves a row or two behind the poisoned aggregate — technically correct and visually nothing. This
+  demo is sized for legibility; throughput belongs to `LoadTestRunner`.
+
 ---
 
 ## 7. `RampController` — adaptive rate search (S1)
@@ -523,6 +635,10 @@ sharply as intended:
   trivially, but the scenario has yet to actually exercise the crash-recovery path it exists to
   demonstrate. Worth a smaller `duration`-to-`rowLease` ratio or a higher offered rate if this needs
   fixing later — not addressed in this round.
+  **The mechanism now exists, though:** `FaultInjector.stallAggregate` (§6.3) pins rows `IN_FLIGHT`
+  deterministically instead of hoping the timing lands, and reclaim was observed firing that way. S5
+  could adopt it whenever these parameters are tuned — racing a real crash against real dispatch latency
+  is what has never worked.
 
 ### 8.2 A significant `LEASE`-coordination finding from S8 (this Mac, 2026-07-02)
 
@@ -637,6 +753,10 @@ no measurable time. No product code involved.
 - **Gauge demo:** `./gradlew :tandem-benchmark:lagGaugeDemo` → `LagGaugeDemo.main` (§6.2). Also out of
   `test`/`check`, and out of `loadTest`: it is a ~50s look at the shape of the lag gauges, not a
   measurement.
+- **Dashboard demo:** `./gradlew :tandem-benchmark:metricsDashboardDemo` → `MetricsDashboardDemo.main`
+  (§6.3). Same status — out of `test`/`check` and out of `loadTest`. ~3 minutes of scripted phases, then
+  it holds the Grafana stack open until Enter; `--args="--hold=<seconds>"` for a non-interactive run.
+  Needs Docker for two containers beyond the usual Postgres/Kafka pair.
 - **`--duration=<seconds>`** overrides whichever base config's `duration` (applied after
   `--smoke`/`--demo`) — for a run longer than `--demo`'s 20s but far short of the 10-minute full-run
   default. S3 is safe to include regardless: its own drive phase and drain timeout are both capped

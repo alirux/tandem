@@ -1,6 +1,7 @@
 package com.codingful.tandem.benchmark;
 
 import com.codingful.tandem.core.port.OutboxDispatcher;
+import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.jdbc.BackoffStrategy;
 import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.BucketSource;
@@ -117,11 +118,21 @@ public final class BenchmarkEnvironment implements AutoCloseable {
      * producer on {@link #close()}.
      */
     public RelayInstance newRelayInstance(RelayConfig relayCfg) {
+        return newRelayInstance(relayCfg, metrics);
+    }
+
+    /**
+     * As {@link #newRelayInstance(RelayConfig)}, but reporting to {@code instanceMetrics} instead of the
+     * environment's shared {@link BenchmarkMetrics}. Needed whenever the instances must be told apart in
+     * the metrics themselves: several of the port's signals are per-instance ({@code workers.active}),
+     * so one shared sink collapses them to whichever instance reported last (§6.3).
+     */
+    public RelayInstance newRelayInstance(RelayConfig relayCfg, TandemMetrics instanceMetrics) {
         KafkaRelay producer = new KafkaRelay(producerConfig(), record -> TOPIC, KafkaRelayConfig.of("/tandem/benchmark"));
         extraProducers.add(producer);
         OutboxDispatcher dispatcher = new FaultInjectingDispatcher(producer, faultInjector);
         BucketSource bucketSource = BucketSource.forCoordination(relayCfg, dataSource);
-        WorkerPool pool = new WorkerPool(store, dispatcher, relayCfg, metrics, Clock.systemUTC(),
+        WorkerPool pool = new WorkerPool(store, dispatcher, relayCfg, instanceMetrics, Clock.systemUTC(),
                 BackoffStrategy.fullJitter(), bucketSource);
         return new RelayInstance(pool, bucketSource, producer);
     }

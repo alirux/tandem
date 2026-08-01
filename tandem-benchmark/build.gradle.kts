@@ -28,6 +28,12 @@ dependencies {
     // (Postgres + Kafka) runtime transitively — reused for container lifecycle + baseline DDL.
     implementation(project(":tandem-test"))
 
+    // The real Micrometer adapter, driven by the metrics dashboard demo (§6.3) against a Prometheus
+    // registry — the point being to look at the signals a consumer's dashboard actually receives,
+    // not at an in-process double. Benchmark-only: this module is never published.
+    implementation(project(":tandem-micrometer"))
+    implementation(libs.micrometer.registry.prometheus)
+
     implementation(libs.hdrhistogram)
     implementation(libs.hikaricp)
 
@@ -95,6 +101,19 @@ tasks.register<JavaExec>("lagGaugeDemo") {
     group = "verification"
     mainClass.set("com.codingful.tandem.benchmark.LagGaugeDemo")
     classpath = sourceSets["main"].runtimeClasspath
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+// Drives every meter through a real Prometheus + Grafana stack so the signals can be judged on a
+// dashboard rather than in an assertion (LLD-benchmark §6.3). Like lagGaugeDemo: gates nothing.
+// `standardInput` is wired because the demo holds the stack open until the operator presses Enter.
+tasks.register<JavaExec>("metricsDashboardDemo") {
+    description = "Runs the relay against Prometheus + Grafana and holds the dashboard open. Requires Docker."
+    group = "verification"
+    mainClass.set("com.codingful.tandem.benchmark.MetricsDashboardDemo")
+    classpath = sourceSets["main"].runtimeClasspath
+    standardInput = System.`in`
     standardOutput = System.out
     errorOutput = System.err
 }

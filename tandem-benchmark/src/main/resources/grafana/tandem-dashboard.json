@@ -1,0 +1,591 @@
+{
+  "uid": "tandem-relay",
+  "title": "Tandem relay",
+  "tags": [
+    "tandem"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "2s",
+  "time": {
+    "from": "now-10m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Is the outbox keeping up?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Backlog \u2014 events waiting to publish",
+      "description": "tandem.outbox.lag.count. A GLOBAL reading of the whole outbox, emitted by every relay instance, so this takes max() across instances \u2014 sum() would multiply the same backlog by the number of relays.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(tandem_outbox_lag_count)",
+          "legendFormat": "waiting"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Oldest waiting event",
+      "description": "tandem.outbox.lag.age_seconds. Rises whenever anything is stuck, including a single blocked aggregate chain that barely moves the backlog count \u2014 which is why the two lag gauges are read together.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(tandem_outbox_lag_age_seconds)",
+          "legendFormat": "oldest"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Waiting: claimable vs blocked",
+      "description": "The backlog split in two, as independent lines (NOT stacked: a stacked zero series is drawn on top of the other one, which makes a healthy backlog look entirely blocked). 'blocked' is tandem.outbox.blocked.count \u2014 rows behind a FAILED head, which no relay will ever claim; 'claimable' is the rest. Read this before trusting the two panels above: one terminal failure pins them both high for ever.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "blocked"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(tandem_outbox_lag_count) - max(tandem_outbox_blocked_count)",
+          "legendFormat": "claimable"
+        },
+        {
+          "refId": "B",
+          "expr": "max(tandem_outbox_blocked_count)",
+          "legendFormat": "blocked"
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "Throughput and errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Publish rate",
+      "description": "rate over tandem.outbox.published, a plain counter. Tandem computes no rate of its own \u2014 a throughput figure is a query, which is exactly why the meter carries no .rate suffix. Summed across instances: each counts only what it published.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(tandem_outbox_published_total[30s]))",
+          "legendFormat": "published/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Retries",
+      "description": "rate over tandem.outbox.retry.count \u2014 retriable dispatch failures being rescheduled. A non-zero floor here with a healthy backlog usually means one bad downstream, not a sick relay.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(tandem_outbox_retry_count_total[30s]))",
+          "legendFormat": "retries/s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Rows given up on",
+      "description": "tandem.outbox.failed.count \u2014 a LIVE count of rows in FAILED, not a tally of failure events, so it drops back when a stuck row is replayed. Anything above zero needs a human.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(tandem_outbox_failed_count)",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "Is the relay itself healthy?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Worker threads alive, per instance",
+      "description": "tandem.outbox.workers.active. The one genuinely PER-INSTANCE signal here \u2014 a series per relay, and a series that disappears is an instance that stopped reporting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "tandem_outbox_workers_active",
+          "legendFormat": "{{relay}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Buckets with work and no live owner",
+      "description": "tandem.outbox.bucket.uncovered \u2014 LEASE coordination only. Above zero means some buckets have pending rows that nobody currently owns: a coverage stall, the loud failure mode the virtual-bucket design was chosen for.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(tandem_outbox_bucket_uncovered)",
+          "legendFormat": "uncovered"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Leases reclaimed",
+      "description": "increase over tandem.outbox.lease_expired.count \u2014 rows recovered from an instance that died holding them. A steady trickle means instances are dying or stalling, not that recovery is broken.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(tandem_outbox_lease_expired_count_total[1m]))",
+          "legendFormat": "reclaimed/min"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Published, total",
+      "description": "sum(tandem.outbox.published) across instances.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(tandem_outbox_published_total)",
+          "legendFormat": "published"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Relay instances reporting",
+      "description": "How many relays Prometheus is currently getting metrics from. Zero here, with a backlog on the panels above, is the case no relay-emitted gauge can tell you about on its own.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(up{job=\"tandem-relay\"} == 1)",
+          "legendFormat": "instances"
+        }
+      ]
+    }
+  ],
+  "timepicker": {
+    "refresh_intervals": [
+      "1s",
+      "2s",
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  }
+}

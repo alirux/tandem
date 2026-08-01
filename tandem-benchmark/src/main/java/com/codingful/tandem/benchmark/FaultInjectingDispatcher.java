@@ -7,9 +7,9 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Wraps the real dispatcher and permanently fails any record {@link FaultInjector} currently flags
- * (S6, LLD-benchmark §8) — the same forced-fail capability {@code RecordingDispatcher} offers in
- * {@code tandem-test}, applied to the real {@code KafkaRelay} instead of an in-memory stand-in.
+ * Wraps the real dispatcher and applies whatever fault {@link FaultInjector} currently flags for a
+ * record (S6, LLD-benchmark §8) — the same forced-fail capability {@code RecordingDispatcher} offers
+ * in {@code tandem-test}, applied to the real {@code KafkaRelay} instead of an in-memory stand-in.
  */
 final class FaultInjectingDispatcher implements OutboxDispatcher {
 
@@ -23,12 +23,15 @@ final class FaultInjectingDispatcher implements OutboxDispatcher {
 
     @Override
     public CompletableFuture<Void> dispatch(OutboxRecord record) {
-        if (faultInjector.test(record)) {
-            CompletableFuture<Void> failure = new CompletableFuture<>();
-            failure.completeExceptionally(
+        return switch (faultInjector.faultFor(record)) {
+            case NONE -> delegate.dispatch(record);
+            case RETRIABLE -> CompletableFuture.failedFuture(
+                    new OutboxDispatchException("injected retriable failure", true));
+            case PERMANENT -> CompletableFuture.failedFuture(
                     new OutboxDispatchException("injected permanent poison failure", false));
-            return failure;
-        }
-        return delegate.dispatch(record);
+            // Deliberately never completed and never cancelled: the row stays IN_FLIGHT until its lease
+            // expires, which is the state the reclaim path needs to see.
+            case STALL -> new CompletableFuture<>();
+        };
     }
 }
