@@ -22,7 +22,8 @@ driver among them — do reach whoever declares it, and are listed below.
 | `tandem-jdbc`  | none beyond `tandem-core` (JDBC driver is test-only)|
 | `tandem-kafka` | `kafka-clients`, `cloudevents-kafka`, `cloudevents-core`, `slf4j-api` |
 | `tandem-spring-producer` | none beyond `tandem-jdbc` — **Spring and Jackson are `compileOnly`**, so the application's own versions are used and none is dragged in |
-| `tandem-spring-relay` | none beyond `tandem-jdbc` and `tandem-kafka` — Spring is `compileOnly`, as above |
+| `tandem-spring-relay` | none beyond `tandem-jdbc` and `tandem-kafka` — Spring is `compileOnly`, as above. `tandem-micrometer` (below) is also `compileOnly` here, so it adds nothing to this module's own footprint |
+| `tandem-micrometer` | `micrometer-core` |
 | `tandem-test`  | `testcontainers-postgresql`, `testcontainers-kafka`, `kafka-clients`, and the `postgresql` JDBC driver (runtime). Meant for a consumer's **test** scope, but its POM declares them at compile/runtime scope, so they are redistributed like any other dependency. Testcontainers itself brings a substantial transitive tree (docker-java, Jackson, commons-compress, …) not enumerated here |
 | `tandem-bom`   | none — a POM with no code, publishing only version constraints |
 
@@ -40,6 +41,7 @@ compile / runtime classpath is:
 | org.testcontainers:postgresql           | 1.21.4  | MIT          |
 | org.testcontainers:kafka                | 1.21.4  | MIT          |
 | org.postgresql:postgresql               | 42.7.12 | BSD-2-Clause |
+| io.micrometer:micrometer-core            | 1.13.6  | Apache-2.0   |
 
 `cloudevents-core` is pulled in transitively by `cloudevents-kafka`. The three
 entries below `slf4j-api` reach only consumers of `tandem-test`; each Testcontainers

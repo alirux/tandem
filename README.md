@@ -73,7 +73,8 @@ If the relay crashes after publishing but before marking the row done, it republ
   waiting, how long the oldest has been waiting, how many are permanently failed right now, how many
   relay workers are alive, and — under `LEASE` coordination — how many buckets have work waiting but
   no live owner. All of it is read periodically and **only when an adapter is wired**, so a no-op
-  default costs nothing. The Micrometer adapter itself is 🔜 planned.
+  default costs nothing. `tandem-micrometer` binds all of it to a real Micrometer `MeterRegistry`,
+  autoconfigured by `tandem-spring-relay` the moment both are on the classpath — 🚧 not yet released.
 - **Optional, opt-in capabilities, designed but 🔜 not yet implemented** — cross-aggregate causal
   ordering via Lamport clocks, a forensic per-attempt archive, W3C trace/correlation propagation and
   an API-first REST Admin API each have a design document and, where relevant, a port in

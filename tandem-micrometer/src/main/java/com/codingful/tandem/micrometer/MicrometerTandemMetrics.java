@@ -1,0 +1,108 @@
+package com.codingful.tandem.micrometer;
+
+import com.codingful.tandem.core.port.TandemMetrics;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * {@link TandemMetrics} backed by a Micrometer {@link MeterRegistry} (LLD-micrometer §2/§3): binds
+ * every port method to the meter named in HLD §7. A gauge is registered exactly once, at construction,
+ * over a mutable state holder the port methods then write to — Micrometer samples that holder at
+ * scrape time rather than accepting a pushed value, so the holder (not the value) is what a
+ * {@link Gauge} keeps a (weak) reference to; this instance's own fields are the strong reference that
+ * keeps them alive for the process's life.
+ */
+public final class MicrometerTandemMetrics implements TandemMetrics {
+
+    private final MeterRegistry registry;
+    private final AtomicLong lag = new AtomicLong();
+    private final AtomicLong lagAgeMillis = new AtomicLong();
+    private final AtomicLong failed = new AtomicLong();
+    private final AtomicInteger activeWorkers = new AtomicInteger();
+    private final AtomicInteger uncoveredBuckets = new AtomicInteger();
+    private final Counter published;
+    private final Counter retries;
+    private final Counter leaseExpired;
+    private final Map<String, AtomicInteger> configInvalidByCheck = new ConcurrentHashMap<>();
+
+    /** @param registry where every meter below is registered; kept to register a new one per distinct {@code check} name */
+    public MicrometerTandemMetrics(MeterRegistry registry) {
+        this.registry = Objects.requireNonNull(registry, "registry");
+        Gauge.builder("tandem.outbox.lag.count", lag, AtomicLong::get).register(registry);
+        Gauge.builder("tandem.outbox.lag.age_seconds", lagAgeMillis, holder -> holder.get() / 1000d).register(registry);
+        Gauge.builder("tandem.outbox.failed.count", failed, AtomicLong::get).register(registry);
+        Gauge.builder("tandem.outbox.workers.active", activeWorkers, AtomicInteger::get).register(registry);
+        Gauge.builder("tandem.outbox.bucket.uncovered", uncoveredBuckets, AtomicInteger::get).register(registry);
+        this.published = Counter.builder("tandem.outbox.published").register(registry);
+        this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
+        this.leaseExpired = Counter.builder("tandem.outbox.lease_expired.count").register(registry);
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
+    public void recordLag(long pending) {
+        lag.set(pending);
+    }
+
+    @Override
+    public void recordLagAgeSeconds(double age) {
+        lagAgeMillis.set(Math.round(age * 1000));
+    }
+
+    @Override
+    public void recordFailed(long count) {
+        failed.set(count);
+    }
+
+    @Override
+    public void recordActiveWorkers(int n) {
+        activeWorkers.set(n);
+    }
+
+    @Override
+    public void recordUncoveredBuckets(int n) {
+        uncoveredBuckets.set(n);
+    }
+
+    @Override
+    public void incrementPublished(long n) {
+        published.increment(n);
+    }
+
+    @Override
+    public void incrementRetry() {
+        retries.increment();
+    }
+
+    @Override
+    public void incrementLeaseExpired(long n) {
+        leaseExpired.increment(n);
+    }
+
+    /**
+     * Registers a new {@code tandem.relay.config.invalid} gauge the first time a given {@code check}
+     * name is reported, then sets it — never the literal {@code 1}, which Micrometer's own guidance
+     * calls incorrect for an immutable number (LLD-micrometer §3).
+     */
+    @Override
+    public void recordConfigInvalid(String check) {
+        Objects.requireNonNull(check, "check");
+        configInvalidByCheck.computeIfAbsent(check, name -> {
+            AtomicInteger holder = new AtomicInteger();
+            Gauge.builder("tandem.relay.config.invalid", holder, AtomicInteger::get)
+                    .tag("check", name)
+                    .register(registry);
+            return holder;
+        }).set(1);
+    }
+}

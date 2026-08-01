@@ -14,5 +14,6 @@ dependencies {
         api(project(":tandem-test"))
         api(project(":tandem-spring-producer"))
         api(project(":tandem-spring-relay"))
+        api(project(":tandem-micrometer"))
     }
 }

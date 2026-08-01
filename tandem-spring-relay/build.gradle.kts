@@ -11,6 +11,11 @@ dependencies {
     compileOnly(libs.spring.boot.autoconfigure)
     compileOnly(libs.slf4j.api)
 
+    // Optional, like Spring itself: an application that never adds tandem-micrometer must not
+    // inherit it. The first optional dependency between two Tandem modules (LLD-micrometer §5, Q31).
+    compileOnly(project(":tandem-micrometer"))
+    compileOnly(libs.micrometer.core)
+
     // Generates META-INF/spring-configuration-metadata.json for IDE completion (LLD-spring-config §2.4).
     annotationProcessor(platform(libs.spring.boot.dependencies))
     annotationProcessor(libs.spring.boot.configuration.processor)
@@ -24,6 +29,10 @@ dependencies {
     // AbstractDataSource is the real base the wiring tests' stub DataSource extends (test-only).
     testImplementation(libs.spring.jdbc)
     testImplementation(project(":tandem-test"))
+    // Real Micrometer classes on the test classpath, so the wiring tests can prove the conditional
+    // fires with a real MeterRegistry bean present and backs off to NOOP without one.
+    testImplementation(project(":tandem-micrometer"))
+    testImplementation(libs.micrometer.core)
     // The reference-configuration check shared with tandem-spring-producer (LLD-spring-config §2.4) —
     // internal-only, not published (see tandem-test/build.gradle.kts).
     testImplementation(testFixtures(project(":tandem-test")))
@@ -56,6 +65,8 @@ dependencies {
     bootFourTestRuntimeClasspath(libs.slf4j.api)
     bootFourTestRuntimeClasspath(project(":tandem-test"))
     bootFourTestRuntimeClasspath(testFixtures(project(":tandem-test")))
+    bootFourTestRuntimeClasspath(project(":tandem-micrometer"))
+    bootFourTestRuntimeClasspath(libs.micrometer.core)
     bootFourTestRuntimeClasspath(platform(libs.junit.bom))
     bootFourTestRuntimeClasspath(libs.junit.jupiter)
     bootFourTestRuntimeClasspath(libs.junit.platform.launcher)

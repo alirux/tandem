@@ -65,6 +65,7 @@ assertion cannot do. Run it when you change what the gauges report or how often 
 | `tandem-test` | Test helpers (`InMemoryOutbox`, `RecordingDispatcher`, `TandemTestContainer`). |
 | `tandem-spring-producer` | Spring Boot autoconfiguration for the write side, plus its usage tiers. Never pulls Kafka. |
 | `tandem-spring-relay` | Spring Boot autoconfiguration for the relay, started with the application. |
+| `tandem-micrometer` | `TandemMetrics` backed by a Micrometer `MeterRegistry`, autoconfigured by `tandem-spring-relay`. |
 | `tandem-sample` | Example application (plain Java), not published. |
 | `tandem-sample-spring` | Example Spring Boot application, not published. Also hosts the end-to-end Spring smoke test. |
 | `tandem-benchmark` | Load-testing harness, not published. |

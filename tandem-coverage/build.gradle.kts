@@ -15,6 +15,7 @@ val coveredProjects = listOf(
     ":tandem-test",
     ":tandem-spring-producer",
     ":tandem-spring-relay",
+    ":tandem-micrometer",
 ).map { project(it) }
 
 // Force each covered module to be configured before we read its source sets and test tasks below.

@@ -1,1 +1,2 @@
 com.codingful.tandem.spring.relay.TandemRelayAutoConfiguration
+com.codingful.tandem.spring.relay.TandemMicrometerAutoConfiguration

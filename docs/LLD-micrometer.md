@@ -167,32 +167,59 @@ dependencies {
 This is the first *optional* dependency between two Tandem modules — every existing sibling
 dependency (`tandem-jdbc`, `tandem-kafka` in `tandem-spring-relay`) is mandatory (`api`).
 
+**Not a second `@Bean` method inside `TandemRelayAutoConfiguration` — a separate, explicitly ordered
+`@AutoConfiguration` class.** The first draft of this LLD put the Micrometer bean alongside the
+existing `TandemMetrics tandemMetrics()` NOOP bean in one class, both `@ConditionalOnMissingBean`,
+relying on "the more specific method is declared first" to make the Micrometer one win. That reliance
+turned out to rest on an **unverified assumption**: Spring's own reference docs state plainly that
+`@ConditionalOnMissingBean` ordering is only *guaranteed* across explicitly ordered auto-configuration
+*classes* (`@AutoConfigureBefore`/`@AutoConfigureOrder`), never promised for the order of multiple
+`@Bean` methods inside one class. Given a documented, official mechanism exists for exactly this case,
+using it costs nothing and removes the guesswork:
+
 ```java
-@Bean
-@ConditionalOnClass(MeterRegistry.class)
-@ConditionalOnBean(MeterRegistry.class)
-@ConditionalOnMissingBean(TandemMetrics.class)
-TandemMetrics tandemMetrics(MeterRegistry registry) {
-    return new MicrometerTandemMetrics(registry);
+// New file: TandemMicrometerAutoConfiguration.java
+@AutoConfiguration(before = TandemRelayAutoConfiguration.class)
+@ConditionalOnClass({MeterRegistry.class, MicrometerTandemMetrics.class})
+public class TandemMicrometerAutoConfiguration {
+
+    @Bean
+    @ConditionalOnBean(MeterRegistry.class)
+    @ConditionalOnMissingBean(TandemMetrics.class)
+    TandemMetrics tandemMicrometerMetrics(MeterRegistry registry) {
+        return new MicrometerTandemMetrics(registry);
+    }
 }
 ```
 
-Three conditions, deliberately: `@ConditionalOnClass(MeterRegistry.class)` — Micrometer itself is on
-the classpath (via `tandem-micrometer`, which brings it transitively); `@ConditionalOnBean` — an
-actual registry bean exists (a Spring Boot app with Actuator or a manually configured registry;
-without one, `MicrometerTandemMetrics` has nothing to register against); `@ConditionalOnMissingBean`
-— an application's own `TandemMetrics` bean always wins, same rule every other bean in
-`TandemRelayAutoConfiguration` already follows. This method **replaces**, not adds to, the existing
-`TandemMetrics tandemMetrics()` bean returning `TandemMetrics.NOOP` — only one of the two conditions
-can ever satisfy for a given application, since both are `@ConditionalOnMissingBean(TandemMetrics.class)`
-and Spring's bean-definition ordering resolves it once.
+Registered in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+alongside `TandemRelayAutoConfiguration`. `TandemRelayAutoConfiguration`'s own
+`TandemMetrics tandemMetrics()` NOOP bean is **unchanged** — Boot's guaranteed cross-class ordering
+means it runs *after* this class, sees the Micrometer bean already registered when the conditions
+above were met, and its own `@ConditionalOnMissingBean` backs off exactly as it already does for a
+user-supplied `TandemMetrics` bean. No change needed to that class at all.
 
-**Confirm before shipping (LLD-spring-config §1.1's traps, restated for a third condition):** the
-two-condition version already in use for Jackson has been proven safe under both Boot generations; a
-third condition on the same `@Bean` method needs the identical re-check — conditions read from ASM
-metadata before the method signature resolves, so `MeterRegistry` as a parameter type stays safe even
-when Micrometer is absent, exactly as `ObjectMapper` does for the Jackson bean today. No new pattern
-to invent, just to verify once built (§6).
+`before = TandemRelayAutoConfiguration.class` is a **direct class literal**, deliberately — unlike the
+`afterName` string-based ordering `TandemRelayAutoConfiguration` itself uses against Spring's own
+`DataSourceAutoConfiguration`/`TransactionAutoConfiguration` (LLD-spring-config §1.1). That rule exists
+because *Spring's* classes relocate between Boot generations; `TandemRelayAutoConfiguration` is
+Tandem's own class, always in the same package, on both generations — a literal reference to it is
+exactly as safe as the class-level `@ConditionalOnClass` above, and simpler to read.
+
+**Two class-level conditions, deliberately both on `MeterRegistry` and the adapter class itself:**
+`@ConditionalOnClass(MeterRegistry.class)` alone would let the whole class load with Micrometer
+present but `tandem-micrometer` absent from the same application — an unlikely but real combination
+(an app already using Micrometer for something else, without ever adding `tandem-micrometer`) — in
+which the `@Bean` method's body would reference a genuinely missing `MicrometerTandemMetrics` class.
+Both together is the same defensive shape `TandemProducerAutoConfiguration` already uses for Jackson.
+
+**Verified, not just designed — 2026-07-30.** `TandemMicrometerAutoConfigurationTest` proves the
+cross-class ordering empirically: with a `MeterRegistry` bean present the Micrometer bean wins over
+the NOOP default, without one it falls back cleanly, and an application's own `TandemMetrics` bean
+wins over both — real `ApplicationContextRunner` assertions, not an assumption about framework
+internals. A separate test reads the `AutoConfiguration.imports` resource directly and asserts both
+classes are listed; nothing else in the suite would have caught that specific line being forgotten,
+since `AutoConfigurations.of(...)` in the wiring tests bypasses that file entirely.
 
 ---
 
@@ -207,10 +234,10 @@ that a *second* `recordLag` call moves the *same* gauge rather than registering 
 state-holder pattern's whole point).
 
 **Dual-generation check for the wiring, not for this module.** `tandem-micrometer` itself has no
-Spring dependency, so it needs no `bootFourTest`. The three-condition `@Bean` in
-`tandem-spring-relay` (§5) does, and must be added to that module's existing dual-generation
-classpath (`bootFourTestRuntimeClasspath`) once built — this is the "real dual-generation test" §1
-says the version-number argument alone doesn't substitute for.
+Spring dependency, so it needs no `bootFourTest`. `TandemMicrometerAutoConfiguration` does, and must be
+added to `tandem-spring-relay`'s existing dual-generation classpath (`bootFourTestRuntimeClasspath`)
+once built — this is the "real dual-generation test" §1 says the version-number argument alone
+doesn't substitute for.
 
 ---
 
