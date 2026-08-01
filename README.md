@@ -4,7 +4,7 @@
 
 # Tandem
 
-**Reliable, causally-ordered event delivery from your database to Apache Kafka — no CDC, no Kafka Connect, no two-phase commit.**
+**Reliable, strictly-ordered event delivery from your database to Apache Kafka — no CDC, no Kafka Connect, no two-phase commit.**
 
 [![CI](https://github.com/alirux/tandem/actions/workflows/ci.yml/badge.svg)](https://github.com/alirux/tandem/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/alirux/tandem/graph/badge.svg?token=YKA7T7YCFD)](https://codecov.io/github/alirux/tandem)
@@ -14,21 +14,6 @@
 [![Status](https://img.shields.io/badge/status-0.x%20—%20API%20evolving-yellow.svg)](https://github.com/alirux/tandem/releases)
 
 </div>
-
----
-
-> **Status: core and Spring integration on Maven Central.** The engine —
-> `tandem-core`, `tandem-jdbc`, `tandem-kafka`, and the `tandem-test` helpers — is built and tested
-> end-to-end on PostgreSQL + Kafka (see the [implementation plan](docs/IMPLEMENTATION-PLAN-basic-round.md)).
-> The **Spring Boot integration** ships alongside it and is tested against **both Boot 3.x and 4.x**:
-> `tandem-spring-producer` (the write-side autoconfiguration plus the four usage tiers) and
-> `tandem-spring-relay` (the relay autoconfiguration, started with the application). The relay also
-> reports its own health through the `TandemMetrics` port — backlog, backlog age, permanently failed
-> rows, live workers, and, under `LEASE` coordination, uncovered buckets. All of it is
-> **available on Maven Central** under `com.codingful` (see [Add the dependency](#add-the-dependency)).
-> The prebuilt standalone relay, the Admin API, MySQL support, and the optional adapters are
-> **not yet implemented**.
-> Start with the [HLD](docs/HLD.md) for the full design.
 
 ## What is Tandem?
 
@@ -67,32 +52,28 @@ If the relay crashes after publishing but before marking the row done, it republ
 - **CloudEvents by default** — messages are published using the CNCF CloudEvents envelope
   (binary mode), interoperable with the wider ecosystem.
 - **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
-  programmatic Java API (`ReplayService`); a REST equivalent arrives with the Admin API.
+  programmatic Java API (`ReplayService`).
 - **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published and retried counts,
   config-validation failures, and the signals an operator actually alerts on: how many events are
   waiting, how long the oldest has been waiting, how many are permanently failed right now, how many
+  later events are blocked behind one of those failures (queued but unclaimable until it is resolved —
+  reported separately so it never gets confused with a relay that is merely falling behind), how many
   relay workers are alive, and — under `LEASE` coordination — how many buckets have work waiting but
   no live owner. All of it is read periodically and **only when an adapter is wired**, so a no-op
   default costs nothing. `tandem-micrometer` binds all of it to a real Micrometer `MeterRegistry`,
-  autoconfigured by `tandem-spring-relay` the moment both are on the classpath — 🚧 not yet released.
-- **Optional, opt-in capabilities, designed but 🔜 not yet implemented** — cross-aggregate causal
-  ordering via Lamport clocks, a forensic per-attempt archive, W3C trace/correlation propagation and
-  an API-first REST Admin API each have a design document and, where relevant, a port in
-  `tandem-core`; all resolve to no-op defaults today. They are off by default *by design*, so
-  adopting them will stay a per-capability opt-in with zero cost when unused.
+  autoconfigured by `tandem-spring-relay` the moment both are on the classpath.
 - **Embedded or standalone, single or multi-instance** — the relay runs in your app or in a separate
-  process you assemble yourself (a prebuilt `tandem-relay` deployable is 🔜 planned), and coordinates
-  one or many concurrent instances via a declared mode: `SINGLE` (one instance owns all buckets, zero
-  cost) or `LEASE` (lease-partitioned ownership for a horizontally-scaled client or multiple relay
-  processes). Both modes are implemented and tested. Only the outbox INSERT must live in the client,
-  which stays dependency-light.
+  process you assemble yourself, and coordinates one or many concurrent instances via a declared
+  mode: `SINGLE` (one instance owns all buckets, zero cost) or `LEASE` (lease-partitioned ownership
+  for a horizontally-scaled client or multiple relay processes). Both modes are implemented and
+  tested. Only the outbox INSERT must live in the client, which stays dependency-light.
 - **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
   implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
   INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
   app needs no manual wiring (see the [Spring sample](#try-it)). One artifact per module serves **Boot 3.x
   and 4.x** alike — Spring is `compileOnly`, so your app's own version binds at runtime, and `./gradlew
-  check` runs the autoconfiguration tests against both lines. A prebuilt standalone relay deployable is
-  🔜 planned. Plain-Java wiring stays available (see [Usage](#usage)).
+  check` runs the autoconfiguration tests against both lines. Plain-Java wiring stays available (see
+  [Usage](#usage)).
 
 ## Architecture at a glance
 
@@ -110,20 +91,23 @@ If the relay crashes after publishing but before marking the row done, it republ
               Apache Kafka (keyed by aggregate_id)
 ```
 
-Only the **write-side** must run in the client; the relay, housekeeping, and Admin API are
-DB-coordinated and can be deployed independently. See [HLD §3.2](docs/HLD.md).
+Only the **write-side** must run in the client; the relay and housekeeping are DB-coordinated and
+can be deployed independently. See [HLD §3.2](docs/HLD.md).
 
 ## Add the dependency
 
 Tandem is published to Maven Central under the `com.codingful` group. Import the
-[BOM](#modules) to keep module versions aligned, then declare only the modules you need
-(no per-module version).
+[BOM](CONTRIBUTING.md#project-layout) to keep module versions aligned, then declare only the
+modules you need (no per-module version). Use the current version from
+[Maven Central](https://central.sonatype.com/artifact/com.codingful/tandem-core) (also linked from
+the badge above) or the [Releases](https://github.com/alirux/tandem/releases) page in place of
+`x.y.z` below.
 
 **Gradle (Kotlin DSL)**
 
 ```kotlin
 dependencies {
-    implementation(platform("com.codingful:tandem-bom:0.3.0"))
+    implementation(platform("com.codingful:tandem-bom:x.y.z"))
     implementation("com.codingful:tandem-jdbc")     // write-side + relay engine (PostgreSQL)
     implementation("com.codingful:tandem-kafka")    // Kafka publish + CloudEvents binding
     testImplementation("com.codingful:tandem-test") // in-memory doubles + Testcontainers helper
@@ -138,7 +122,7 @@ dependencies {
     <dependency>
       <groupId>com.codingful</groupId>
       <artifactId>tandem-bom</artifactId>
-      <version>0.3.0</version>
+      <version>x.y.z</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -160,8 +144,9 @@ dependencies {
 The write-side alone (`tandem-jdbc`) pulls no Kafka dependency; add `tandem-kafka` only where the
 relay runs. On Spring Boot, take `tandem-spring-producer` where you write and `tandem-spring-relay`
 where the relay runs — each brings its own tier of the stack and leaves Spring itself to your
-application's versions. See [Modules](#modules) for the full list. What changed between versions,
-breaking changes included, is on the [Releases](https://github.com/alirux/tandem/releases) page.
+application's versions. See [CONTRIBUTING.md](CONTRIBUTING.md#project-layout) for the full module
+list. What changed between versions, breaking changes included, is on the
+[Releases](https://github.com/alirux/tandem/releases) page.
 
 ### Spring Boot compatibility
 
@@ -197,8 +182,8 @@ public Order placeOrder(Order order) {
 }
 ```
 
-**Relay** — wire it directly (the basic round runs with no Spring); it polls the outbox and publishes
-to Kafka, preserving per-aggregate order:
+**Relay** — wire it directly (no Spring required); it polls the outbox and publishes to Kafka,
+preserving per-aggregate order:
 
 ```java
 OutboxRepository repo = new JdbcOutboxRepository(dataSource, /* bucketCount */ 256);
@@ -228,8 +213,7 @@ default. See the [Spring sample](#try-it), [LLD-spring-producer.md](docs/LLD-spr
 ## Logging
 
 Tandem ships **no logging configuration** — routing and formatting are the consuming application's
-job, not the library's. What each module logs through is chosen so the client write-side stays
-dependency-free:
+job, not the library's:
 
 | Module | Logs via | To see its logs |
 |---|---|---|
@@ -237,26 +221,17 @@ dependency-free:
 | `tandem-kafka` (publish/encode/send failures) | SLF4J | Nothing to do: picked up by the same SLF4J binding your Kafka client already uses |
 | `tandem-core`, `tandem-test` | Nothing — no I/O, errors surface as exceptions | — |
 
-**Bridging `System.Logger` to your backend.** Add this runtime dependency and every `tandem-jdbc`
-log line goes straight to SLF4J and whatever backend is bound behind it — no code, no properties
-file, it self-registers as a `System.LoggerFinder` via `ServiceLoader`:
+Bridge `System.Logger` to your backend with one dependency — no code, it self-registers via
+`ServiceLoader`:
 
 ```kotlin
 runtimeOnly("org.slf4j:slf4j-jdk-platform-logging:2.0.16")
 ```
 
-Without a bridge, `System.Logger` falls back to the JDK's `java.util.logging`. You can redirect
-from there instead with `org.slf4j:jul-to-slf4j` plus `handlers=org.slf4j.bridge.SLF4JBridgeHandler`
-in `logging.properties` — config-only, but one extra hop.
-
-> **Caveat:** `System.LoggerFinder` is a JVM-wide singleton resolved via `ServiceLoader`. If two
-> bridges end up on the classpath (say SLF4J's and Log4j2's `log4j-jpl`), which one wins is
-> undefined — keep exactly one.
-
-**Levels.** `INFO` covers relay lifecycle (start/stop, worker count, coordination mode); `DEBUG`
-covers per-cycle detail (rows claimed, leases reclaimed) and is what you want when troubleshooting
-a stalled relay. Set them on the `com.codingful.tandem.jdbc` and `com.codingful.tandem.kafka`
-logger names. Full policy, including what Tandem will never log: [HLD-logging.md](docs/HLD-logging.md).
+`INFO` covers relay lifecycle; `DEBUG` covers per-cycle detail (claims, reclaims) for
+troubleshooting a stalled relay — set on the `com.codingful.tandem.jdbc` and
+`com.codingful.tandem.kafka` logger names. Full policy, including a bridge-free alternative and
+what Tandem never logs: [HLD-logging.md](docs/HLD-logging.md).
 
 ## Try it
 
@@ -297,97 +272,22 @@ Template and Spring-events tiers, and delivers them to Kafka in per-aggregate or
 tandem-sample-spring\run.cmd
 ```
 
-## Modules
+To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
+`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through seven
+scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
+joining, a crash with rows in flight, recovery — and holds the dashboard open so every signal
+`TandemMetrics` reports can be read on a live graph instead of asserted in a test:
 
-| Module | Role | Status |
-|---|---|---|
-| `tandem-bom` | Bill of Materials — aligned module versions (no code) | ✅ basic round |
-| `tandem-core` | Models, ports, pure logic — **zero runtime dependencies** | ✅ basic round |
-| `tandem-jdbc` | JDBC adapter: outbox insert + relay engine (poll/lease/cleanup), PostgreSQL (no Kafka) | ✅ basic round |
-| `tandem-kafka` | Kafka publish adapter + CloudEvents binary binding | ✅ basic round |
-| `tandem-test` | In-memory outbox/dispatcher + Testcontainers helper | ✅ basic round |
-| `tandem-sample` | Runnable end-to-end tutorial — self-contained, not published to Maven Central | ✅ basic round |
-| `tandem-sample-spring` | Runnable Spring Boot tutorial — the write-side developer experience, not published | ✅ implemented |
-| `tandem-benchmark` | Internal load/performance harness — not published (see [HLD-load-testing.md](docs/HLD-load-testing.md)) | ✅ implemented |
-| `tandem-coverage` | Build-only — aggregates every module's coverage into one report (no code, not published) | ✅ implemented |
-| `tandem-spring-producer` | Spring Boot autoconfig for the write side — the four usage tiers — see [LLD-spring-producer.md](docs/LLD-spring-producer.md) | ✅ released |
-| `tandem-spring-relay` | Spring Boot autoconfig for the relay — started with the application — see [LLD-spring-config.md](docs/LLD-spring-config.md) | ✅ released |
-| `tandem-relay` | Prebuilt standalone runnable relay | 🔜 planned |
-| `tandem-admin` | Optional API-first REST admin API | 🔜 planned |
-| `tandem-micrometer` | Optional relay-side Micrometer adapter for the metrics port — see [LLD-micrometer.md](docs/LLD-micrometer.md) | 🚧 in progress — not yet released |
-| `tandem-kafka-streams` / `tandem-flink` / `tandem-tracing-otel` | Optional adapters | 🔜 planned |
+```bash
+./gradlew :tandem-benchmark:metricsDashboardDemo
+```
 
-> **Database support: PostgreSQL only today.** The shipped schema, the claim/lease SQL, and every
-> integration test target PostgreSQL — there is no MySQL baseline DDL and no MySQL engine variant in
-> any released version. MySQL is a **planned future addition**, not a supported option you can
-> configure: the design keeps the claim strategy portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
-> supported by MySQL 8.0+), so it is a deliberate roadmap item rather than an architectural
-> obstacle — but until it lands, running Tandem on MySQL is not possible. Optional
-> capabilities (causal ordering, attempt archive, tracing, Micrometer) have their ports in
-> `tandem-core` but resolve to no-op defaults until their adapters land.
+<p align="center"><img src="docs/tandem-metrics-dashboard.png" alt="Tandem relay metrics — a live Grafana dashboard, showing the backlog and the blocked-vs-claimable split during a failing aggregate" width="800" /></p>
 
-## Known issues & limitations
-
-What is *missing* is in the table above. This section is the other half: behaviours of what **is**
-shipped that can surprise you in production. Each one is a deliberate trade-off or a tracked gap —
-none is a bug report.
-
-- **A permanently failed event stops its aggregate.** The claim query only takes a row when no
-  earlier row of the same `aggregate_id` is still PENDING, IN_FLIGHT or FAILED — that is what
-  preserves per-aggregate order, and it means a row that exhausts `maxAttempts` (default 10, roughly
-  7 minutes with the jittered backoff ladder) leaves every later event of that aggregate
-  undelivered. Other aggregates are unaffected: the blast radius is one aggregate, by design.
-  **Resolution:** until the Admin API lands there is no supported operator action — you inspect
-  `last_error` and move the row to `status = 4` (DISCARDED) with SQL to unblock the chain.
-
-- **Ordering within an aggregate is only as good as your write-side.** Tandem relays rows in `id`
-  order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
-  two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
-  second, the relay will already have published the later event. The contract is that writers to one
-  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, or an optimistic version
-  check — and that `seq` is that aggregate's version. See [HLD §4.2](docs/HLD.md).
-
-- **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
-  and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox
-  pattern pays to never diverge.
-
-- **A reclaimed row has a brief double-ownership window.** `markDone`/`markForRetry`/`markFailed`
-  update by `id` without an `AND locked_by = :me` fence, so after a lease expiry and reclaim a late
-  write from the previous owner can still land on a row another instance now owns. The effect is
-  bounded to at most a duplicate publish — never a reorder — which is why the fence is tracked as
-  hardening rather than a fix ([IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) §6).
-
-- **Idle latency is bounded by `pollInterval`, not by the commit.** There is no post-commit wakeup
-  yet: a bucket that was drained waits on average `pollInterval / 2` (≈ 50 ms at the 100 ms default,
-  100 ms worst case) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
-  worker loop only sleeps when a claim comes back empty. Lowering `pollInterval` trades this against
-  idle query load across all instances and workers; the full analysis, and the wakeup options, are in
-  [dispatch-latency.md](docs/dispatch-latency.md).
-
-- **`bucketCount` is immutable after the first deploy.** Changing it re-maps aggregates onto
-  different buckets and would split one aggregate's events across workers, so the startup guard
-  refuses a mismatch rather than accepting it — and re-sharding an existing outbox is not supported.
-  Pick `B` once (default 256, comfortable to well past the parallelism most deployments need).
-
-- **Cleanup and lease reclaim are not bucket-scoped.** Every relay instance scans the whole
-  `tandem_outbox` for expired leases (every 5 s) and for terminal rows past the retention window
-  (every 15 min, default retention 14 days). It is safe — the work is idempotent and keyed by
-  `id`/`status` — just redundant under `LEASE` with N instances ([LLD-jdbc §3.2/§3.7](docs/LLD-jdbc.md)).
-  Terminal rows also stay in the table for the whole retention window, which is what keeps the table
-  large enough to be worth an index-only dispatch scan.
-
-- **No runtime controls.** Configuration is read at startup: there is no pause/resume, and no way to
-  retune the relay without restarting the process. Today, taking a misbehaving relay out of the
-  picture means stopping it — which also stops the buckets that were perfectly healthy.
-
-- **Blocking JDBC only.** The relay is a thread-per-worker pool over a `DataSource`; R2DBC and
-  reactive pipelines are not supported.
-
-- **Five published types do nothing yet.** The `AttemptRecorder`, `TracePropagator` and
-  `CausalContext` ports, plus `AttemptStatus` and `AttemptOutcome`, ship in `tandem-core` and show up
-  in IDE autocomplete, but nothing outside that island references them — they belong to capabilities that are designed
-  ([HLD-tracing.md](docs/HLD-tracing.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),
-  [causal-ordering.md](docs/causal-ordering.md)) and not yet implemented. Treat them as reserved API.
+Needs Docker; the first run pulls the Prometheus and Grafana images. Press Enter to shut the stack
+down, or pass `--args="--hold=<seconds>"` to close it automatically instead. See
+[LLD-benchmark.md §6.3](docs/LLD-benchmark.md) for what each panel means, including the alerting
+gap the first real runs found — the reason `blocked.count` exists.
 
 ## Documentation
 
@@ -452,3 +352,92 @@ are resolved separately from Maven Central under their own licenses. The runtime
 is listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Contributor conventions are in [AGENTS.md](AGENTS.md).
+
+## Known issues & limitations
+
+Behaviours of what **is** shipped that can surprise you in production. Each one is a deliberate
+trade-off or a tracked gap — none is a bug report. (For what is *not yet* shipped, see
+[Future work](#future-work) below.)
+
+- **PostgreSQL only today.** The shipped schema, the claim/lease SQL, and every integration test
+  target PostgreSQL — there is no MySQL baseline DDL and no MySQL engine variant in any released
+  version, so running Tandem against MySQL is not possible today.
+
+- **A permanently failed event stops its aggregate.** The claim query only takes a row when no
+  earlier row of the same `aggregate_id` is still PENDING, IN_FLIGHT or FAILED — that is what
+  preserves per-aggregate order, and it means a row that exhausts `maxAttempts` (default 10, roughly
+  7 minutes with the jittered backoff ladder) leaves every later event of that aggregate
+  undelivered. Other aggregates are unaffected: the blast radius is one aggregate, by design. The
+  `TandemMetrics` `blocked.count` gauge reports how many later events are queued behind such a
+  failure, so the blast radius is observable without querying the table directly — but it stays
+  above zero, and a naive alert on backlog age alone will misread this as the relay stalling, until
+  the failure is resolved.
+  **Resolution:** there is no supported operator action today — inspect `last_error` and move the
+  row to `status = 4` (DISCARDED) with SQL to unblock the chain.
+
+- **Ordering within an aggregate is only as good as your write-side.** Tandem relays rows in `id`
+  order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
+  two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
+  second, the relay will already have published the later event. The contract is that writers to one
+  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, or an optimistic version
+  check — and that `seq` is that aggregate's version. See [HLD §4.2](docs/HLD.md).
+
+- **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
+  and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox
+  pattern pays to never diverge.
+
+- **A reclaimed row has a brief double-ownership window.** `markDone`/`markForRetry`/`markFailed`
+  update by `id` without an `AND locked_by = :me` fence, so after a lease expiry and reclaim a late
+  write from the previous owner can still land on a row another instance now owns. The effect is
+  bounded to at most a duplicate publish — never a reorder — which is why the fence is tracked as
+  hardening rather than a fix ([IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) §6).
+
+- **Idle latency is bounded by `pollInterval`, not by the commit.** There is no post-commit wakeup
+  yet: a bucket that was drained waits on average `pollInterval / 2` (≈ 50 ms at the 100 ms default,
+  100 ms worst case) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
+  worker loop only sleeps when a claim comes back empty. Lowering `pollInterval` trades this against
+  idle query load across all instances and workers; the full analysis, and the wakeup options, are in
+  [dispatch-latency.md](docs/dispatch-latency.md).
+
+- **`bucketCount` is immutable after the first deploy.** Changing it re-maps aggregates onto
+  different buckets and would split one aggregate's events across workers, so the startup guard
+  refuses a mismatch rather than accepting it — and re-sharding an existing outbox is not supported.
+  Pick `B` once (default 256, comfortable to well past the parallelism most deployments need).
+
+- **Cleanup and lease reclaim are not bucket-scoped.** Every relay instance scans the whole
+  `tandem_outbox` for expired leases (every 5 s) and for terminal rows past the retention window
+  (every 15 min, default retention 14 days). It is safe — the work is idempotent and keyed by
+  `id`/`status` — just redundant under `LEASE` with N instances ([LLD-jdbc §3.2/§3.7](docs/LLD-jdbc.md)).
+  Terminal rows also stay in the table for the whole retention window, which is what keeps the table
+  large enough to be worth an index-only dispatch scan.
+
+- **No runtime controls.** Configuration is read at startup: there is no pause/resume, and no way to
+  retune the relay without restarting the process. Today, taking a misbehaving relay out of the
+  picture means stopping it — which also stops the buckets that were perfectly healthy.
+
+- **Blocking JDBC only.** The relay is a thread-per-worker pool over a `DataSource`; R2DBC and
+  reactive pipelines are not supported.
+
+## Future work
+
+Not yet shipped, in no particular order:
+
+- **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
+  process yourself (plain Java or Spring); see [Usage](#usage).
+- **`tandem-admin`** — an API-first REST Admin API to inspect outbox state and replay failed
+  messages. The OpenAPI contract is already frozen: [HLD-admin-api.md](docs/HLD-admin-api.md) ·
+  [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
+- **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, a
+  forensic per-attempt archive, and W3C trace/correlation propagation. Each has a design document
+  ([causal-ordering.md](docs/causal-ordering.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),
+  [HLD-tracing.md](docs/HLD-tracing.md)) and a port already published in `tandem-core`
+  (`AttemptRecorder`, `TracePropagator`, `CausalContext`, plus the `AttemptStatus` and
+  `AttemptOutcome` types) that resolves to a no-op today — visible in IDE autocomplete, but nothing
+  references them yet. Treat them as reserved API: off by default *by design*, so adopting one will
+  stay a zero-cost, per-capability opt-in.
+- **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
+  supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
+  obstacle — but until it lands, PostgreSQL is the only supported database.
+- **`tandem-micrometer`.** Implemented and tested; release to Maven Central is still pending.
+
+The full per-module status is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
