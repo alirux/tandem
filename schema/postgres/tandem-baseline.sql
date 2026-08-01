@@ -69,6 +69,15 @@ CREATE INDEX idx_tandem_outbox_inflight
     ON tandem_outbox (locked_until)
     WHERE status = 1;
 
+-- Supports the two metrics-tick readings over FAILED rows (LLD-jdbc §4): `failed.count`, and the
+-- `blocked.count` subquery that groups failures by aggregate. Both otherwise seq-scan the whole outbox
+-- on every tick, because no other index can answer "status = 3" alone. Partial on FAILED only, so it is
+-- normally empty and stays negligible: measured on a 500k-row outbox with three failed rows it was 16 kB
+-- against a 47 MB table, and took failed.count from 30.7ms/6075 buffers to 0.06ms/3.
+CREATE INDEX idx_tandem_outbox_failed
+    ON tandem_outbox (aggregate_id, id)
+    WHERE status = 3;
+
 -- ---------------------------------------------------------------------------
 -- LEASE coordination mode only (multi-instance)
 --

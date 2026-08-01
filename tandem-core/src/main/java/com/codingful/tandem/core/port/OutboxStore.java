@@ -83,4 +83,21 @@ public interface OutboxStore {
     default OptionalLong failedCount() {
         return OptionalLong.empty();
     }
+
+    /**
+     * Read how many {@code PENDING} rows sit behind a {@code FAILED} row of the same aggregate, for the
+     * {@code blocked.count} gauge (HLD §7). These rows are counted by {@link #lag()} like any other, and
+     * they are genuinely waiting — but no relay will ever claim them, because a {@code FAILED} head
+     * blocks its chain until an operator resolves it. Without this reading the two are indistinguishable:
+     * a single terminal failure pins {@code lag.count} above zero and makes {@code lag.age_seconds} climb
+     * forever, so an alert on either latches on permanently while the relay is in fact healthy.
+     *
+     * <p>Deliberately <b>not</b> subtracted from {@link #lag()}: those rows are undelivered events, and a
+     * backlog gauge that hid them would report a healthy outbox while an aggregate is completely stalled.
+     *
+     * @return the count, or empty if this store does not report it — the relay then emits nothing
+     */
+    default OptionalLong blockedCount() {
+        return OptionalLong.empty();
+    }
 }

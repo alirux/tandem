@@ -32,6 +32,16 @@ public interface TandemMetrics {
     default void recordFailed(long count) {
     }
 
+    /**
+     * @param count {@code PENDING} rows stuck behind a {@code FAILED} row of the same aggregate — a live
+     *              reading. Included in the lag gauges too, since they are genuinely waiting; reported
+     *              separately because no relay will claim them until an operator intervenes, so a rising
+     *              lag with {@code blocked} rising with it means something quite different from a rising
+     *              lag with {@code blocked} at zero (§7).
+     */
+    default void recordBlocked(long count) {
+    }
+
     /** A retriable dispatch failure was retried. */
     default void incrementRetry() {
     }

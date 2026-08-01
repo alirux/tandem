@@ -24,6 +24,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     private final AtomicLong lag = new AtomicLong();
     private final AtomicLong lagAgeMillis = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
+    private final AtomicLong blocked = new AtomicLong();
     private final AtomicInteger activeWorkers = new AtomicInteger();
     private final AtomicInteger uncoveredBuckets = new AtomicInteger();
     private final Counter published;
@@ -37,6 +38,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
         Gauge.builder("tandem.outbox.lag.count", lag, AtomicLong::get).register(registry);
         Gauge.builder("tandem.outbox.lag.age_seconds", lagAgeMillis, holder -> holder.get() / 1000d).register(registry);
         Gauge.builder("tandem.outbox.failed.count", failed, AtomicLong::get).register(registry);
+        Gauge.builder("tandem.outbox.blocked.count", blocked, AtomicLong::get).register(registry);
         Gauge.builder("tandem.outbox.workers.active", activeWorkers, AtomicInteger::get).register(registry);
         Gauge.builder("tandem.outbox.bucket.uncovered", uncoveredBuckets, AtomicInteger::get).register(registry);
         this.published = Counter.builder("tandem.outbox.published").register(registry);
@@ -62,6 +64,11 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     @Override
     public void recordFailed(long count) {
         failed.set(count);
+    }
+
+    @Override
+    public void recordBlocked(long count) {
+        blocked.set(count);
     }
 
     @Override

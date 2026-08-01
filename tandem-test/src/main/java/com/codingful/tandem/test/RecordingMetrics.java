@@ -24,6 +24,7 @@ public final class RecordingMetrics implements TandemMetrics {
     private final AtomicLong published = new AtomicLong();
     private final AtomicLong retries = new AtomicLong();
     private final AtomicLong failed = new AtomicLong(-1);
+    private final AtomicLong blocked = new AtomicLong(-1);
     private final AtomicLong leaseExpired = new AtomicLong();
     private final AtomicLong lag = new AtomicLong(-1);
     private final AtomicLong lagAgeMillis = new AtomicLong(-1);
@@ -53,6 +54,11 @@ public final class RecordingMetrics implements TandemMetrics {
     @Override
     public void recordFailed(long count) {
         failed.set(count);
+    }
+
+    @Override
+    public void recordBlocked(long count) {
+        blocked.set(count);
     }
 
     @Override
@@ -91,6 +97,11 @@ public final class RecordingMetrics implements TandemMetrics {
     /** The latest live count of {@code FAILED} rows, or {@code -1} if the gauge was never recorded. */
     public long failed() {
         return failed.get();
+    }
+
+    /** The latest count of rows blocked behind a failure, or {@code -1} if the gauge was never recorded. */
+    public long blocked() {
+        return blocked.get();
     }
 
     public long leaseExpired() {

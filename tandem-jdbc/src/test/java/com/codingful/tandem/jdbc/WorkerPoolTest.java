@@ -307,6 +307,35 @@ class WorkerPoolTest {
     }
 
     @Test
+    void GIVEN_a_chain_stuck_behind_a_failure_WHEN_the_relay_reports_metrics_THEN_the_blocked_rows_are_counted_apart() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(2).payload("{}".getBytes()).build());
+        RecordingDispatcher dispatcher = new RecordingDispatcher().failAll(false);   // permanent
+        RecordingMetrics metrics = new RecordingMetrics();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(20)).build();
+        WorkerPool pool = new WorkerPool(outbox, dispatcher, cfg, metrics, Clock.systemUTC(),
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "blocked:" + metrics.blocked(), () -> metrics.blocked() == 1);
+
+            // The backlog gauge keeps counting the same row, on purpose: it is an undelivered event and
+            // hiding it would report an empty outbox while the aggregate is stalled. What the two
+            // readings together say is "everything still waiting is waiting on a failure" — which is a
+            // different incident from a relay that cannot keep up, and needs a different response.
+            assertThat(metrics.lag()).isEqualTo(1);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
     void GIVEN_the_stores_failed_count_drops_WHEN_the_relay_reads_it_again_THEN_the_reported_value_drops_too() {
         // The property a tally-of-events implementation cannot have: a live read must be able to go
         // down, exactly as it would once an operator resolves a stuck row (moved out of FAILED,

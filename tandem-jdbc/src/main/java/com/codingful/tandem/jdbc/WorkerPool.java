@@ -220,6 +220,7 @@ public final class WorkerPool {
                 metrics.recordLagAgeSeconds(lag.ageSecondsAt(clock.instant()));
             });
             store.failedCount().ifPresent(metrics::recordFailed);
+            store.blockedCount().ifPresent(metrics::recordBlocked);
             bucketSource.uncoveredBuckets().ifPresent(metrics::recordUncoveredBuckets);
             metrics.recordActiveWorkers(aliveWorkers());
         } catch (Exception e) {

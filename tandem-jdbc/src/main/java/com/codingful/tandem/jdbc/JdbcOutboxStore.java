@@ -92,6 +92,29 @@ public final class JdbcOutboxStore implements OutboxStore {
     // reading must reflect that — a running total of failure events would never go back down.
     private static final String FAILED_COUNT_SQL = "SELECT count(*) FROM tandem_outbox WHERE status = 3";
 
+    // PENDING rows a FAILED row of the same aggregate stands in front of — the complement of CLAIM_SQL's
+    // head-of-chain NOT EXISTS, narrowed to the one status that never resolves on its own. Ordered by id
+    // for the same reason the claim is (§3.3), not by seq.
+    //
+    // Driven from the FAILED rows rather than from the backlog: grouping them first (there are normally
+    // none, and few when there are) leaves one index range scan per affected aggregate on
+    // idx_tandem_outbox_aggregate, so the cost tracks the number of blocked rows instead of the size of
+    // the outbox. Written the other way round — scanning every PENDING row and asking whether a failure
+    // precedes it — it would be a probe per backlog row, on a query that runs on every metrics tick.
+    //
+    // The two predicates on the last lines overlap by design, and neither can be killed on its own: a row
+    // after a FAILED head can never be claimed, so it is necessarily still PENDING, which makes each one
+    // redundant while the other holds. `o.id > first_failed_id` is the one that earns its place on cost
+    // (it is what the index range scan keys on); `status = 0` states the intent and guards the invariant
+    // in case an admin-side transition ever breaks it. Together they pin the query against the wrong
+    // implementation that actually threatens it — counting the whole aggregate rather than its tail.
+    private static final String BLOCKED_COUNT_SQL =
+            "SELECT count(*) FROM tandem_outbox o"
+                    + " JOIN (SELECT aggregate_id, min(id) AS first_failed_id FROM tandem_outbox"
+                    + "        WHERE status = 3 GROUP BY aggregate_id) f"
+                    + "   ON f.aggregate_id = o.aggregate_id AND o.id > f.first_failed_id"
+                    + " WHERE o.status = 0";
+
     private static final String CLEANUP_SQL =
             "DELETE FROM tandem_outbox"
                     + " WHERE id IN (SELECT id FROM tandem_outbox"
@@ -234,6 +257,18 @@ public final class JdbcOutboxStore implements OutboxStore {
             return OptionalLong.of(rs.getLong(1));
         } catch (SQLException e) {
             throw new TandemException("failedCount failed", e);
+        }
+    }
+
+    @Override
+    public OptionalLong blockedCount() {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(BLOCKED_COUNT_SQL);
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();   // an aggregate without GROUP BY always returns exactly one row
+            return OptionalLong.of(rs.getLong(1));
+        } catch (SQLException e) {
+            throw new TandemException("blockedCount failed", e);
         }
     }
 

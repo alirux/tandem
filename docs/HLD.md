@@ -441,6 +441,12 @@ CREATE INDEX idx_tandem_outbox_aggregate
 CREATE INDEX idx_tandem_outbox_inflight
     ON tandem_outbox (locked_until)
     WHERE status = 1;
+
+-- Index for the metrics tick's two readings over FAILED rows (failed.count, and the blocked.count
+-- grouping); partial on FAILED only, so it is normally empty and costs nothing
+CREATE INDEX idx_tandem_outbox_failed
+    ON tandem_outbox (aggregate_id, id)
+    WHERE status = 3;
 ```
 
 ### 5.2 Column Semantics
@@ -613,6 +619,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.lag.age_seconds` | Gauge | Age of the oldest PENDING row in seconds | **Critical** |
 | `tandem.outbox.published` | Counter | Rows transitioned to `status=DONE`, cumulative — a throughput *rate* is a query the TSDB derives (e.g. Prometheus `rate()`), not something Tandem computes, hence no `.rate` suffix on a plain counter | High |
 | `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
+| `tandem.outbox.blocked.count` | Gauge | PENDING rows sitting behind a `FAILED` row of the same aggregate — waiting, but unclaimable until an operator resolves the head. Counted by `lag.count` as well, deliberately: they are undelivered events, and a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported separately because the two situations demand opposite responses — see the alerting rules below | High |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
 | `tandem.outbox.workers.active` | Gauge | Number of active relay workers | Medium |
@@ -620,7 +627,18 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.relay.config.invalid` | Gauge | Set to 1 (tagged `check`) when a startup config invariant is violated — e.g. `rowLease ≤ delivery.timeout.ms`; the relay then fail-fasts (§12, LLD-jdbc §3.5). Registered like any other gauge, with one accepted gap: it is set once, immediately before the process aborts, so a pull-based scraper (Prometheus) can race the process exit and never read it. The relay's own `ERROR` log line at the same call site is the durable channel for this specific case; the metric still helps a continuous-poll backend or a sidecar that reads the registry directly | High |
 
 **Alerting guidance:**
-- `lag.age_seconds` > threshold (e.g. 60s) → relay is stalled or under-provisioned
+- `lag.age_seconds` > threshold (e.g. 60s) **and `blocked.count` == 0** → relay is stalled or
+  under-provisioned. **The second half of that condition is not optional.** A `FAILED` row blocks its
+  aggregate's chain permanently, and every row behind it stays `PENDING`, so a *single* terminal
+  failure pins `lag.count` above zero for good and makes `lag.age_seconds` climb linearly, for ever,
+  while the relay delivers every other aggregate perfectly. Without the `blocked.count` qualifier this
+  rule latches on after the first poison message and never clears again — it stops being a signal.
+  Measured, not theorised: after one poisoned aggregate a demo run finished with 12 744 rows `DONE`,
+  1 `FAILED`, and 109 `PENDING` — all 109 behind that one failure, with the age gauge past three
+  minutes and still rising at one second per second.
+- `blocked.count` > 0 → **not** a relay problem: an aggregate is stalled behind a failure and needs a
+  replay or a `DISCARDED` decision. Pair it with `failed.count`, which says how many heads are stuck;
+  `blocked.count` says how much traffic is queued behind them, which is what decides the urgency.
 - **`lag.*` stale or absent → alert on that too.** The lag gauges are read *by the relay*, on a
   periodic reading (`metricsInterval`, default 10s). A relay that is down therefore does not report
   a growing backlog — it reports **nothing**, and the gauges freeze at their last value or disappear
@@ -639,19 +657,25 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
 
-**Telling the three "the backlog is growing" cases apart.** A rising backlog has three very different
+**Telling the four "the backlog is growing" cases apart.** A rising backlog has four very different
 causes, and the metrics separate them only when read together — the value alone is not enough:
 
-| | `lag.age_seconds` | `published` | `workers.active` |
-|---|---|---|---|
-| **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent |
-| **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 |
-| **Relay under-provisioned** — working flat out, losing | present, **climbing** | high, saturated | > 0 |
+| | `lag.age_seconds` | `published` | `workers.active` | `blocked.count` |
+|---|---|---|---|---|
+| **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent | absent |
+| **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 | 0 |
+| **Relay under-provisioned** — working flat out, losing | present, **climbing** | high, saturated | > 0 | 0 |
+| **Aggregate blocked** — relay healthy, one chain stuck behind a failure | present, **climbing** | normal | > 0 | **> 0** |
 
-The last two separate cleanly, because throughput and backlog age are independent signals: an age that
-climbs *while the relay publishes at full rate* means too little relay for the load, whereas an age
-that climbs while nothing is published means the relay is wedged (broker unreachable, DB contention,
-buckets uncovered).
+The middle two separate cleanly, because throughput and backlog age are independent signals: an age
+that climbs *while the relay publishes at full rate* means too little relay for the load, whereas an
+age that climbs while nothing is published means the relay is wedged (broker unreachable, DB
+contention, buckets uncovered).
+
+The last one is the case `lag.age_seconds` alone cannot express at all, and the reason
+`blocked.count` exists: the age climbs exactly as it does under a genuine stall, but throughput is
+normal and nothing about the relay is wrong. It never resolves on its own, either — unlike the other
+three, waiting does not help, because no relay will ever claim a row behind a `FAILED` head.
 
 The first case is different in kind: it is diagnosed from the **presence** of the series, never from
 its value, and presence is ambiguous — a missing series equally means the relay has not started yet,
@@ -923,7 +947,7 @@ All throughput/latency targets are stated against the **reference baseline** (si
 
 | Requirement | Target |
 |---|---|
-| Throughput | Sustain ≥ 10k events/s **per shard** (≈80k/s aggregate at `N=8`) on the reference baseline, where *sustained* = rate held ≥ 10 min with `lag.age_seconds` flat (not growing) |
+| Throughput | Sustain ≥ 10k events/s **per shard** (≈80k/s aggregate at `N=8`) on the reference baseline, where *sustained* = rate held ≥ 10 min with `lag.age_seconds` flat (not growing) **and `blocked.count` == 0** — a run containing even one terminally failed row makes the age climb for ever regardless of throughput, so the flatness criterion is only meaningful with nothing blocked (§7) |
 | Relay latency — median | `COMMIT` → Kafka ack **p50 < 200 ms** at *normal load* (≈50% of measured sustainable max) |
 | Relay latency — tail | `COMMIT` → Kafka ack **p99 < 1 s** at normal load |
 | Ordering guarantee | Strict per-aggregate, best-effort cross-aggregate; **zero per-aggregate ordering violations** under all load scenarios |

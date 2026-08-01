@@ -335,6 +335,27 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
         }
     }
 
+    /** Same reading as the JDBC store: {@code PENDING} rows an earlier {@code FAILED} row blocks (§4). */
+    @Override
+    public OptionalLong blockedCount() {
+        synchronized (lock) {
+            Set<String> failedAggregates = new HashSet<>();
+            long blocked = 0;
+            for (Entry e : rows.values()) {       // ascending id order (TreeMap)
+                OutboxRecord r = e.record;
+                String aggregate = r.aggregateId().value();
+                if (r.status() == OutboxStatus.FAILED) {
+                    failedAggregates.add(aggregate);
+                } else if (r.status() == OutboxStatus.PENDING && failedAggregates.contains(aggregate)) {
+                    // Reached after its aggregate's FAILED row in id order — the in-memory equivalent of
+                    // the JDBC store's `o.id > f.first_failed_id`.
+                    blocked++;
+                }
+            }
+            return OptionalLong.of(blocked);
+        }
+    }
+
     /** Rows in the given status, ordered by id. */
     public List<OutboxRecord> byStatus(OutboxStatus status) {
         return all().stream().filter(r -> r.status() == status).toList();

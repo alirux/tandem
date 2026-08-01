@@ -450,6 +450,16 @@ read every `metricsInterval`, default 10 s), `recordFailed` (from `OutboxStore.f
 cadence — a **live** count of `FAILED` rows, not a tally of failure events: a row can leave `FAILED`
 via the admin `DISCARDED` transition, and only a fresh read reflects that; an event-driven counter
 would never go back down, permanently misreporting a resolved incident as still open),
+`recordBlocked` (from `OutboxStore.blockedCount()`, same cadence — `PENDING` rows sitting behind a
+`FAILED` row of their aggregate, which the head-of-chain rule (§3.3) makes permanently unclaimable
+until an operator resolves the head. **Not subtracted from `lag()`**: they are undelivered events, and
+a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported
+separately because without it a single terminal failure makes `lag.age_seconds` climb for ever and
+latches any alert built on it — see HLD §7. The query is driven from the `FAILED` rows, grouped by
+aggregate, then range-scanned forward on `idx_tandem_outbox_aggregate`, so its cost tracks the number
+of blocked rows rather than the size of the outbox; `idx_tandem_outbox_failed` was added for the
+`status = 3` step it shares with `failedCount()`, which until then seq-scanned the whole table on every
+tick),
 `incrementPublished` (on `markDoneBatch`), `incrementRetry`, `incrementLeaseExpired`
 (reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (from `BucketSource.uncoveredBuckets()`,
 same cadence as `lag()`/`failedCount()` — a bucket that is free/expired in `tandem_bucket_lease` **and**
@@ -460,8 +470,8 @@ only implementation).
 
 **No adapter = no cost.** With no `tandem-micrometer` adapter wired, the `TandemMetrics` port is
 the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — the lag,
-failed-count, and uncovered-bucket readings go further and are **never scheduled at all**, so their
-queries never run — like the attempt-archive guard (HLD §7.1). The `config.invalid` fail-fast metric
+failed-count, blocked-count, and uncovered-bucket readings go further and are **never scheduled at
+all**, so their queries never run — like the attempt-archive guard (HLD §7.1). The `config.invalid` fail-fast metric
 (§3.5) is the one exception — it is recorded once at startup regardless, before aborting.
 
 ---

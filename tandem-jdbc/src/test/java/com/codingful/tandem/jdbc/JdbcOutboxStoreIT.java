@@ -187,6 +187,59 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_a_failed_head_WHEN_the_blocked_count_is_read_THEN_only_the_rows_behind_it_are_counted() {
+        insert("order-1", 1);   // id 1 — becomes the FAILED head below
+        insert("order-1", 2);   // id 2 — behind the failure
+        insert("order-1", 3);   // id 3 — behind the failure
+        long head = claim(10).get(0).id();
+
+        assertThat(store.blockedCount()).hasValue(0);
+
+        store.markFailed(head, "poison");
+        // Inserted after the claim so it stays PENDING: a healthy aggregate waiting its turn, which is
+        // what makes the two readings differ below.
+        insert("order-2", 1);   // id 4
+
+        // The two rows of order-1 only. order-2's row is waiting too, and lag() counts all three, but
+        // it is claimable — that is exactly the distinction this reading exists to make.
+        assertThat(store.blockedCount()).hasValue(2);
+        assertThat(store.lag().orElseThrow().pending()).isEqualTo(3);
+    }
+
+    @Test
+    void GIVEN_a_failure_resolved_by_an_operator_WHEN_the_blocked_count_is_read_THEN_the_chain_is_no_longer_blocked() {
+        insert("order-1", 1);
+        insert("order-1", 2);
+        long head = claim(10).get(0).id();
+        store.markFailed(head, "poison");
+        assertThat(store.blockedCount()).hasValue(1);
+
+        // A live read, like failedCount: once the head leaves FAILED the chain is claimable again and
+        // the count must fall back. A reading that only ever grew would keep an alert latched on after
+        // the incident was resolved — the very failure this gauge was added to prevent.
+        setStatus(head, 4);   // DISCARDED
+
+        assertThat(store.blockedCount()).hasValue(0);
+    }
+
+    @Test
+    void GIVEN_a_failure_after_rows_already_delivered_WHEN_the_blocked_count_is_read_THEN_earlier_rows_are_not_counted() {
+        insert("order-1", 1);   // id 1 — delivered before the failure
+        insert("order-1", 2);   // id 2 — becomes the FAILED row
+        insert("order-1", 3);   // id 3 — behind the failure
+        long first = claim(10).get(0).id();
+        store.markDone(first);
+        long second = claim(10).get(0).id();
+
+        store.markFailed(second, "poison");
+
+        // Only what comes after the failure in chain order is blocked by it; the delivered row ahead of
+        // it is not waiting for anything. This is what separates the reading from "how many rows does a
+        // broken aggregate have" — the wrong implementation would answer 3 here.
+        assertThat(store.blockedCount()).hasValue(1);
+    }
+
+    @Test
     void GIVEN_terminal_rows_older_than_the_cutoff_WHEN_cleaned_up_THEN_they_are_deleted_and_others_kept() {
         insert("order-1", 1);   // id 1 → DONE
         insert("order-2", 1);   // id 2 → DONE

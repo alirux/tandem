@@ -150,6 +150,9 @@ public interface OutboxStore {
     default OptionalLong failedCount() { return OptionalLong.empty(); }  // live count of FAILED rows
                                                                       // for failed.count; same
                                                                       // read-only-while-on rule
+    default OptionalLong blockedCount() { return OptionalLong.empty(); } // PENDING rows behind a FAILED
+                                                                      // head — counted by lag() too,
+                                                                      // never subtracted from it
 }
 ```
 

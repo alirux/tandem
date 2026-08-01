@@ -265,4 +265,39 @@ class InMemoryOutboxTest {
         assertThat(outbox.cleanup(clock.instant().minus(Duration.ofDays(1)), 10)).isZero();
         assertThat(outbox.size()).isEqualTo(1);
     }
+
+    @Test
+    void GIVEN_a_failed_head_WHEN_the_blocked_count_is_read_THEN_only_the_rows_behind_it_are_counted() {
+        outbox.insert(message("order-1", 1));   // id 1 — the head that fails
+        outbox.insert(message("order-1", 2));   // id 2 — behind the failure
+        outbox.insert(message("order-1", 3));   // id 3 — behind the failure
+        claimAll(10);
+        assertThat(outbox.blockedCount()).hasValue(0);
+
+        outbox.markFailed(1, "poison");
+        // Inserted after the claim so it stays PENDING: a healthy aggregate waiting its turn, which is
+        // what makes the two readings differ below.
+        outbox.insert(message("order-2", 1));   // id 4
+
+        // Must match the JDBC store exactly — this double is what the unit tests reason about, so a
+        // divergence here would let a relay behaviour pass in unit tests and fail against a database.
+        assertThat(outbox.blockedCount()).hasValue(2);
+        assertThat(outbox.lag().orElseThrow().pending()).isEqualTo(3);
+    }
+
+    @Test
+    void GIVEN_a_failure_after_rows_already_delivered_WHEN_the_blocked_count_is_read_THEN_earlier_rows_are_not_counted() {
+        outbox.insert(message("order-1", 1));   // id 1 — delivered before the failure
+        outbox.insert(message("order-1", 2));   // id 2 — fails
+        outbox.insert(message("order-1", 3));   // id 3 — behind the failure
+        claimAll(10);
+        outbox.markDone(1);
+        claimAll(10);
+
+        outbox.markFailed(2, "poison");
+
+        // Only what follows the failure in chain order counts; the delivered row ahead of it is not
+        // waiting for anything.
+        assertThat(outbox.blockedCount()).hasValue(1);
+    }
 }

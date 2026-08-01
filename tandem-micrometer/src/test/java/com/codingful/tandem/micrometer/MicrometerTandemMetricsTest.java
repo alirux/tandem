@@ -38,6 +38,17 @@ class MicrometerTandemMetricsTest {
     }
 
     @Test
+    void GIVEN_a_chain_unblocked_by_an_operator_WHEN_read_again_THEN_the_gauge_follows_it_down() {
+        // Same live-reading property as failed.count, and for the same reason: the alerting rule that
+        // uses this gauge to qualify a lag alert (HLD §7) only works if it can return to zero.
+        metrics.recordBlocked(109);
+        assertThat(registry.get("tandem.outbox.blocked.count").gauge().value()).isEqualTo(109);
+
+        metrics.recordBlocked(0);
+        assertThat(registry.get("tandem.outbox.blocked.count").gauge().value()).isEqualTo(0);
+    }
+
+    @Test
     void GIVEN_events_published_across_several_calls_WHEN_read_THEN_the_counter_accumulates() {
         // Distinguishes a Counter from every gauge above: publishing is an event tally, not a live
         // reading, so successive calls must sum rather than overwrite.
