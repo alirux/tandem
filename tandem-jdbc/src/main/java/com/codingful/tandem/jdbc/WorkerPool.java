@@ -9,11 +9,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
  * The relay engine (LLD-jdbc §3.1): a pool of supervised worker threads each owning a slice of the
@@ -37,6 +39,13 @@ public final class WorkerPool {
     private final int workerCount;
     private final RelayWorker[] workers;
     private final Thread[] threads;
+    /**
+     * Per-worker instant of the last completed claim cycle, for {@link #status()}. An
+     * {@link AtomicLongArray} rather than a plain {@code long[]}: array <i>elements</i> are never
+     * volatile, so a plain array would let a reader see an arbitrarily stale value — and a status
+     * reading whose staleness is itself unbounded cannot answer the question it exists for.
+     */
+    private final AtomicLongArray lastCycleAtMillis;
     private volatile boolean running;
     private boolean stopping;   // guarded by this: a shutdown is transitioning; start() refuses meanwhile
     private ScheduledExecutorService scheduler;
@@ -74,6 +83,7 @@ public final class WorkerPool {
         this.workerCount = cfg.workersPerInstance();
         this.workers = new RelayWorker[workerCount];
         this.threads = new Thread[workerCount];
+        this.lastCycleAtMillis = new AtomicLongArray(workerCount);
     }
 
     /** Validate config (fail-fast), then start the worker threads and the maintenance jobs. Idempotent guard. */
@@ -136,6 +146,10 @@ public final class WorkerPool {
     }
 
     private void startWorkerThread(int index) {
+        // Starting counts as this worker's first cycle, so a worker that hangs on its very first claim
+        // shows an ageing timestamp rather than none at all — and a restarted one does not inherit the
+        // dead thread's staleness (§3.8).
+        lastCycleAtMillis.set(index, clock.millis());
         Thread t = new Thread(() -> runWorker(index), "tandem-relay-" + instanceId + "-w" + index);
         t.setDaemon(true);
         // Supervised: an Error that escapes the loop kills the thread; restart it so its buckets are
@@ -163,6 +177,10 @@ public final class WorkerPool {
                 int claimed = worker.claimAndDispatch();
                 worker.flushDone();
                 worker.flushFailures();
+                // Progress, deliberately marked only on a cycle that completed without throwing: a
+                // worker whose every iteration fails is not making progress, and status() must say so
+                // (§3.8). Claiming nothing is still progress — an idle relay is a working relay.
+                lastCycleAtMillis.set(index, clock.millis());
                 if (!running) {
                     break;
                 }
@@ -209,9 +227,10 @@ public final class WorkerPool {
     }
 
     /**
-     * Read the lag and failed-count gauges and report how many workers are actually alive (§4). Failing
-     * here must never disturb delivery — an unreadable gauge is a monitoring problem, not a relay
-     * problem — so, like the other maintenance jobs, it swallows the failure after logging it.
+     * Read the lag and failed-count gauges and report how many workers are actually alive and how long
+     * the slowest of them has gone without progress (§4, §3.8). Failing here must never disturb
+     * delivery — an unreadable gauge is a monitoring problem, not a relay problem — so, like the other
+     * maintenance jobs, it swallows the failure after logging it.
      */
     private void metricsTick() {
         try {
@@ -222,21 +241,44 @@ public final class WorkerPool {
             store.failedCount().ifPresent(metrics::recordFailed);
             store.blockedCount().ifPresent(metrics::recordBlocked);
             bucketSource.uncoveredBuckets().ifPresent(metrics::recordUncoveredBuckets);
-            metrics.recordActiveWorkers(aliveWorkers());
+            // One status() call for both gauges below: it is already an in-process, database-free
+            // snapshot (§3.8), so there is no cost split to weigh — only two readings of one moment
+            // to keep consistent with each other, exactly like the single lag() query above.
+            RelayStatus status = status();
+            metrics.recordActiveWorkers(status.workersAlive());
+            metrics.recordWorkerCycleAgeSeconds(status.oldestWorkerCycleAgeSecondsAt(clock.instant()));
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Reading relay metrics failed", e);
         }
     }
 
-    /** Alive, not configured: a worker whose thread died and has not been restarted yet must not count. */
-    private synchronized int aliveWorkers() {
+    /**
+     * This instance's current in-process state (§3.8) — what an application's own readiness/liveness
+     * probe reads. <b>Never queries the database</b>, by contract, so it is safe to call at probe
+     * frequency; see {@link RelayStatus} for what that deliberately excludes and why Tandem draws no
+     * health verdict of its own.
+     *
+     * <p>Alive, not configured: a worker whose thread died and has not been restarted yet must not
+     * count, and its stale cycle timestamp must not drag {@code oldestWorkerCycle} down either.
+     *
+     * @return an immutable reading, taken under the same monitor the worker-thread bookkeeping uses so
+     *         the counts and the timestamp describe one consistent moment
+     */
+    public synchronized RelayStatus status() {
+        RelayStatus.State state = running
+                ? RelayStatus.State.RUNNING
+                : (stopping ? RelayStatus.State.STOPPING : RelayStatus.State.STOPPED);
         int alive = 0;
-        for (Thread t : threads) {
+        long oldest = Long.MAX_VALUE;
+        for (int i = 0; i < workerCount; i++) {
+            Thread t = threads[i];
             if (t != null && t.isAlive()) {
                 alive++;
+                oldest = Math.min(oldest, lastCycleAtMillis.get(i));
             }
         }
-        return alive;
+        return new RelayStatus(instanceId, state, cfg.coordination(), workerCount, alive,
+                alive == 0 ? Optional.empty() : Optional.of(Instant.ofEpochMilli(oldest)));
     }
 
     private void heartbeatTick() {

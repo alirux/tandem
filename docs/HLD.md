@@ -622,7 +622,8 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.blocked.count` | Gauge | PENDING rows sitting behind a `FAILED` row of the same aggregate — waiting, but unclaimable until an operator resolves the head. Counted by `lag.count` as well, deliberately: they are undelivered events, and a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported separately because the two situations demand opposite responses — see the alerting rules below | High |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
-| `tandem.outbox.workers.active` | Gauge | Number of active relay workers | Medium |
+| `tandem.outbox.workers.active` | Gauge | Number of active relay workers (thread alive; does **not** imply making progress — pair with `workers.cycle_age_seconds`) | Medium |
+| `tandem.outbox.workers.cycle_age_seconds` | Gauge | Seconds since the least-recently-progressed live worker last completed a claim cycle, 0 when no worker is alive (LLD-jdbc §3.8). Read in-process from the worker pool itself, never the database — the direct signal for "running but not making progress": `workers.active` alone cannot distinguish a working worker from one merely alive but stuck (e.g. blocked in a database call that never returns) | High |
 | `tandem.outbox.bucket.uncovered` | Gauge | Buckets with PENDING rows but no live owner (coverage stall); derived from `tandem_bucket_lease`, so reported under the **`LEASE`** coordination mode (§3.2) — standalone, or embedded-with-`LEASE`. Under `SINGLE` there is no lease table; supervised worker-thread restart (LLD-jdbc §3.1) keeps coverage and `lag.age_seconds` is the backstop | High |
 | `tandem.relay.config.invalid` | Gauge | Set to 1 (tagged `check`) when a startup config invariant is violated — e.g. `rowLease ≤ delivery.timeout.ms`; the relay then fail-fasts (§12, LLD-jdbc §3.5). Registered like any other gauge, with one accepted gap: it is set once, immediately before the process aborts, so a pull-based scraper (Prometheus) can race the process exit and never read it. The relay's own `ERROR` log line at the same call site is the durable channel for this specific case; the metric still helps a continuous-poll backend or a sidecar that reads the registry directly | High |
 
@@ -656,21 +657,30 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
   exactly when the backlog is large.
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
+- `workers.cycle_age_seconds` > threshold (e.g. 60s) → a worker is alive but not progressing (stuck
+  claim/dispatch iteration); this reads directly in-process, never the database, so unlike every other
+  gauge here it keeps reporting even while `tandem_outbox` itself is unreachable — useful signal on
+  its own for exactly the failure mode the others are blind to
 
 **Telling the four "the backlog is growing" cases apart.** A rising backlog has four very different
 causes, and the metrics separate them only when read together — the value alone is not enough:
 
-| | `lag.age_seconds` | `published` | `workers.active` | `blocked.count` |
-|---|---|---|---|---|
-| **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent | absent |
-| **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 | 0 |
-| **Relay under-provisioned** — working flat out, losing | present, **climbing** | high, saturated | > 0 | 0 |
-| **Aggregate blocked** — relay healthy, one chain stuck behind a failure | present, **climbing** | normal | > 0 | **> 0** |
+| | `lag.age_seconds` | `published` | `workers.active` | `workers.cycle_age_seconds` | `blocked.count` |
+|---|---|---|---|---|---|
+| **Relay absent** — not started yet, disabled, or dead | series **absent or frozen** | absent | absent | absent | absent |
+| **Relay stalled** — running but not making progress | present, **climbing** | ≈ 0 | > 0 | **climbing** | 0 |
+| **Relay under-provisioned** — working flat out, losing | present, **climbing** | high, saturated | > 0 | ≈ 0 | 0 |
+| **Aggregate blocked** — relay healthy, one chain stuck behind a failure | present, **climbing** | normal | > 0 | ≈ 0 | **> 0** |
 
 The middle two separate cleanly, because throughput and backlog age are independent signals: an age
 that climbs *while the relay publishes at full rate* means too little relay for the load, whereas an
 age that climbs while nothing is published means the relay is wedged (broker unreachable, DB
-contention, buckets uncovered).
+contention, buckets uncovered). **`workers.cycle_age_seconds` reaches the same conclusion more
+directly**, without needing that correlation: an under-provisioned worker is still completing claim
+cycles (it is busy, just outpaced), so the gauge stays near zero, while a genuinely stalled worker —
+blocked in a database call, a broker handshake that never completes, a poison iteration that always
+throws before finishing — stops advancing it entirely. It is also the one gauge in this table that
+`workers.active` cannot substitute for: a thread stuck inside a blocking call is still alive.
 
 The last one is the case `lag.age_seconds` alone cannot express at all, and the reason
 `blocked.count` exists: the age climbs exactly as it does under a genuine stall, but throughput is

@@ -27,6 +27,8 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -267,11 +269,13 @@ class WorkerPoolTest {
                     () -> "a complete metrics reading of the claimed backlog, observed lag:" + metrics.lag()
                             + ", lagAgeSeconds:" + metrics.lagAgeSeconds()
                             + ", activeWorkers:" + metrics.activeWorkers()
+                            + ", workerCycleAgeSeconds:" + metrics.workerCycleAgeSeconds()
                             + ", inFlight:" + outbox.byStatus(OutboxStatus.IN_FLIGHT).size(),
                     () -> outbox.byStatus(OutboxStatus.IN_FLIGHT).size() == 1
                             && metrics.lag() == 2
                             && metrics.lagAgeSeconds() >= 0
-                            && metrics.activeWorkers() >= 0);
+                            && metrics.activeWorkers() >= 0
+                            && metrics.workerCycleAgeSeconds() >= 0);
 
             // Assert on the running relay, never after the stop: the gauges keep their latest reading,
             // and a metrics tick that races stop() reports the workers it finds already interrupted —
@@ -280,9 +284,269 @@ class WorkerPoolTest {
             assertThat(metrics.lag()).isEqualTo(2);
             assertThat(metrics.lagAgeSeconds()).isEqualTo(30);
             assertThat(metrics.activeWorkers()).isEqualTo(2);
+            // Both workers keep completing cycles against the same frozen clock used to stamp them, so
+            // a healthy, busy relay reads exactly zero here — never a stale, ever-growing age.
+            assertThat(metrics.workerCycleAgeSeconds()).isZero();
         } finally {
             pool.stop();
         }
+    }
+
+    @Test
+    void GIVEN_a_relay_never_started_WHEN_its_status_is_read_THEN_it_reports_stopped_with_no_live_workers() {
+        RelayConfig cfg = RelayConfig.builder().bucketCount(BUCKETS).workersPerInstance(3).build();
+        WorkerPool pool = new WorkerPool(new InMemoryOutbox(), new RecordingDispatcher(), cfg);
+
+        RelayStatus status = pool.status();
+
+        assertThat(status.state()).isEqualTo(RelayStatus.State.STOPPED);
+        assertThat(status.workersConfigured()).isEqualTo(3);
+        assertThat(status.workersAlive()).isZero();
+        assertThat(status.oldestWorkerCycle()).isEmpty();
+    }
+
+    @Test
+    void GIVEN_a_running_relay_WHEN_its_status_is_read_THEN_it_reports_every_worker_alive_and_progressing() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(2).instanceId("relay-under-test")
+                .pollInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(outbox, new RecordingDispatcher(), cfg);
+        Instant beforeStart = Instant.now();
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "every worker to have completed a cycle, got " + pool.status(),
+                    () -> pool.status().workersAlive() == 2);
+
+            RelayStatus status = pool.status();
+
+            assertThat(status.instanceId()).isEqualTo("relay-under-test");
+            assertThat(status.state()).isEqualTo(RelayStatus.State.RUNNING);
+            assertThat(status.coordination()).isEqualTo(Coordination.SINGLE);
+            assertThat(status.workersConfigured()).isEqualTo(2);
+            assertThat(status.workersAlive()).isEqualTo(2);
+            // Not before pool.start() was called: a worker's first cycle timestamp is set no earlier
+            // than the moment its thread was started (§3.8), never left over from construction.
+            assertThat(status.oldestWorkerCycle()).isPresent().get().satisfies(cycleAt ->
+                    assertThat(cycleAt).isAfterOrEqualTo(beforeStart));
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_a_worker_thread_alive_but_stuck_failing_every_claim_WHEN_its_status_is_read_THEN_its_cycle_timestamp_does_not_advance() {
+        // A live thread is not a working one: mark_only-on-success (§3.8) means a worker whose every
+        // iteration throws before completing keeps its start-time cycle forever, even while its thread
+        // stays alive and its uncaught-exception handler never fires (the exception is caught per
+        // iteration inside runWorker, not escaping the thread).
+        ControllableClock clock = ControllableClock.atEpochDay();
+        OutboxStore alwaysThrows = new OutboxStore() {
+            @Override
+            public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+                throw new RuntimeException("simulated stuck claim");
+            }
+
+            @Override
+            public void markDone(long id) {
+            }
+
+            @Override
+            public void markForRetry(long id, String error, Duration retryDelay) {
+            }
+
+            @Override
+            public void markFailed(long id, String error) {
+            }
+
+            @Override
+            public int reclaimExpiredLeases() {
+                return 0;
+            }
+
+            @Override
+            public int cleanup(Instant doneBefore, int batchSize) {
+                return 0;
+            }
+        };
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(alwaysThrows, new RecordingDispatcher(), cfg, TandemMetrics.NOOP, clock,
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+        Instant startedAt = clock.instant();
+
+        pool.start();
+        try {
+            // The thread is alive from the first status() read onward; give it several failing
+            // iterations to prove the timestamp really is pinned, not merely not-yet-updated.
+            awaitUpTo(Duration.ofSeconds(20), () -> "the worker thread to be alive, got " + pool.status(),
+                    () -> pool.status().workersAlive() == 1);
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            RelayStatus status = pool.status();
+
+            assertThat(status.workersAlive()).isEqualTo(1);
+            assertThat(status.oldestWorkerCycle()).contains(startedAt);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_a_worker_stuck_failing_every_claim_WHEN_the_metrics_adapter_reads_THEN_the_cycle_age_gauge_climbs() {
+        // The behaviour recordWorkerCycleAgeSeconds exists for: a relay running but not making progress
+        // (HLD §7) must be visible as a single climbing gauge, not only inferred by correlating four
+        // others. The clock is frozen except for the explicit advance below, so the reading is exact,
+        // not merely "eventually positive".
+        ControllableClock clock = ControllableClock.atEpochDay();
+        OutboxStore alwaysThrows = new OutboxStore() {
+            @Override
+            public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+                throw new RuntimeException("simulated stuck claim");
+            }
+
+            @Override
+            public void markDone(long id) {
+            }
+
+            @Override
+            public void markForRetry(long id, String error, Duration retryDelay) {
+            }
+
+            @Override
+            public void markFailed(long id, String error) {
+            }
+
+            @Override
+            public int reclaimExpiredLeases() {
+                return 0;
+            }
+
+            @Override
+            public int cleanup(Instant doneBefore, int batchSize) {
+                return 0;
+            }
+        };
+        RecordingMetrics metrics = new RecordingMetrics();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .metricsInterval(Duration.ofMillis(20)).build();
+        WorkerPool pool = new WorkerPool(alwaysThrows, new RecordingDispatcher(), cfg, metrics, clock,
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+
+        pool.start();
+        try {
+            // A first, unstuck reading: the clock has not moved since the worker's start-time stamp.
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "a first reading of a not-yet-stuck worker, got " + metrics.workerCycleAgeSeconds(),
+                    () -> metrics.workerCycleAgeSeconds() == 0);
+
+            clock.advance(Duration.ofSeconds(45));   // the worker has been failing to progress ever since
+
+            awaitUpTo(Duration.ofSeconds(20),
+                    () -> "the cycle-age gauge to reflect 45s of no progress, got " + metrics.workerCycleAgeSeconds(),
+                    () -> metrics.workerCycleAgeSeconds() == 45);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_a_shutdown_in_progress_WHEN_its_status_is_read_THEN_it_is_reported_as_draining_not_stopped() {
+        // Deliberately latch-driven, not timing-driven: a worker is parked inside claimBatch() until
+        // released, so the window in which stop() is mid-join is fully under the test's control —
+        // this is the one status a caller must be able to tell apart from a hard STOPPED (§3.8), since
+        // an application draining an instance out of a load balancer must not report it as a failure.
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        OutboxStore parksOnClaim = new OutboxStore() {
+            @Override
+            public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    // interrupt() is exactly how stop() wakes this worker; clear the flag and hold the
+                    // window open a little longer so the assertion below cannot race the actual exit.
+                    Thread.interrupted();
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return List.of();
+            }
+
+            @Override
+            public void markDone(long id) {
+            }
+
+            @Override
+            public void markForRetry(long id, String error, Duration retryDelay) {
+            }
+
+            @Override
+            public void markFailed(long id, String error) {
+            }
+
+            @Override
+            public int reclaimExpiredLeases() {
+                return 0;
+            }
+
+            @Override
+            public int cleanup(Instant doneBefore, int batchSize) {
+                return 0;
+            }
+        };
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(parksOnClaim, new RecordingDispatcher(), cfg, TandemMetrics.NOOP,
+                Clock.systemUTC(), BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS));
+
+        pool.start();
+        try {
+            entered.await();   // the worker is now parked inside claimBatch()
+
+            Thread stopper = new Thread(pool::stop);
+            stopper.start();
+            try {
+                awaitUpTo(Duration.ofSeconds(5), () -> "status to report a draining shutdown, got " + pool.status(),
+                        () -> pool.status().state() == RelayStatus.State.STOPPING);
+                assertThat(pool.status().state()).isEqualTo(RelayStatus.State.STOPPING);
+            } finally {
+                release.countDown();
+                stopper.join(TimeUnit.SECONDS.toMillis(20));
+            }
+
+            assertThat(pool.status().state()).isEqualTo(RelayStatus.State.STOPPED);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while awaiting the worker to park", e);
+        }
+    }
+
+    @Test
+    void GIVEN_a_stopped_relay_WHEN_its_status_is_read_after_shutdown_THEN_no_worker_is_reported_alive() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(2).pollInterval(Duration.ofMillis(10)).build();
+        WorkerPool pool = new WorkerPool(outbox, new RecordingDispatcher(), cfg);
+        pool.start();
+        awaitUpTo(Duration.ofSeconds(20), () -> "every worker to have started", () -> pool.status().workersAlive() == 2);
+
+        pool.stop();
+
+        RelayStatus status = pool.status();
+        assertThat(status.state()).isEqualTo(RelayStatus.State.STOPPED);
+        assertThat(status.workersAlive()).isZero();
+        assertThat(status.oldestWorkerCycle()).isEmpty();
     }
 
     @Test

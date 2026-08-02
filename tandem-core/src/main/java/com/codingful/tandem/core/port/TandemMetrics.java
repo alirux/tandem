@@ -54,6 +54,16 @@ public interface TandemMetrics {
     default void recordActiveWorkers(int n) {
     }
 
+    /**
+     * @param age seconds since the least-recently-progressed live worker last completed a claim cycle
+     *            (0 when no worker is alive) — the direct signal for a relay that is running but not
+     *            making progress (HLD §7), where {@link #recordActiveWorkers} alone cannot tell a
+     *            working worker from one merely alive but stuck (e.g. blocked in a database call that
+     *            never returns).
+     */
+    default void recordWorkerCycleAgeSeconds(double age) {
+    }
+
     /** Buckets with PENDING rows but no live owner (§7). */
     default void recordUncoveredBuckets(int n) {
     }

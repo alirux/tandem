@@ -441,6 +441,39 @@ itself becomes measurably expensive at scale.
 
 ---
 
+### 3.8 In-process status (`WorkerPool.status()`)
+
+A read-only snapshot of the pool's own state — `RelayStatus`: `instanceId`, lifecycle `state`
+(`STOPPED`/`RUNNING`/`STOPPING`), `coordination`, `workersConfigured`/`workersAlive`, and
+`oldestWorkerCycle` (the least-recently-progressed live worker's last completed claim cycle). What an
+embedding application's own readiness/liveness probe reads — Tandem draws no health verdict from it
+(no threshold, no DOWN/UP), the same reasoning as shipping no logging configuration (AGENTS.md's
+Logging section) or metrics export config: deciding what an acceptable worker deficit or cycle age is
+stays the application's call.
+
+**Never queries the database.** This is the contract, not an incidental property — it is what makes
+`status()` safe to call at probe frequency (every few seconds, on every instance) at zero cost.
+Backlog size/age, failed and blocked counts are deliberately absent for the same reason they are not
+folded in here: they are already reachable through `OutboxStore.lag()`/`failedCount()`/`blockedCount()`,
+where the caller controls query cadence and caching. Bucket ownership and coverage are absent because
+under `LEASE` both are lease-table queries (`BucketLeaseManager.ownedBuckets()`/`uncoveredBuckets()`,
+§3.2) — reading them at probe frequency would turn a liveness check into load on `tandem_bucket_lease`.
+
+**`oldestWorkerCycle`, not just `workersAlive`.** A live `Thread` is not a working one — a worker
+blocked inside a JDBC call that never returns stays `Thread.isAlive() == true` forever, which
+`workersAlive` alone cannot distinguish from a healthy idle worker. Each worker stamps a per-index
+`AtomicLongArray` entry with the current instant immediately after a claim-cycle **completes without
+throwing** (`WorkerPool.runWorker`) — claiming zero rows still counts as progress (an idle relay is a
+working relay); an iteration that throws before completing does not advance the stamp, so a worker
+stuck failing every cycle shows an ageing timestamp instead of a fresh one. Starting a worker thread
+stamps its entry immediately, before the thread runs its first cycle, so a worker that hangs on its
+very first claim reports an ageing timestamp from start time rather than an absent one.
+`workersConfigured` vs. `workersAlive` is the other half of the picture: the gap matters more than
+either absolute number, since a died thread is restarted automatically (§3.1) and a transient deficit
+during that restart is normal — a persistent one is a worker dying in a loop.
+
+---
+
 ## 4. Metrics
 
 Emitted through the `TandemMetrics` port (no Micrometer dependency here). Mapping to HLD §7:
@@ -461,7 +494,10 @@ of blocked rows rather than the size of the outbox; `idx_tandem_outbox_failed` w
 `status = 3` step it shares with `failedCount()`, which until then seq-scanned the whole table on every
 tick),
 `incrementPublished` (on `markDoneBatch`), `incrementRetry`, `incrementLeaseExpired`
-(reclaim count), `recordActiveWorkers`, `recordUncoveredBuckets` (from `BucketSource.uncoveredBuckets()`,
+(reclaim count), `recordActiveWorkers` and `recordWorkerCycleAgeSeconds` (both from one `WorkerPool.status()`
+call, §3.8 — an in-process, database-free reading, unlike every other metric in this list; the second
+is what separates a worker merely alive from one making progress, since `Thread.isAlive()` cannot),
+`recordUncoveredBuckets` (from `BucketSource.uncoveredBuckets()`,
 same cadence as `lag()`/`failedCount()` — a bucket that is free/expired in `tandem_bucket_lease` **and**
 has `PENDING` rows waiting; the `EXISTS` against `tandem_outbox` rides the existing
 `idx_tandem_outbox_dispatch` partial index, so the query scans only `tandem_bucket_lease`'s `B` rows, no

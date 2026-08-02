@@ -62,6 +62,7 @@ throughput rate is a query the TSDB derives, never something Tandem computes).
 | `incrementRetry()` | `retry.count` | Counter | — |
 | `incrementLeaseExpired(long)` | `lease_expired.count` | Counter | — |
 | `recordActiveWorkers(int)` | `workers.active` | Gauge | — |
+| `recordWorkerCycleAgeSeconds(double)` | `workers.cycle_age_seconds` | Gauge | — |
 | `recordUncoveredBuckets(int)` | `bucket.uncovered` | Gauge | — |
 | `recordConfigInvalid(String)` | `tandem.relay.config.invalid` | Gauge | `check=<name>` |
 
@@ -81,6 +82,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong blocked = new AtomicLong();
     private final AtomicInteger activeWorkers = new AtomicInteger();
+    private final AtomicLong workerCycleAgeMillis = new AtomicLong();
     private final AtomicInteger uncoveredBuckets = new AtomicInteger();
     private final Counter published;
     private final Counter retries;
@@ -95,6 +97,8 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
         Gauge.builder("tandem.outbox.failed.count", failed, AtomicLong::get).register(registry);
         Gauge.builder("tandem.outbox.blocked.count", blocked, AtomicLong::get).register(registry);
         Gauge.builder("tandem.outbox.workers.active", activeWorkers, AtomicInteger::get).register(registry);
+        Gauge.builder("tandem.outbox.workers.cycle_age_seconds", workerCycleAgeMillis, v -> v.get() / 1000d)
+                .register(registry);
         Gauge.builder("tandem.outbox.bucket.uncovered", uncoveredBuckets, AtomicInteger::get).register(registry);
         this.published = Counter.builder("tandem.outbox.published").register(registry);
         this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
@@ -107,6 +111,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     @Override public void recordFailed(long count) { failed.set(count); }
     @Override public void recordBlocked(long count) { blocked.set(count); }
     @Override public void recordActiveWorkers(int n) { activeWorkers.set(n); }
+    @Override public void recordWorkerCycleAgeSeconds(double age) { workerCycleAgeMillis.set(Math.round(age * 1000)); }
     @Override public void recordUncoveredBuckets(int n) { uncoveredBuckets.set(n); }
     @Override public void incrementPublished(long n) { published.increment(n); }
     @Override public void incrementRetry() { retries.increment(); }

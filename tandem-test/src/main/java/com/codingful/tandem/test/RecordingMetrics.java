@@ -29,6 +29,7 @@ public final class RecordingMetrics implements TandemMetrics {
     private final AtomicLong lag = new AtomicLong(-1);
     private final AtomicLong lagAgeMillis = new AtomicLong(-1);
     private final AtomicInteger activeWorkers = new AtomicInteger(-1);
+    private final AtomicLong workerCycleAgeMillis = new AtomicLong(-1);
     private final AtomicInteger uncoveredBuckets = new AtomicInteger(-1);
 
     @Override
@@ -74,6 +75,11 @@ public final class RecordingMetrics implements TandemMetrics {
     @Override
     public void recordActiveWorkers(int n) {
         activeWorkers.set(n);
+    }
+
+    @Override
+    public void recordWorkerCycleAgeSeconds(double age) {
+        workerCycleAgeMillis.set(Math.round(age * 1000));
     }
 
     @Override
@@ -127,6 +133,12 @@ public final class RecordingMetrics implements TandemMetrics {
     /** The latest live-worker count, or {@code -1} if the gauge was never recorded. */
     public int activeWorkers() {
         return activeWorkers.get();
+    }
+
+    /** The latest worker-cycle age in seconds, or {@code -1} if the gauge was never recorded. */
+    public double workerCycleAgeSeconds() {
+        long millis = workerCycleAgeMillis.get();
+        return millis < 0 ? -1 : millis / 1000d;
     }
 
     /** The latest uncovered-bucket count, or {@code -1} if the gauge was never recorded. */

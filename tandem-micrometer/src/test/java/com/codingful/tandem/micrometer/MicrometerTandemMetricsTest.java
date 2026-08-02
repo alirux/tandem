@@ -78,6 +78,17 @@ class MicrometerTandemMetricsTest {
     }
 
     @Test
+    void GIVEN_a_worker_cycle_age_reported_twice_WHEN_read_THEN_the_same_gauge_reflects_the_latest_value() {
+        metrics.recordWorkerCycleAgeSeconds(12.5);
+        assertThat(registry.get("tandem.outbox.workers.cycle_age_seconds").gauge().value()).isEqualTo(12.5);
+
+        // A recovered worker must bring the gauge back down, exactly like failed.count/blocked.count —
+        // a stuck-worker alert built on this must be able to clear, not latch on permanently.
+        metrics.recordWorkerCycleAgeSeconds(0);
+        assertThat(registry.get("tandem.outbox.workers.cycle_age_seconds").gauge().value()).isEqualTo(0);
+    }
+
+    @Test
     void GIVEN_the_same_check_reported_twice_WHEN_read_THEN_only_one_series_is_registered() {
         metrics.recordConfigInvalid("row_lease_unsafe");
         metrics.recordConfigInvalid("row_lease_unsafe");
