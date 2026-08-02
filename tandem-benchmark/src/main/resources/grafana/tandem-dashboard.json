@@ -249,6 +249,10 @@
         "defaults": {
           "unit": "reqps",
           "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
           "custom": {
             "fillOpacity": 12,
             "lineWidth": 2,
@@ -290,6 +294,10 @@
         "defaults": {
           "unit": "short",
           "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          },
           "custom": {
             "fillOpacity": 20,
             "lineWidth": 2,
@@ -380,10 +388,10 @@
       ]
     },
     {
-      "id": 7,
+      "id": 11,
       "type": "timeseries",
-      "title": "Buckets with work and no live owner",
-      "description": "tandem.outbox.bucket.uncovered \u2014 LEASE coordination only. Above zero means some buckets have pending rows that nobody currently owns: a coverage stall, the loud failure mode the virtual-bucket design was chosen for.",
+      "title": "Worker cycle age \u2014 alive vs actually working",
+      "description": "tandem.outbox.workers.cycle_age_seconds, per relay. Seconds since that instance's least-recently-progressed live worker last completed a claim cycle. workers.active alone cannot tell a working worker from one merely alive \u2014 a thread blocked in a call that never returns stays alive forever; this is the direct signal for that failure mode (HLD \u00a77).",
       "datasource": {
         "type": "prometheus",
         "uid": "tandem-prometheus"
@@ -396,8 +404,66 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 15
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "tandem_outbox_workers_cycle_age_seconds",
+          "legendFormat": "{{relay}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Buckets with work and no live owner",
+      "description": "tandem.outbox.bucket.uncovered \u2014 LEASE coordination only. Above zero means some buckets have pending rows that nobody currently owns: a coverage stall, the loud failure mode the virtual-bucket design was chosen for.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
           "unit": "short",
           "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
           "custom": {
             "fillOpacity": 20,
             "lineWidth": 2,
@@ -444,8 +510,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
+        "w": 12,
+        "x": 12,
         "y": 43
       },
       "fieldConfig": {

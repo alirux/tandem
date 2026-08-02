@@ -193,7 +193,8 @@ public final class WorkerPool {
                     sleep(worker.inFlight() == 0 ? cfg.pollInterval().toMillis() : 5);
                 }
             } catch (Exception perIteration) {
-                LOG.log(Level.ERROR, "Relay worker iteration failed workerIndex:" + index, perIteration);
+                LOG.log(Level.ERROR, "Relay worker iteration failed workerIndex:" + index
+                        + ", instanceId:" + instanceId, perIteration);
                 sleep(cfg.pollInterval().toMillis());
             }
         }

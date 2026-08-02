@@ -58,6 +58,7 @@ tandem-benchmark/
     BenchmarkMetrics.java               // §6   — in-process TandemMetrics adapter (counters only)
     LagProbe.java                       // §6.1 — direct-SQL lag/backlog observation
     FaultInjector.java / FaultInjectingDispatcher.java  // §8 — the fault seam: permanent/retriable/stall
+    FaultInjectingOutboxStore.java       // §6.3 — the claim-side fault axis, for workers.cycle_age_seconds
     MetricsExporter.java                // §6.3 — one relay instance's Prometheus /metrics endpoint
     ObservabilityStack.java             // §6.3 — Prometheus + Grafana containers, provisioned
     MetricsDashboardDemo.java           // §6.3 — the scripted run behind metricsDashboardDemo
@@ -403,14 +404,15 @@ with a provisioned datasource and the committed dashboard. **One exporter per in
 `workers.active` is per-instance while `lag.count` is a global reading every instance reports, so a
 single shared registry would silently collapse the first kind to whichever instance wrote last.
 
-Seven scripted phases walk the relay through the states each meter exists to reveal: a backlog with no
-relay behind it, a drain, steady load, an aggregate that fails, a second instance joining, a crash with
-rows still in flight, recovery. `tandem.relay.config.invalid` is the one meter not driven — it fires
-once and aborts the process by design (LLD-micrometer §4), leaving nothing for a scraper to read.
+Eight scripted phases walk the relay through the states each meter exists to reveal: a backlog with no
+relay behind it, a drain, steady load, an aggregate that fails, a second instance joining, that
+instance's worker getting stuck without crashing, a genuine crash with rows still in flight, recovery.
+`tandem.relay.config.invalid` is the one meter not driven — it fires once and aborts the process by
+design (LLD-micrometer §4), leaving nothing for a scraper to read.
 
-Driving the failure paths needed `FaultInjector` to grow from one fault to three. The original
-permanent-only fault could never move `retry.count`, and no fault at all could put rows in the state
-lease reclaim needs to see:
+Driving the failure paths needed `FaultInjector` to grow from one fault to three, plus a second,
+independent axis. The original permanent-only fault could never move `retry.count`, and no fault at
+all could put rows in the state lease reclaim needs to see:
 
 | Fault | What it does | What it makes visible |
 |---|---|---|
@@ -421,6 +423,20 @@ lease reclaim needs to see:
 `STALL` is what finally exercised the reclaim path: §8.1 records that S5's interesting case
 (`reclaimed > 0`) had never fired across runs, because a dispatch that merely fails releases its row
 long before any crash. A dispatch that hangs does not.
+
+**A fourth fault, on a different axis entirely, was needed for `workers.cycle_age_seconds` (LLD-jdbc
+§3.8) — and none of the three above could reach it.** Every `Fault` above acts on the *dispatch* path,
+which `WorkerPool` calls asynchronously: `claimAndDispatch` hands off a `CompletableFuture` and returns
+immediately, so even `STALL` leaves the worker's claim/flush cycle completing normally forever —
+`workers.cycle_age_seconds` would read a flat zero no matter how long a dispatch hangs. The gauge exists
+for a worker stuck *before* dispatch, synchronously, inside the claim call itself (the JDBC-call-that-
+never-returns case) — which needed a fault on `OutboxStore.claimBatch`, not `OutboxDispatcher.dispatch`.
+`FaultInjectingOutboxStore` wraps the real store and throws from `claimBatch` when `FaultInjector`
+currently stalls the calling `workerId`; `runWorker`'s catch block logs it and does not stamp a progress
+cycle, which is exactly what leaves the worker thread alive (`workers.active` unchanged) while its cycle
+age climbs. Selected **per relay instance**, not per aggregate: a claim never sees a record, so the
+existing aggregate-scoped rule has nothing to match against, and instance is the only axis that makes
+sense for a claim-side fault. Has no dedicated `S`-numbered scenario — used only by this demo.
 
 **The fault is per-aggregate, not per-instance, so `lease_expired.count` can climb more than once from
 one `STALL` call.** `stallAggregate` stays armed until `Recovery` explicitly clears it (§3: `BenchmarkEnvironment` holds

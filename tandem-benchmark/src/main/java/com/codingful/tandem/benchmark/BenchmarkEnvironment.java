@@ -1,6 +1,7 @@
 package com.codingful.tandem.benchmark;
 
 import com.codingful.tandem.core.port.OutboxDispatcher;
+import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.jdbc.BackoffStrategy;
 import com.codingful.tandem.jdbc.BucketCountGuard;
@@ -131,8 +132,13 @@ public final class BenchmarkEnvironment implements AutoCloseable {
         KafkaRelay producer = new KafkaRelay(producerConfig(), record -> TOPIC, KafkaRelayConfig.of("/tandem/benchmark"));
         extraProducers.add(producer);
         OutboxDispatcher dispatcher = new FaultInjectingDispatcher(producer, faultInjector);
+        // Wrapped here, not on the shared `store` field: only an instance built through this method can
+        // ever have its claims stalled (S9), so env.relayPool() and every S1-S8 scenario built from
+        // env.store() directly are untouched — the wrapper is a no-op pass-through until a scenario
+        // calls FaultInjector.stallWorkerClaims for this instance's id.
+        OutboxStore faultInjectingStore = new FaultInjectingOutboxStore(store, faultInjector);
         BucketSource bucketSource = BucketSource.forCoordination(relayCfg, dataSource);
-        WorkerPool pool = new WorkerPool(store, dispatcher, relayCfg, instanceMetrics, Clock.systemUTC(),
+        WorkerPool pool = new WorkerPool(faultInjectingStore, dispatcher, relayCfg, instanceMetrics, Clock.systemUTC(),
                 BackoffStrategy.fullJitter(), bucketSource);
         return new RelayInstance(pool, bucketSource, producer);
     }

@@ -11,7 +11,7 @@ import java.util.Locale;
  * Drives every meter the relay reports through a real Micrometer → Prometheus → Grafana pipeline, so
  * the signals can be judged on a dashboard instead of in an assertion (LLD-benchmark §6.3). Same
  * intent as {@link LagGaugeDemo} one level up: that one prints two numbers to a terminal, this one
- * shows all nine on the surface an operator would actually be watching.
+ * shows all eleven on the surface an operator would actually be watching.
  *
  * <p>It <b>measures nothing and gates nothing</b>. The scripted run walks the relay through the states
  * each meter exists to reveal — a backlog with no relay behind it, a drain, steady load, a failing
@@ -35,6 +35,12 @@ public final class MetricsDashboardDemo {
     /** Short enough that a whole phase is many points on the dashboard rather than two or three. */
     private static final Duration METRICS_INTERVAL = Duration.ofSeconds(1);
     private static final Duration BUCKET_LEASE = Duration.ofSeconds(10);
+
+    private static final String RELAY_ONE_ID = "demo-relay-1";
+    private static final String RELAY_TWO_ID = "demo-relay-2";
+
+    /** Long enough to be several points on the cycle-age panel, short enough to keep the run brisk. */
+    private static final Duration STUCK_WORKER_WINDOW = Duration.ofSeconds(25);
 
     // reclaimInterval is deliberately left at RelayConfig's own 5s default rather than shortened the way
     // the S8 scenario shortens it. It is what paces bucket takeover after a crash, so a sub-second value
@@ -71,8 +77,8 @@ public final class MetricsDashboardDemo {
         try (BenchmarkEnvironment env = new BenchmarkEnvironment(cfg).start();
              ObservabilityStack observability = new ObservabilityStack(exporters).start()) {
 
-            RelayInstance relayOne = env.newRelayInstance(leaseConfig(env, "demo-relay-1"), exporters.get(0).metrics());
-            RelayInstance relayTwo = env.newRelayInstance(leaseConfig(env, "demo-relay-2"), exporters.get(1).metrics());
+            RelayInstance relayOne = env.newRelayInstance(leaseConfig(env, RELAY_ONE_ID), exporters.get(0).metrics());
+            RelayInstance relayTwo = env.newRelayInstance(leaseConfig(env, RELAY_TWO_ID), exporters.get(1).metrics());
 
             AggregateSelector selector = AggregateSelector.uniform("metricsdemo", cfg.aggregateCardinality());
             String failingAggregate = selector.universe().get(0);
@@ -125,6 +131,22 @@ public final class MetricsDashboardDemo {
                 env.faultInjector().clear();
                 relayTwo.pool().start();
                 await(Duration.ofSeconds(20), env);
+
+                phase(observability, "relay-2's worker gets stuck, not killed", """
+                        Every claim attempt by relay-2 now fails — not its dispatch, its claim, made to
+                        fail the way a hung database call would. Its thread stays alive throughout, so
+                        workers.active for relay-2 does not move at all. Watch 'worker cycle age' instead:
+                        only the relay-2 series climbs, because it is the one gauge that can tell a stuck
+                        worker apart from a working one — a live thread proves nothing on its own.
+                        relay-2's buckets stay owned the whole time (heartbeat renews the lease
+                        independently of claiming), so bucket.uncovered does not move either and nothing
+                        is reclaimed — this is not the crash phase coming next.
+                        Cleared after %ds; watch the series drop straight back to zero, since the worker
+                        resumes exactly where the stall left it.""".formatted(STUCK_WORKER_WINDOW.toSeconds()));
+                env.faultInjector().stallWorkerClaims(RELAY_TWO_ID);
+                await(STUCK_WORKER_WINDOW, env);
+                env.faultInjector().clear();
+                await(Duration.ofSeconds(10), env);
 
                 phase(observability, "The second instance crashes with rows in flight", """
                         Dispatch for aggregate %s hangs, pinning its rows IN_FLIGHT under a row lease,
@@ -184,7 +206,7 @@ public final class MetricsDashboardDemo {
         System.out.println("  Open the Grafana link now — the run below takes about three minutes and the");
         System.out.println("  dashboard is worth watching live. Every phase is announced here as it starts.");
         System.out.println();
-        System.out.println("  Eight of the nine meters are driven below. The ninth, tandem.relay.config.invalid,");
+        System.out.println("  Ten of the eleven meters are driven below. The eleventh, tandem.relay.config.invalid,");
         System.out.println("  is not: it fires once and then aborts the process by design (LLD-micrometer §4),");
         System.out.println("  so there is nothing left running for a scraper to read it from.");
         System.out.println();
