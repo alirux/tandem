@@ -1,0 +1,15 @@
+# Tandem — reference configuration for tandem-admin (HLD-admin-api §3).
+#
+# Every `tandem.admin.*` key this module binds, with its default. Copy what you need and delete
+# the rest: every key shown commented out is already in force at the value noted, so a deployment
+# that sets none of them behaves exactly like this file describes.
+
+tandem:
+  admin:
+    # tandem.admin.enabled — whether this application exposes the Admin API. Default: false.
+    # The API is an attack surface (replay/discard mutate delivery state) — off unless explicit.
+    # enabled: false
+
+    # tandem.admin.base-path — base path before the fixed /v1 contract-version segment.
+    # Default: /tandem/admin (effective default URL: /tandem/admin/v1).
+    # base-path: /tandem/admin

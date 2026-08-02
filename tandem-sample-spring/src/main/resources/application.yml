@@ -24,3 +24,6 @@ context:
 tandem:
   outbox:
     bucket-count: 256
+  # [DEMO-ONLY] Also demonstrates the Admin API's slice-1 read endpoints, off by default otherwise.
+  admin:
+    enabled: true

@@ -272,6 +272,16 @@ Template and Spring-events tiers, and delivers them to Kafka in per-aggregate or
 tandem-sample-spring\run.cmd
 ```
 
+The Spring sample also demonstrates the Admin API's read endpoints (`tandem.admin.enabled: true`
+in its `application.yml`) against the same outbox it just wrote to. Once the demo narration
+finishes, the app keeps running as a web server (Ctrl+C to stop) — try:
+
+```bash
+curl http://localhost:8080/tandem/admin/v1/outbox/summary
+curl http://localhost:8080/tandem/admin/v1/outbox/messages
+curl http://localhost:8080/tandem/admin/v1/outbox/messages/1
+```
+
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
 `metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through seven
 scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
@@ -425,8 +435,9 @@ Not yet shipped, in no particular order:
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
 - **`tandem-admin`** — an API-first REST Admin API to inspect outbox state and replay failed
-  messages. The OpenAPI contract is already frozen: [HLD-admin-api.md](docs/HLD-admin-api.md) ·
-  [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
+  messages. The read side (health summary, search, message detail) ships today, off by default
+  (`tandem.admin.enabled=true`); replay, discard, and relay pause/resume are still to come. Contract:
+  [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
 - **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, a
   forensic per-attempt archive, and W3C trace/correlation propagation. Each has a design document
   ([causal-ordering.md](docs/causal-ordering.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),

@@ -2,8 +2,10 @@
  * The hexagonal <b>ports</b> (LLD-core §2): interfaces the core defines and the adapters implement,
  * so the core never depends on any adapter. Persistence ports
  * ({@link com.codingful.tandem.core.port.OutboxRepository} write-side,
- * {@link com.codingful.tandem.core.port.OutboxStore} relay-side) are implemented by {@code tandem-jdbc};
- * the publish port ({@link com.codingful.tandem.core.port.OutboxDispatcher}) by {@code tandem-kafka}.
+ * {@link com.codingful.tandem.core.port.OutboxStore} relay-side,
+ * {@link com.codingful.tandem.core.port.OutboxQuery} the Admin API's read side) are implemented by
+ * {@code tandem-jdbc}; the publish port ({@link com.codingful.tandem.core.port.OutboxDispatcher}) by
+ * {@code tandem-kafka}.
  *
  * <p>The optional ports ({@link com.codingful.tandem.core.port.TandemMetrics},
  * {@link com.codingful.tandem.core.port.AttemptRecorder},

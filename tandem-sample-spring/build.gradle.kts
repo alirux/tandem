@@ -32,6 +32,11 @@ dependencies {
     // (so the relay runs itself, wired by Spring, rather than being assembled by hand).
     implementation(project(":tandem-spring-producer"))
     implementation(project(":tandem-spring-relay"))
+    // [DEMO-ONLY] Lets the sample also demonstrate the Admin API's read endpoints against the same
+    // outbox the tiers above just wrote to. spring-boot-starter-web is what actually keeps the app
+    // running as a server after SampleRunner's CommandLineRunner finishes.
+    implementation(project(":tandem-admin"))
+    implementation("org.springframework.boot:spring-boot-starter-web")
 
     // [DEMO-ONLY] TandemTestContainer spins up a real PostgreSQL (and Kafka) so the sample is
     // self-contained; a real app supplies its own DataSource. Also provides the relay + consumer helpers

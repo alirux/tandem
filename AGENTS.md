@@ -138,8 +138,9 @@ default (§1.1). See [docs/HLD-logging.md](docs/HLD-logging.md).
 
 ## Javadoc
 
-Applies to the four published modules (`tandem-core`, `tandem-jdbc`, `tandem-kafka`,
-`tandem-test`) — their javadoc jar is generated automatically by the
+Applies to every published module (`tandem-core`, `tandem-jdbc`, `tandem-kafka`,
+`tandem-test`, `tandem-spring-producer`, `tandem-spring-relay`, `tandem-micrometer`,
+`tandem-admin`, …) — their javadoc jar is generated automatically by the
 `com.vanniktech.maven.publish` plugin and is the first thing an external consumer sees
 in their IDE. Package-private/internal classes (e.g. `RelayWorker`, `MiniJson`,
 `OutboxRowMapper`, `CloudEventEncoder`) are out of scope — they never reach the
@@ -261,6 +262,10 @@ to depend on.
 ## Commit messages
 
 - Describe **what** changed and why, not **how** it was implemented.
+- **State the end result, not the journey.** No chronicle of the bugs hit, dead
+  ends tried, or debugging steps taken to get there — that belongs in
+  `docs/IMPLEMENTATION-PLAN-*.md` or a PR description, not the commit message.
+  Keep it short: what changed and why, nothing else.
 - Do **not** add a `Co-Authored-By` trailer.
 - **Before every commit, run the full test suite and make sure it is green**
   (`./gradlew test`, or `./gradlew check` to include the coverage gate). Never

@@ -120,7 +120,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OutboxMessagePage'
+                $ref: '#/components/schemas/OutboxEntryPage'
+        '400':
+          $ref: '#/components/responses/InvalidParameter'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -145,7 +147,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OutboxMessage'
+                $ref: '#/components/schemas/OutboxEntry'
+        '400':
+          $ref: '#/components/responses/InvalidParameter'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -173,7 +177,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OutboxMessage'
+                $ref: '#/components/schemas/OutboxEntry'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -220,7 +224,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OutboxMessage'
+                $ref: '#/components/schemas/OutboxEntry'
         '400':
           description: acknowledgeOrderingBreak not set
           content:
@@ -399,6 +403,11 @@ paths:
       tags:
         - Relay
       summary: Pause the relay (optionally a single bucket)
+      description: >
+        The relay reads the desired state once per poll cycle, so the effect lags by at
+        most one cycle - not immediate mid-cycle. When a bucket is paused, its owning worker
+        keeps renewing the bucket's lease and simply stops dispatching sends for it; pause
+        never releases the lease (use POST /relay/buckets/{bucket}/release for that).
       operationId: pauseRelay
       requestBody:
         required: false
@@ -423,6 +432,9 @@ paths:
       tags:
         - Relay
       summary: Resume the relay (optionally a single bucket)
+      description: >
+        The relay reads the desired state once per poll cycle, so the effect lags by at
+        most one cycle - not immediate mid-cycle.
       operationId: resumeRelay
       requestBody:
         required: false
@@ -532,6 +544,17 @@ components:
       name: X-API-Key
 
   responses:
+    InvalidParameter:
+      description: A query or path parameter could not be parsed (e.g. an unknown status name, a
+        non-numeric id or cursor)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://tandem.codingful.com/problems/invalid-parameter
+            title: Invalid request parameter
+            status: 400
     Unauthorized:
       description: Missing or invalid credentials
       content:
@@ -579,8 +602,12 @@ components:
         - SUCCESS
         - FAILED
 
-    OutboxMessage:
+    OutboxEntry:
       type: object
+      description: >
+        One entry in the outbox: the message together with its delivery state. This is the
+        API's own representation and is deliberately NOT the library's internal model - do
+        not assume the two evolve together.
       required:
         - id
         - aggregateId
@@ -637,15 +664,19 @@ components:
             - type: object
             - type: string
 
-    OutboxMessagePage:
+    OutboxEntryPage:
       type: object
+      description: >
+        One page of search results plus the cursor for the next one. "Page" means a page of
+        results, NOT a page number - this API paginates by cursor only (there is no page or
+        offset parameter), so pages are traversed forward and cannot be jumped to.
       required:
         - items
       properties:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/OutboxMessage'
+            $ref: '#/components/schemas/OutboxEntry'
         nextCursor:
           type: string
           nullable: true
@@ -835,6 +866,7 @@ components:
       required:
         - bucket
         - covered
+        - paused
         - pendingCount
       properties:
         bucket:
@@ -850,6 +882,13 @@ components:
         covered:
           type: boolean
           description: Whether the bucket has a live owner
+        paused:
+          type: boolean
+          description: >
+            Whether this bucket is deliberately paused (via POST /relay/pause with a bucket
+            selector). The owning worker keeps renewing its lease while paused - covered can
+            be true even when paused is true. Distinguishes an intentionally-idle bucket from
+            a genuinely stalled one when pendingCount/lagAgeSeconds is growing.
         pendingCount:
           type: integer
           format: int64

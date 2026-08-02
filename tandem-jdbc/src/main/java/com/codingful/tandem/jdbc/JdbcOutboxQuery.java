@@ -1,0 +1,173 @@
+package com.codingful.tandem.jdbc;
+
+import com.codingful.tandem.core.AggregateId;
+import com.codingful.tandem.core.OutboxRowDetail;
+import com.codingful.tandem.core.OutboxRowView;
+import com.codingful.tandem.core.OutboxSearchCriteria;
+import com.codingful.tandem.core.OutboxStatus;
+import com.codingful.tandem.core.exception.TandemException;
+import com.codingful.tandem.core.port.OutboxQuery;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import javax.sql.DataSource;
+
+/**
+ * Admin-API read side (HLD-admin-api §4, {@link OutboxQuery}): counts, search, and single-row lookup
+ * over {@code tandem_outbox}. Named columns only, never {@code SELECT *} (AGENTS, HLD §1.4). Maps to
+ * its own read types — {@link OutboxRowMapper} stays untouched, mapping to {@code OutboxRecord} for
+ * the write/relay path.
+ *
+ * <p>The list query never selects {@code payload}/{@code headers}: the point of the separate
+ * {@link OutboxRowView} type is that those JSONB columns are never read for a list page, not merely
+ * dropped afterwards.
+ */
+public final class JdbcOutboxQuery implements OutboxQuery {
+
+    private static final String VIEW_COLUMNS = "id, aggregate_id, aggregate_type, type, seq, status, "
+            + "attempts, last_error, next_attempt_at, locked_by, locked_until, created_at";
+
+    private final DataSource dataSource;
+
+    /** @param dataSource used for every query; each call opens and closes its own connection */
+    public JdbcOutboxQuery(DataSource dataSource) {
+        this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+    }
+
+    @Override
+    public Map<OutboxStatus, Long> statusCounts() {
+        Map<OutboxStatus, Long> counts = new EnumMap<>(OutboxStatus.class);
+        for (OutboxStatus status : OutboxStatus.values()) {
+            counts.put(status, 0L);
+        }
+        String sql = "SELECT status, count(*) AS row_count FROM tandem_outbox GROUP BY status";
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql);
+                ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                counts.put(OutboxStatus.fromCode(rs.getInt("status")), rs.getLong("row_count"));
+            }
+            return counts;
+        } catch (SQLException e) {
+            throw new TandemException("statusCounts query failed", e);
+        }
+    }
+
+    @Override
+    public List<OutboxRowView> search(OutboxSearchCriteria criteria) {
+        Objects.requireNonNull(criteria, "criteria");
+        List<Object> params = new ArrayList<>();
+        List<String> predicates = new ArrayList<>();
+        if (criteria.afterId() != null) {
+            predicates.add("id > ?");
+            params.add(criteria.afterId());
+        }
+        if (criteria.status() != null) {
+            predicates.add("status = ?");
+            params.add(criteria.status().code());
+        }
+        if (criteria.aggregateId() != null) {
+            predicates.add("aggregate_id = ?");
+            params.add(criteria.aggregateId().value());
+        }
+        if (criteria.aggregateType() != null) {
+            predicates.add("aggregate_type = ?");
+            params.add(criteria.aggregateType());
+        }
+        if (criteria.type() != null) {
+            predicates.add("type = ?");
+            params.add(criteria.type());
+        }
+        if (criteria.createdFrom() != null) {
+            predicates.add("created_at >= ?");
+            params.add(OffsetDateTime.ofInstant(criteria.createdFrom(), ZoneOffset.UTC));
+        }
+        if (criteria.createdTo() != null) {
+            predicates.add("created_at <= ?");
+            params.add(OffsetDateTime.ofInstant(criteria.createdTo(), ZoneOffset.UTC));
+        }
+
+        StringBuilder sql = new StringBuilder("SELECT ").append(VIEW_COLUMNS).append(" FROM tandem_outbox");
+        if (!predicates.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", predicates));
+        }
+        sql.append(" ORDER BY id LIMIT ?");
+        params.add(criteria.limit());
+
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            bind(ps, params);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<OutboxRowView> rows = new ArrayList<>();
+                while (rs.next()) {
+                    rows.add(mapView(rs));
+                }
+                return rows;
+            }
+        } catch (SQLException e) {
+            throw new TandemException("search query failed", e);
+        }
+    }
+
+    @Override
+    public Optional<OutboxRowDetail> findById(long id) {
+        String sql = "SELECT " + VIEW_COLUMNS + ", payload::text AS payload, headers::text AS headers"
+                + "  FROM tandem_outbox WHERE id = ?";
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                OutboxRowView view = mapView(rs);
+                String payloadText = rs.getString("payload");
+                Map<String, String> headers = MiniJson.parseObject(rs.getString("headers"));
+                byte[] payload = payloadText == null
+                        ? new byte[0]
+                        : payloadText.getBytes(StandardCharsets.UTF_8);
+                return Optional.of(new OutboxRowDetail(view, payload, headers));
+            }
+        } catch (SQLException e) {
+            throw new TandemException("findById query failed", e);
+        }
+    }
+
+    private static OutboxRowView mapView(ResultSet rs) throws SQLException {
+        return new OutboxRowView(
+                rs.getLong("id"),
+                AggregateId.of(rs.getString("aggregate_id")),
+                rs.getString("aggregate_type"),
+                rs.getString("type"),
+                rs.getLong("seq"),
+                OutboxStatus.fromCode(rs.getInt("status")),
+                rs.getInt("attempts"),
+                rs.getString("last_error"),
+                instantOrNull(rs, "next_attempt_at"),
+                rs.getString("locked_by"),
+                instantOrNull(rs, "locked_until"),
+                instantOrNull(rs, "created_at"));
+    }
+
+    private static Instant instantOrNull(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime odt = rs.getObject(column, OffsetDateTime.class);
+        return odt == null ? null : odt.toInstant();
+    }
+
+    private static void bind(PreparedStatement ps, List<Object> params) throws SQLException {
+        for (int i = 0; i < params.size(); i++) {
+            ps.setObject(i + 1, params.get(i));
+        }
+    }
+}

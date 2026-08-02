@@ -66,6 +66,13 @@ and governance rules (naming, descriptions, examples) that Specmatic does not en
 Replay builds on the per-aggregate `ReplayService` (HLD §8); the attempt endpoints read the
 optional attempt archive (HLD §7.1) and return empty / `503` when it is disabled.
 
+**The attempt archive itself is not implemented** — `AttemptRecorder` is still a port with a
+no-op default and no adapter, so the two attempt operations are **deferred and excluded from
+the implementation slices** until explicitly requested. They remain in the contract (removing
+a published operation would be breaking, §1), and the gap is tracked as an explicit
+allowlist in the conformance run rather than left silent. See
+[IMPLEMENTATION-PLAN-admin-api.md](IMPLEMENTATION-PLAN-admin-api.md) §1.1.
+
 ---
 
 ## 3. Opt-in and security (Pareto, §1.1)
@@ -90,7 +97,7 @@ optional attempt archive (HLD §7.1) and return empty / `503` when it is disable
   match on — it never changes once published. The URL need not be dereferenceable today: it is an
   identifier first; if docs are published later, the same URLs resolve, with **no contract change**
   (the reason a URL is chosen now over `about:blank`/URN). Current slugs: `unauthorized`,
-  `not-found`, `internal-error`, `message-not-replayable`, `ordering-break-not-acknowledged`,
+  `not-found`, `internal-error`, `invalid-parameter`, `message-not-replayable`, `ordering-break-not-acknowledged`,
   `replay-no-selector`, `attempt-archive-disabled`.
 
 ---
@@ -98,10 +105,43 @@ optional attempt archive (HLD §7.1) and return empty / `503` when it is disable
 ## 4. Architecture (Hexagonal, §1.2)
 
 The admin operations are framework-agnostic **use cases** (a port, `AdminService`); REST is
-a **driving adapter** implementing the OpenAPI on top of them. The use cases delegate to
-existing core ports (`OutboxRepository`, `ReplayService`) and the attempt-archive query —
-they introduce no new persistence path. This keeps the operations testable without HTTP and
-lets the future Admin Web UI reuse the same REST contract rather than the internals.
+a **driving adapter** implementing the OpenAPI on top of them. This keeps the operations
+testable without HTTP and lets the future Admin Web UI reuse the same REST contract rather
+than the internals.
+
+**Reuse is partial — the read side is a new persistence path.** Write-side and act-side
+operations do delegate to existing core ports: replay is `ReplayService` (already
+implemented as `JdbcReplayService`), and the lag figures in `OutboxSummary` come from
+`OutboxStore.lag()`. **The reads do not.** `OutboxRepository` is insert-only, and
+`OutboxStore` is relay-shaped — its `claimBatch` is bucket-scoped and *mutates* rows to
+`IN_FLIGHT`. Nothing exposes read-one-by-id, search-by-criteria, or count-per-status. Those
+arrive as a new core port (`OutboxQuery`) with a `tandem-jdbc` adapter, implemented by
+`InMemoryOutbox` as well so the use cases stay unit-testable without a database. Discard
+(`FAILED` → `DISCARDED`) is likewise a genuinely new verb with no existing code path.
+See [IMPLEMENTATION-PLAN-admin-api.md](IMPLEMENTATION-PLAN-admin-api.md) §1.
+
+**Three independent models, on purpose.** The read port does **not** return the write/relay
+model, and the REST layer does **not** serialize core types:
+
+| Model | Owner | Job |
+|---|---|---|
+| `OutboxMessage` / `OutboxRecord` | `tandem-core` | The row being **written and delivered** (`payload` mandatory — a message without one cannot be published). |
+| The read model behind `OutboxQuery` | `tandem-core` | The row being **read**; the list shape deliberately carries no payload. |
+| The REST DTOs | `tandem-admin` | The row **on the wire**, evolving with the OpenAPI. |
+
+Each split answers a different rigidity. Read/write independence stops a read-side need from
+pushing a change into the type the relay depends on — and it is what lets the list view avoid
+reading the `payload` column at all, rather than loading it and discarding it. API/core
+independence keeps two **separately published, separately frozen** contracts — the OpenAPI,
+consumed by REST clients Tandem never sees, and the Java surface an adopter compiles against —
+from forcing changes on each other, and keeps serialization concerns out of a module whose
+defining property is having no dependencies.
+
+The contract's names are kept **deliberately distinct** from the library's for the same reason:
+the API schema is `OutboxEntry` (paginated as `OutboxEntryPage`), not `OutboxMessage`, which is
+the core's *write* model. An earlier draft of the contract reused the name and made the two look
+like one type — renamed before any implementation existed, since a schema name is a
+code-generation identifier that never appears in the payload, so nothing on the wire changed.
 
 - **Module:** `tandem-admin` (optional). Contains the use-case logic and the Spring-based
   REST adapter that realises [admin-api.openapi.yaml](admin-api.openapi.yaml). It depends
@@ -206,11 +246,47 @@ compatibility** checking between spec versions. A dedicated linter (`redocly lin
 architecturally mismatched for a published, provider-authoritative contract. (Specmatic is
 contract-*driven*, with the OpenAPI authoritative, so it is consistent with this stance.)
 
-## 6. Open decisions
+## 6. Decisions
 
-| Area | Options |
-|---|---|
-| Pagination | Cursor (afterId, in the contract) vs. page/offset | 
-| Discard semantics | Hard "skip the event" (ordering break, acknowledged) vs. also support "discard + emit a tombstone/compensation" |
-| Relay pause scope | Whole relay only vs. per-shard (the contract allows both) — confirm per-shard pause is operationally safe with lease reclaim |
-| Spec ↔ code binding | Generate server stubs from the spec at build time vs. hand-write and validate against the spec in CI |
+### 6.1 Resolved
+
+- **Pagination — cursor, not page/offset.** The contract keeps `cursor`/`nextCursor`
+  (`afterId`-based). The outbox and attempt archive are written continuously by the client
+  and the relay while an operator pages through them; `OFFSET N` both degrades linearly with
+  `N` on a large table and can skip or duplicate rows as the underlying set shifts between
+  page fetches. `WHERE id > :cursor ORDER BY id LIMIT :n` stays O(1) per page regardless of
+  depth and is stable under concurrent writes. The tradeoff accepted: no jump-to-arbitrary-page
+  and no free "page X of Y" — acceptable, since operators page forward through time/status/
+  aggregate, not to a specific page number.
+- **Discard semantics — hard skip only, no tombstone.** `POST
+  /outbox/messages/{id}/discard` marks the row `DISCARDED` and publishes nothing in its
+  place; it does not emit a compensating/tombstone event. A tombstone would need a new
+  public, permanently-versioned event type/schema (a new contract surface under the
+  additive-compatibility rules, §1) purely to serve an already-rare operator action, and
+  every consumer would still need to tolerate it as an unknown type if unhandled — a
+  minority-case cost against the common path (Pareto, §1.1). If real operational need for a
+  compensating signal emerges later, add it as an explicit opt-in (e.g. an `emitTombstone`
+  flag on `DiscardRequest`) rather than changing the default behaviour.
+- **Relay pause scope — whole relay and per-bucket, both in scope.** The contract already
+  allows both via the optional `bucket` field on `BucketSelector`. Pause is applied through
+  `tandem_relay_control` and read once per poll cycle, so its effect lags by at most one
+  cycle — an acceptable, documented latency for an admin action, not a hard requirement to
+  take effect mid-cycle. During a bucket pause the owning worker **keeps renewing its lease**
+  and simply skips dispatching sends for that bucket; pause is orthogonal to release (the
+  existing zombie-recovery endpoint), so a paused bucket is never involuntarily reassigned.
+  This closes a real observability gap found in review: `BucketStatus` had no way to
+  distinguish "paused on purpose" from "genuinely stalled," so a deliberately-paused bucket's
+  growing `pendingCount`/`lagAgeSeconds` would look identical to a real problem on
+  `GET /relay/buckets`. Fixed by adding `paused: boolean` to `BucketStatus` (see the updated
+  contract).
+- **Spec ↔ code binding — hand-write and validate in CI, no codegen.** Server-stub
+  generation from the OpenAPI document is rejected in favour of hand-written controllers/DTOs
+  verified by the two tools already committed to in §5 (swagger-request-validator +
+  Specmatic), which catch spec drift at test time regardless of how the implementation was
+  authored. Generated code would fight this project's specific conventions — the javadoc
+  rules (AGENTS.md), the ban on inline comments, and especially the logging rule that every
+  `toString()` reachable from a log statement (`OutboxMessage`, `AttemptRecord`, …) must never
+  print `payload`/`headers` values, each backed by a dedicated unit test. Getting a generator
+  to honour that would need custom templates that become their own artifact to maintain, for a
+  problem (drift) the CI conformance gate already solves. No other Tandem module uses codegen;
+  hand-writing keeps `tandem-admin` consistent with the rest of the codebase.

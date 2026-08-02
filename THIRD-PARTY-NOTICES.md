@@ -24,6 +24,7 @@ driver among them — do reach whoever declares it, and are listed below.
 | `tandem-spring-producer` | none beyond `tandem-jdbc` — **Spring and Jackson are `compileOnly`**, so the application's own versions are used and none is dragged in |
 | `tandem-spring-relay` | none beyond `tandem-jdbc` and `tandem-kafka` — Spring is `compileOnly`, as above. `tandem-micrometer` (below) is also `compileOnly` here, so it adds nothing to this module's own footprint |
 | `tandem-micrometer` | `micrometer-core` |
+| `tandem-admin` | none beyond `tandem-jdbc` — Spring and Jackson are `compileOnly`, as above |
 | `tandem-test`  | `testcontainers-postgresql`, `testcontainers-kafka`, `kafka-clients`, and the `postgresql` JDBC driver (runtime). Meant for a consumer's **test** scope, but its POM declares them at compile/runtime scope, so they are redistributed like any other dependency. Testcontainers itself brings a substantial transitive tree (docker-java, Jackson, commons-compress, …) not enumerated here |
 | `tandem-bom`   | none — a POM with no code, publishing only version constraints |
 

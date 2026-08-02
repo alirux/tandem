@@ -1,0 +1,16 @@
+{
+  "properties": [
+    {
+      "name": "tandem.admin.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether this application exposes the Admin API. Off by default — the API is an attack surface (an operator mutates delivery state through it) and is not exposed unless explicitly enabled. Gates the whole autoconfiguration, so it binds to no configuration-properties type and the annotation processor cannot see it."
+    },
+    {
+      "name": "tandem.admin.base-path",
+      "type": "java.lang.String",
+      "defaultValue": "/tandem/admin",
+      "description": "Base path the Admin API is served under, before the fixed /v1 contract-version segment (effective default: /tandem/admin/v1). Bound directly into the controller's @RequestMapping via a property placeholder rather than a configuration-properties type, so the processor cannot see it either."
+    }
+  ]
+}

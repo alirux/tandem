@@ -4,8 +4,12 @@ import com.codingful.tandem.core.BucketHash;
 import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
+import com.codingful.tandem.core.OutboxRowDetail;
+import com.codingful.tandem.core.OutboxRowView;
+import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
+import com.codingful.tandem.core.port.OutboxQuery;
 import com.codingful.tandem.core.port.OutboxRepository;
 import com.codingful.tandem.core.port.OutboxStore;
 import java.time.Clock;
@@ -13,7 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,8 +39,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code maxAttempts}, and {@code content-type} is folded into {@code headers} at insert.
  *
  * <p>The {@link Clock} is injectable so backoff/lease/retention are deterministic.
+ *
+ * <p>Also implements {@link OutboxQuery} — the Admin API's read side — projecting its rows onto the
+ * read model ({@link OutboxRowView}/{@link OutboxRowDetail}), never the write/relay model, matching
+ * {@code JdbcOutboxQuery}'s semantics (HLD-admin-api §4).
  */
-public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
+public final class InMemoryOutbox implements OutboxRepository, OutboxStore, OutboxQuery {
 
     /** Default virtual-bucket count — matches the baseline {@code B = 256} (schema). */
     public static final int DEFAULT_BUCKET_COUNT = 256;
@@ -405,12 +413,81 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore {
         }
     }
 
-    /** Count of rows per status — convenience for assertions. */
+    // --- OutboxQuery (Admin API read side) ---
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Also usable directly as a test assertion convenience.
+     */
+    @Override
     public Map<OutboxStatus, Long> statusCounts() {
-        Map<OutboxStatus, Long> counts = new TreeMap<>(Comparator.comparingInt(OutboxStatus::code));
+        Map<OutboxStatus, Long> counts = new EnumMap<>(OutboxStatus.class);
+        for (OutboxStatus status : OutboxStatus.values()) {
+            counts.put(status, 0L);
+        }
         for (OutboxRecord r : all()) {
             counts.merge(r.status(), 1L, Long::sum);
         }
         return counts;
+    }
+
+    @Override
+    public List<OutboxRowView> search(OutboxSearchCriteria criteria) {
+        Objects.requireNonNull(criteria, "criteria");
+        synchronized (lock) {
+            List<OutboxRowView> out = new ArrayList<>();
+            for (Entry entry : rows.values()) {   // ascending id order (TreeMap)
+                OutboxRecord r = entry.record;
+                if (out.size() >= criteria.limit()) {
+                    break;
+                }
+                if (!matches(r, criteria)) {
+                    continue;
+                }
+                out.add(toRowView(r));
+            }
+            return out;
+        }
+    }
+
+    @Override
+    public Optional<OutboxRowDetail> findById(long id) {
+        synchronized (lock) {
+            Entry e = rows.get(id);
+            return e == null ? Optional.empty() : Optional.of(toRowDetail(e.record));
+        }
+    }
+
+    private static boolean matches(OutboxRecord r, OutboxSearchCriteria criteria) {
+        if (criteria.afterId() != null && r.id() <= criteria.afterId()) {
+            return false;
+        }
+        if (criteria.status() != null && r.status() != criteria.status()) {
+            return false;
+        }
+        if (criteria.aggregateId() != null && !r.aggregateId().equals(criteria.aggregateId())) {
+            return false;
+        }
+        if (criteria.aggregateType() != null && !r.aggregateType().equals(criteria.aggregateType())) {
+            return false;
+        }
+        if (criteria.type() != null && !criteria.type().equals(r.type())) {
+            return false;
+        }
+        if (criteria.createdFrom() != null && r.createdAt().isBefore(criteria.createdFrom())) {
+            return false;
+        }
+        return criteria.createdTo() == null || !r.createdAt().isAfter(criteria.createdTo());
+    }
+
+    private static OutboxRowView toRowView(OutboxRecord r) {
+        return new OutboxRowView(
+                r.id(), r.aggregateId(), r.aggregateType(), r.type(), r.seq(), r.status(), r.attempts(),
+                r.lastError(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt());
+    }
+
+    private static OutboxRowDetail toRowDetail(OutboxRecord r) {
+        return new OutboxRowDetail(toRowView(r), r.payload(), r.headers());
     }
 }
