@@ -60,6 +60,10 @@ public record OutboxRowDetail(OutboxRowView view, byte[] payload, Map<String, St
         return view.lastError();
     }
 
+    public String discardReason() {
+        return view.discardReason();
+    }
+
     public Instant nextAttemptAt() {
         return view.nextAttemptAt();
     }

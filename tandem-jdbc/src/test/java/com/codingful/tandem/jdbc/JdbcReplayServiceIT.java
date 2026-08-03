@@ -64,6 +64,19 @@ class JdbcReplayServiceIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_a_status_selector_with_no_replayable_status_WHEN_replayed_THEN_nothing_matches() {
+        insert("order-1", 1);
+        setStatus(1, OutboxStatus.FAILED, 3);
+
+        // PENDING is not a replayable status - intersecting it with {DONE, FAILED} leaves nothing eligible.
+        ReplayResult result = replay.replay(new ReplayCriteria(null, null, null, null, Set.of(OutboxStatus.PENDING), false));
+
+        assertThat(result.matched()).isZero();
+        assertThat(result.replayed()).isZero();
+        assertThat(statusOf(1)).isEqualTo(OutboxStatus.FAILED.code());   // unchanged
+    }
+
+    @Test
     void GIVEN_a_status_selector_WHEN_replaying_by_type_THEN_only_rows_in_that_status_reset() {
         insert("order-1", 1);   // id 1 → DONE (should stay)
         insert("order-2", 1);   // id 2 → FAILED (should reset)

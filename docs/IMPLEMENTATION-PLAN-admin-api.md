@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Status:** Active
 **Scope:** the Admin API module, shipped in slices. **Slice 1 (reads) is done — see §6.
-Slice 2 (replay/discard) is next.**
+Slice 2 (replay/discard) is done — see §8/§9.**
 **Contract:** [admin-api.openapi.yaml](admin-api.openapi.yaml) — frozen and reviewed (API-first).
 **Design:** [HLD-admin-api.md](HLD-admin-api.md).
 
@@ -55,8 +55,8 @@ shrinks as slices land. An unimplemented operation that is *not* on that list fa
 
 | Slice | Content | State |
 |---|---|---|
-| **1** | **Reads** — `getOutboxSummary`, `searchOutboxMessages`, `getOutboxMessage`. No state change; the safe first cut that answers "what is stuck and why". | **Active** |
-| 2 | **Replay + discard** — `replayMessage`, `replayBulk`, `discardMessage`. The transition that unblocks an aggregate; closes the product's biggest hole. Fold in `JdbcReplayService`'s 4 uncovered `ReplayCriteria` branches. | Next |
+| **1** | **Reads** — `getOutboxSummary`, `searchOutboxMessages`, `getOutboxMessage`. No state change; the safe first cut that answers "what is stuck and why". | **Done** |
+| 2 | **Replay + discard** — `replayMessage`, `replayBulk`, `discardMessage`. The transition that unblocks an aggregate; closes the product's biggest hole. Fold in `JdbcReplayService`'s 4 uncovered `ReplayCriteria` branches. | **Done** |
 | 3 | **Relay control + observability** — `getRelayStatus`, `pauseRelay`, `resumeRelay`, `getRelayBuckets`, `releaseBucket`, `getRelayWorkers`. Needs the `tandem_relay_control` DDL (additive) and the relay honouring it once per poll cycle, plus the `paused` flag on `BucketStatus`. | Later |
 | 4 | Runtime metrics knobs (Q30): change `metricsInterval` during an incident; on-demand lag reading. | Later |
 | — | Attempt endpoints | **Deferred (§1.1)** |
@@ -309,9 +309,13 @@ and REST layer, and every one of those HTTP tests validated against the committe
 **Contract-validation tooling ended up different from the plan, for reasons worth recording:**
 
 - **Specmatic was not wired.** Given the scope already delivered (real request/response conformance
-  on every test), it is deferred rather than attempted under time pressure — a candidate for a
-  focused follow-up when generative conformance and the spec backward-compatibility gate are
-  actually needed (e.g. before a `/v2`).
+  on every test), it is separate scope from this slice, not a rejection — tracked as a backlog item
+  (item 1.5) rather than "deferred under time pressure" as an earlier draft of this note put it:
+  there was never an actual deadline, just an already-long session that had delivered enough for one
+  sitting. **Evaluate both Specmatic (JVM-native, fits the Java/CI stack without a Python toolchain)
+  and Schemathesis (Python, property-based) before committing to either** — a focused follow-up for
+  when generative conformance and the spec backward-compatibility gate are actually needed (e.g.
+  before a `/v2`, or once slice 3 adds more surface).
 - **swagger-request-validator's `-mockmvc` module cannot be used at all on this project's Spring
   generation.** Verified against its published POM: even its latest release line targets
   `javax.servlet` and Spring Framework 5.3 — it has never been ported to Jakarta/Spring 6. Using it
@@ -463,3 +467,179 @@ dispatch *across* advice beans should prefer a real `@SpringBootTest` +
 `@AutoConfigureMockMvc` context over `MockMvcBuilders.standaloneSetup(...)` — the latter's
 exception-resolution behavior provably diverges from production the moment more than one advice
 bean is involved.
+
+---
+
+## 8. Slice 2 — replay + discard
+
+### 8.1 In scope
+
+Three `operationId`s, exactly as the contract specifies them:
+
+- **`replayMessage`** — `POST /outbox/messages/{id}/replay`: resets one `DONE`/`FAILED` row to
+  `PENDING`. `404` if absent, `409 message-not-replayable` if present but neither `DONE` nor
+  `FAILED`.
+- **`discardMessage`** — `POST /outbox/messages/{id}/discard`: marks one `FAILED` row
+  `DISCARDED`, recording the operator's reason. Requires `acknowledgeOrderingBreak: true`
+  (`400 ordering-break-not-acknowledged` otherwise). `404` if absent, `409
+  message-not-discardable` if present but not `FAILED`.
+- **`replayBulk`** — `POST /outbox/replay`: replays every `DONE`/`FAILED` row matching a
+  criteria (aggregate/id-range/status), with `dryRun` to preview the count. `400
+  replay-no-selector` if no selector is given.
+
+### 8.2 Out of scope — stop and flag if a task seems to need it
+
+Same boundary as slice 1: any `/relay/*` endpoint, `tandem_relay_control`, the attempt archive
+(§1.1), MySQL, and the CLI. **Bulk discard is also out of scope** — the contract has no
+`discardBulk` operation, only `discardMessage` (single id); do not invent one.
+
+### 8.3 Decided today (2026-08-02) — see HLD-admin-api §6.1 for the full rationale
+
+- **`409 message-not-discardable`** for `discardMessage` on a non-`FAILED` row — additive
+  response, same pattern as `replayMessage`'s existing `409 message-not-replayable`.
+- **New, additive `discard_reason` column** on `tandem_outbox` — keeps `DiscardRequest.reason`
+  actually persisted ("recorded for audit") without overwriting `last_error`, which stays the
+  original delivery-failure text.
+- **`DiscardService` — a new core port, not a method on `OutboxStore`.** Same reasoning §3.3
+  already used to keep `OutboxQuery` off `OutboxStore`: discard is admin-only, never called by
+  the relay, so it does not belong in the relay's claim/mark/cleanup contract every `OutboxStore`
+  adapter must implement. It follows `ReplayService`'s existing shape instead — a small,
+  dedicated port with a `tandem-jdbc` adapter and an `InMemoryOutbox` implementation for
+  no-mocks unit tests.
+
+### 8.4 New in `tandem-core`
+
+- **`DiscardService`** (port) — `boolean discard(long id, String reason)`. Returns `false` when
+  no row exists with that id **or** the row exists but is not `FAILED`; the caller (the admin
+  service) disambiguates the two via `OutboxQuery.findById` only on the failure path, so the
+  success path stays a single statement, same division of responsibility slice 1 established
+  between the read port and the mutating one.
+- **`OutboxRecord`** gains a nullable `discardReason` field (+ builder method) — mirrors how
+  `lastError` already lives there even though only the relay's `markFailed`/`markForRetry` set
+  it; `discardReason` is set only by `DiscardService`, never by the relay.
+- **`OutboxRowView`** gains `discardReason` (after `lastError`) — read side mirrors the new
+  column, same as every other `tandem_outbox` field it already projects.
+- **`OutboxRowDetail`** gains the matching delegate accessor. Not sensitive (an operator-entered
+  admin reason, not payload/header data), so no redaction needed in its existing `toString()`.
+- **`ReplayService`/`ReplayCriteria`/`ReplayResult` are reused as-is — no core changes.**
+  `replayMessage` is `ReplayService.replay(criteria)` with `fromId = toId = id` (no status
+  filter needed: `JdbcReplayService` already restricts to `{DONE, FAILED}`), which also
+  satisfies `ReplayCriteria`'s "at least one selector" invariant for free. `replayBulk` maps its
+  request fields onto `ReplayCriteria` directly.
+
+### 8.5 New in `tandem-jdbc`
+
+- **`JdbcDiscardService implements DiscardService`** — same package as `JdbcReplayService`:
+  `UPDATE tandem_outbox SET status = 4, discard_reason = ? WHERE id = ? AND status = 3`,
+  returning whether a row was actually updated. A single conditional `UPDATE` avoids a
+  read-then-write race between checking the precondition and applying it.
+- **`JdbcOutboxQuery`** — add `discard_reason` to `VIEW_COLUMNS` and `mapView`.
+
+### 8.6 New in `tandem-test`
+
+- **`InMemoryOutbox` also implements `ReplayService` and `DiscardService`** — required for the
+  admin use cases to stay unit-testable without a database (AGENTS: no mocks). `replay` mirrors
+  `JdbcReplayService`'s filter/status logic against the in-memory rows; `discard` mirrors
+  `JdbcDiscardService`'s conditional transition. `toRowView`/`toRowDetail` map the new
+  `discardReason` field through.
+
+### 8.7 New/changed in `tandem-admin.outbox`
+
+- **`OutboxAdminConfiguration`** — two new `@Bean`s, `JdbcReplayService`/`JdbcDiscardService`,
+  DataSource-derived like the existing `OutboxQuery`/`OutboxStore` beans (feature-local, not
+  root, since no other feature package needs them — same placement rule as §3.6/§7).
+- **`OutboxAdminService`** — `replayMessage(id)`, `discardMessage(id, request)`,
+  `replayBulk(request)`, alongside the existing read methods.
+- **New exceptions**, each mapped in `OutboxExceptionHandler` (which needs the same `@Order(0)`
+  every feature-specific advice requires, §7): `MessageNotReplayableException` (409),
+  `MessageNotDiscardableException` (409), `OrderingBreakNotAcknowledgedException` (400),
+  `ReplayNoSelectorException` (400, thrown by the service before constructing `ReplayCriteria`
+  when the request carries no selector at all — kept distinct from the generic
+  `invalid-parameter` 400 so the slug matches the contract).
+- **New DTOs**, wire-owned per §3.6/§3.9 (never the core `ReplayCriteria`/`ReplayResult` on the
+  wire): a replay-bulk request record, a `ReplayResultResponse` (matched/replayed/dryRun), and a
+  discard-request record (acknowledgeOrderingBreak/reason). `OutboxEntryResponse` gains
+  `discardReason`.
+- **`OutboxAdminController`** — three new `@PostMapping` endpoints for the three operations.
+
+### 8.8 Tests
+
+Same shape as slice 1 (§3.8): unit tests for the service against `InMemoryOutbox` (both
+success and every error branch — not-found, wrong-state, missing-ack, no-selector, dry-run
+matched-but-not-replayed), MockMvc controller tests double as conformance tests via
+`OpenApiConformance`, and a `TandemTestContainer` IT exercising replay/discard against real
+PostgreSQL end to end (write → fail → discard → verify `discard_reason` persisted and
+`last_error` untouched; write → fail → replay → verify reset to `PENDING`).
+
+### 8.9 Definition of done — slice 2
+
+Same bar as §5, plus: `discard_reason` never overwrites `last_error`; a discard/replay attempt
+on a non-existent id is `404`, never `409`; bulk discard is not implemented (§8.2); every new
+exception's problem `type` slug matches the contract exactly.
+
+---
+
+## 9. Landed — slice 2 (2026-08-02)
+
+All three operations implemented and verified against the same layered test strategy as slice 1:
+unit tests against `InMemoryOutbox` (including its new `ReplayService`/`DiscardService`
+implementations), MockMvc tests over real Spring MVC dispatch, a `TandemTestContainer` IT writing
+through the real repository and acting through the real `JdbcReplayService`/`JdbcDiscardService`,
+and every HTTP test validated against the committed OpenAPI. `./gradlew check` is green
+project-wide, including `:tandem-admin:bootFourTest`.
+
+**Two contract decisions resolved before implementation (HLD-admin-api §6.1 has the full
+rationale):**
+
+- **`409 message-not-discardable`** added to `discardMessage` — the contract had no response at
+  all for discarding a non-`FAILED` row, even though `DISCARDED` is documented (LLD-core §1.2) as
+  reachable only from `FAILED`. Additive, mirrors `message-not-replayable`.
+- **New, additive `discard_reason` column** on `tandem_outbox` — keeps `DiscardRequest.reason`
+  actually persisted without overwriting `last_error`.
+
+**Architecture decision, following the precedent slice 1 already set:** `DiscardService` is a new
+core port (`tandem-core`) with a `JdbcDiscardService` adapter (`tandem-jdbc`) and an
+`InMemoryOutbox` implementation — not a method on `OutboxStore` — for the same reason `OutboxQuery`
+was kept off `OutboxStore` in slice 1: admin-only operations don't belong in the relay's
+claim/mark/cleanup contract every `OutboxStore` adapter must implement. `ReplayService` needed no
+core changes at all — `replayMessage` reuses it as-is with `fromId = toId = id`, and `replayBulk`
+maps its request fields onto `ReplayCriteria` directly, exactly as planned in §8.4.
+
+**A significant, previously-undocumented Boot 4/Spring 7 `MockMvc` incompatibility, found while
+writing the discard/bulk-replay tests — bigger in scope than the `.param()` removal slice 1
+found:** `MockHttpServletRequestBuilder`'s fluent setters (`content`, `contentType`, `header`, …)
+moved from being declared directly on that class to a new generic supertype,
+`AbstractMockHttpServletRequestBuilder<B>`, in Spring Framework 7. A test class compiled once
+against the Boot 3.x baseline (this module's dual-generation gate, LLD-spring-config §1.2) invokes
+these via `invokevirtual` against the Boot-3-shaped class; re-running that same compiled bytecode
+against the Boot 4.x/Spring 7 classpath throws `NoSuchMethodError` at the *first* chained builder
+call after the bare static factory (`post(uri)`), regardless of which method — verified by trying
+three different methods (`contentType`, `header`) and getting the identical failure shape each
+time, and by confirming every already-passing test (slice 1 and slice 2's body-less requests)
+never chains anything beyond the factory call itself. Fixed the same way as the `.param()` case:
+the six new tests that POST a JSON body are tagged `boot3-only` and excluded from `bootFourTest`,
+documented in `OutboxAdminControllerTest`'s class javadoc. **Takeaway for slice 3:** any MockMvc
+test needs a request body or additional headers is `boot3-only` by construction under this
+compile-once/run-twice test architecture — only bare `get(uri)`/`post(uri)` calls and
+`MockMvcResultMatchers`-side assertions (a different, unaffected class hierarchy) are safe to run
+on both generations.
+
+**Coverage review closed every genuine gap the aggregated report surfaced:**
+- `OutboxAdminService.replayBulk`'s "at least one selector" `||` chain had three operands
+  (`fromId`, `toId`, `statuses`) whose *own* true-branch was never the deciding factor, because an
+  earlier operand being true always short-circuited past them in every existing test. Closed with
+  dedicated id-range-only, `toId`-only, and statuses-only selector tests — the last one also pins
+  the earlier design decision that a non-empty `statuses` alone is a valid selector, independent of
+  aggregate/id-range.
+- `InMemoryOutbox.matchesReplay`'s three exclusion branches (aggregate-id mismatch,
+  aggregate-type mismatch, below-`fromId`) were only ever exercised via the *fallthrough* accept
+  path, never as the deciding `false`. Closed with one two-aggregate test per filter.
+- `JdbcReplayService`'s "no replayable status requested" early return (matched=0 when the
+  selector's statuses don't intersect `{DONE, FAILED}`) — pre-existing, uncovered code that slice 2
+  makes genuinely reachable for the first time (an operator can send `"statuses": ["PENDING"]` to
+  `POST /outbox/replay`). Closed via `JdbcReplayServiceIT`, which also brings `ReplayCriteria` to
+  full branch coverage — the "4 uncovered `ReplayCriteria` branches" this plan flagged as a slice-2
+  goal (§2) are closed as a side effect.
+- **Accepted, unchanged from slice 1's precedent:** every `catch (SQLException e)` (now including
+  `JdbcDiscardService`'s), and `OutboxRowDetail.equals()`'s remaining combinatorial branch —
+  neither touched by slice 2's changes.

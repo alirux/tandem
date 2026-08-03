@@ -241,6 +241,16 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Message is not in a discardable state (must be FAILED)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: https://tandem.codingful.com/problems/message-not-discardable
+                title: Message is not in a discardable state
+                status: 409
 
   /outbox/replay:
     post:
@@ -638,6 +648,10 @@ components:
         lastError:
           type: string
           nullable: true
+        discardReason:
+          type: string
+          nullable: true
+          description: Operator-supplied reason recorded when this message was discarded (DISCARDED only)
         nextAttemptAt:
           type: string
           format: date-time
@@ -799,7 +813,10 @@ components:
 
     ReplayRequest:
       type: object
-      description: At least one of aggregateId / aggregateType / id range must be present.
+      description: >
+        At least one of aggregateId / aggregateType / id range / statuses must be present - a
+        selector-less request would replay the entire outbox and is rejected (400
+        replay-no-selector).
       properties:
         aggregateId:
           type: string
@@ -813,9 +830,10 @@ components:
           format: int64
         statuses:
           type: array
-          description: Which statuses are eligible for replay (only DONE/FAILED are valid)
-          default:
-            - FAILED
+          description: >
+            Which statuses are eligible for replay (only DONE/FAILED are valid). When omitted
+            alongside another selector, both DONE and FAILED rows matching that selector are
+            replayed.
           items:
             $ref: '#/components/schemas/OutboxStatus'
         dryRun:

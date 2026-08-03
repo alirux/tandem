@@ -8,10 +8,14 @@ import com.codingful.tandem.core.OutboxRowDetail;
 import com.codingful.tandem.core.OutboxRowView;
 import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
+import com.codingful.tandem.core.ReplayCriteria;
+import com.codingful.tandem.core.ReplayResult;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
+import com.codingful.tandem.core.port.DiscardService;
 import com.codingful.tandem.core.port.OutboxQuery;
 import com.codingful.tandem.core.port.OutboxRepository;
 import com.codingful.tandem.core.port.OutboxStore;
+import com.codingful.tandem.core.port.ReplayService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,9 +47,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>Also implements {@link OutboxQuery} — the Admin API's read side — projecting its rows onto the
  * read model ({@link OutboxRowView}/{@link OutboxRowDetail}), never the write/relay model, matching
- * {@code JdbcOutboxQuery}'s semantics (HLD-admin-api §4).
+ * {@code JdbcOutboxQuery}'s semantics (HLD-admin-api §4). And {@link ReplayService}/
+ * {@link DiscardService} — the Admin API's mutating actions (slice 2) — mirroring
+ * {@code JdbcReplayService}'s/{@code JdbcDiscardService}'s reset/transition semantics exactly, so the
+ * admin use cases stay unit-testable without a database.
  */
-public final class InMemoryOutbox implements OutboxRepository, OutboxStore, OutboxQuery {
+public final class InMemoryOutbox implements OutboxRepository, OutboxStore, OutboxQuery, ReplayService, DiscardService {
+
+    /** Replayable statuses — mirrors {@code JdbcReplayService}'s own restriction. */
+    private static final Set<OutboxStatus> REPLAYABLE = Set.of(OutboxStatus.DONE, OutboxStatus.FAILED);
 
     /** Default virtual-bucket count — matches the baseline {@code B = 256} (schema). */
     public static final int DEFAULT_BUCKET_COUNT = 256;
@@ -484,10 +495,86 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
     private static OutboxRowView toRowView(OutboxRecord r) {
         return new OutboxRowView(
                 r.id(), r.aggregateId(), r.aggregateType(), r.type(), r.seq(), r.status(), r.attempts(),
-                r.lastError(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt());
+                r.lastError(), r.discardReason(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt());
     }
 
     private static OutboxRowDetail toRowDetail(OutboxRecord r) {
         return new OutboxRowDetail(toRowView(r), r.payload(), r.headers());
+    }
+
+    // --- ReplayService (Admin API, slice 2) ---
+
+    @Override
+    public ReplayResult replay(ReplayCriteria criteria) {
+        Objects.requireNonNull(criteria, "criteria");
+        Set<OutboxStatus> statuses = effectiveReplayStatuses(criteria);
+        if (statuses.isEmpty()) {
+            return new ReplayResult(0, 0, criteria.dryRun());
+        }
+        synchronized (lock) {
+            List<Entry> matched = new ArrayList<>();
+            for (Entry entry : rows.values()) {
+                if (matchesReplay(entry.record, criteria, statuses)) {
+                    matched.add(entry);
+                }
+            }
+            if (criteria.dryRun()) {
+                return new ReplayResult(matched.size(), 0, true);
+            }
+            for (Entry entry : matched) {
+                entry.record = entry.record.toBuilder()
+                        .status(OutboxStatus.PENDING)
+                        .attempts(0)
+                        .lastError(null)
+                        .nextAttemptAt(null)
+                        .lockedBy(null)
+                        .lockedUntil(null)
+                        .build();
+            }
+            return new ReplayResult(matched.size(), matched.size(), false);
+        }
+    }
+
+    /** Requested statuses intersected with the replayable set; defaults to all replayable when unset. */
+    private static Set<OutboxStatus> effectiveReplayStatuses(ReplayCriteria criteria) {
+        if (criteria.statuses().isEmpty()) {
+            return REPLAYABLE;
+        }
+        Set<OutboxStatus> effective = new LinkedHashSet<>(criteria.statuses());
+        effective.retainAll(REPLAYABLE);
+        return effective;
+    }
+
+    private static boolean matchesReplay(OutboxRecord r, ReplayCriteria criteria, Set<OutboxStatus> statuses) {
+        if (!statuses.contains(r.status())) {
+            return false;
+        }
+        if (criteria.aggregateId() != null && !r.aggregateId().equals(criteria.aggregateId())) {
+            return false;
+        }
+        if (criteria.aggregateType() != null && !r.aggregateType().equals(criteria.aggregateType())) {
+            return false;
+        }
+        if (criteria.fromId() != null && r.id() < criteria.fromId()) {
+            return false;
+        }
+        return criteria.toId() == null || r.id() <= criteria.toId();
+    }
+
+    // --- DiscardService (Admin API, slice 2) ---
+
+    @Override
+    public boolean discard(long id, String reason) {
+        synchronized (lock) {
+            Entry entry = rows.get(id);
+            if (entry == null || entry.record.status() != OutboxStatus.FAILED) {
+                return false;
+            }
+            entry.record = entry.record.toBuilder()
+                    .status(OutboxStatus.DISCARDED)
+                    .discardReason(reason)
+                    .build();
+            return true;
+        }
     }
 }

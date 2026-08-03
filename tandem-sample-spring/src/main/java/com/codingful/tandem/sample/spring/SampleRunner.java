@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
 @Profile("!test")   // the smoke test drives the tiers itself; the demo narration would be an uncontrolled precondition
 class SampleRunner implements CommandLineRunner {
 
-    private static final int EXPECTED_EVENTS = 7;
+    private static final int EXPECTED_EVENTS = 8;
 
     private final OrderService orders;
     private final TransactionalOutboxTemplate outboxTemplate;
@@ -49,7 +49,9 @@ class SampleRunner implements CommandLineRunner {
         writeThroughTheTiers();   // [CALLER] the orders.* / template calls are real app code
         printOutboxRows();        // [DEMO-ONLY] direct SQL introspection of tandem_outbox
         consumeAndVerify();       // [DEMO-ONLY] read back what the autoconfigured relay published
+        long failedId = manufactureAFailedRow();   // [DEMO-ONLY] gives the Admin API demo below something to act on
         System.out.println("\nDone.");
+        printAdminApiHints(failedId);   // [DEMO-ONLY] the app keeps running as a web server after this
     }
 
     /** Step 1 [CALLER] — write events through three tiers. This is the developer experience on show. */
@@ -76,6 +78,9 @@ class SampleRunner implements CommandLineRunner {
         System.out.println("  Spring application events — order-E:");
         orders.noteViaEvent("order-E", 1L);
         System.out.println("    order-E: noted via a published event\n");
+
+        // order-F exists purely so Step 5 below has a row to manufacture a FAILED status on.
+        orders.place("order-F");
     }
 
     /** Step 2 — prove the rows landed atomically in tandem_outbox. */
@@ -131,6 +136,49 @@ class SampleRunner implements CommandLineRunner {
             }
         }
         return seqsByAggregate;
+    }
+
+    /**
+     * Step 4 [DEMO-ONLY] — order-F was already delivered successfully like every other row above; this
+     * flips it back to {@code FAILED} purely so the Admin API's replay/discard demo (below) has a row
+     * to act on. Not a real delivery failure — there is no easy way to induce one from this sample
+     * without complicating the write side, and the Admin API's slice-2 endpoints don't care how a row
+     * became {@code FAILED}.
+     */
+    private long manufactureAFailedRow() throws Exception {
+        long id = idOf("order-F");
+        try (Connection connection = infrastructure.dataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE tandem_outbox SET status = 3, last_error = 'simulated for this demo' WHERE id = ?")) {
+            statement.setLong(1, id);
+            statement.executeUpdate();
+        }
+        return id;
+    }
+
+    private long idOf(String aggregateId) throws Exception {
+        try (Connection connection = infrastructure.dataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT id FROM tandem_outbox WHERE aggregate_id = ?")) {
+            statement.setString(1, aggregateId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                resultSet.next();
+                return resultSet.getLong(1);
+            }
+        }
+    }
+
+    /** [DEMO-ONLY] Printed once the app settles into serving HTTP (README's "keeps running" section). */
+    private static void printAdminApiHints(long failedId) {
+        System.out.println("\n► Admin API — try it yourself (the app keeps running as a web server):\n");
+        System.out.println("  curl http://localhost:8080/tandem/admin/v1/outbox/summary");
+        System.out.println("  curl http://localhost:8080/tandem/admin/v1/outbox/messages");
+        System.out.printf("  curl http://localhost:8080/tandem/admin/v1/outbox/messages/%d%n", failedId);
+        System.out.printf("%n  order-F (id=%d) was manufactured FAILED above — replay or discard it:%n", failedId);
+        System.out.printf("  curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/%d/replay%n", failedId);
+        System.out.printf("  curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/%d/discard \\%n", failedId);
+        System.out.println("       -H 'Content-Type: application/json' \\");
+        System.out.println("       -d '{\"acknowledgeOrderingBreak\": true, \"reason\": \"demo\"}'");
     }
 
     /** [DEMO-ONLY] The object payload for the template tier; Jackson serializes it to JSON. */

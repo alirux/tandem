@@ -25,6 +25,7 @@ public final class OutboxRecord {
     private final Instant nextAttemptAt;  // nullable
     private final Instant createdAt;
     private final Long lamport;           // nullable; only when causal ordering enabled (§9)
+    private final String discardReason;   // nullable; set only by the Admin API's DiscardService, never the relay
 
     private OutboxRecord(Builder b) {
         this.id = b.id;
@@ -37,6 +38,7 @@ public final class OutboxRecord {
         this.nextAttemptAt = b.nextAttemptAt;
         this.createdAt = Objects.requireNonNull(b.createdAt, "createdAt");
         this.lamport = b.lamport;
+        this.discardReason = b.discardReason;
     }
 
     public long id() {
@@ -78,6 +80,11 @@ public final class OutboxRecord {
     /** Lamport timestamp; {@code null} unless causal ordering is enabled (§9). */
     public Long lamport() {
         return lamport;
+    }
+
+    /** Operator-supplied reason recorded when this row was discarded; {@code null} otherwise (HLD-admin-api §4). */
+    public String discardReason() {
+        return discardReason;
     }
 
     // --- convenience delegates to the wrapped message ---
@@ -136,7 +143,8 @@ public final class OutboxRecord {
                 .lastError(lastError)
                 .nextAttemptAt(nextAttemptAt)
                 .createdAt(createdAt)
-                .lamport(lamport);
+                .lamport(lamport)
+                .discardReason(discardReason);
     }
 
     public static final class Builder {
@@ -150,6 +158,7 @@ public final class OutboxRecord {
         private Instant nextAttemptAt;
         private Instant createdAt;
         private Long lamport;
+        private String discardReason;
 
         private Builder() {
         }
@@ -201,6 +210,11 @@ public final class OutboxRecord {
 
         public Builder lamport(Long lamport) {
             this.lamport = lamport;
+            return this;
+        }
+
+        public Builder discardReason(String discardReason) {
+            this.discardReason = discardReason;
             return this;
         }
 

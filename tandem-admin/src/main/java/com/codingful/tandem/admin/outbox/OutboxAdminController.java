@@ -7,15 +7,18 @@ import java.time.Instant;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST driving adapter for the outbox read endpoints (slice 1, HLD-admin-api §2/§4), realising
- * {@code admin-api.openapi.yaml}'s {@code Outbox} tag reads. Delegates every use case to
- * {@link OutboxAdminService}; this class only binds HTTP onto it. The base path is configurable
- * (default {@code /tandem/admin}, HLD §3) with the fixed {@code /v1} contract version.
+ * REST driving adapter for the outbox endpoints (slice 1 reads + slice 2 replay/discard,
+ * HLD-admin-api §2/§4), realising {@code admin-api.openapi.yaml}'s {@code Outbox} tag. Delegates
+ * every use case to {@link OutboxAdminService}; this class only binds HTTP onto it. The base path
+ * is configurable (default {@code /tandem/admin}, HLD §3) with the fixed {@code /v1} contract
+ * version.
  */
 @RestController
 @RequestMapping("${tandem.admin.base-path:/tandem/admin}/v1/outbox")
@@ -61,6 +64,21 @@ class OutboxAdminController {
     @GetMapping("/messages/{id}")
     OutboxEntryResponse getById(@PathVariable("id") long id) {
         return service.findById(id).orElseThrow(() -> new OutboxMessageNotFoundException(id));
+    }
+
+    @PostMapping("/messages/{id}/replay")
+    OutboxEntryResponse replay(@PathVariable("id") long id) {
+        return service.replayMessage(id);
+    }
+
+    @PostMapping("/messages/{id}/discard")
+    OutboxEntryResponse discard(@PathVariable("id") long id, @RequestBody DiscardRequest request) {
+        return service.discardMessage(id, request);
+    }
+
+    @PostMapping("/replay")
+    ReplayResultResponse replayBulk(@RequestBody ReplayRequest request) {
+        return service.replayBulk(request);
     }
 
     private static OutboxStatus parseStatus(String status) {

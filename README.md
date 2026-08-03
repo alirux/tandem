@@ -272,14 +272,22 @@ Template and Spring-events tiers, and delivers them to Kafka in per-aggregate or
 tandem-sample-spring\run.cmd
 ```
 
-The Spring sample also demonstrates the Admin API's read endpoints (`tandem.admin.enabled: true`
-in its `application.yml`) against the same outbox it just wrote to. Once the demo narration
-finishes, the app keeps running as a web server (Ctrl+C to stop) — try:
+The Spring sample also demonstrates the Admin API (`tandem.admin.enabled: true` in its
+`application.yml`) against the same outbox it just wrote to — reads, and replay/discard on a row
+the demo deliberately manufactures as `FAILED` for this purpose. Once the demo narration finishes,
+the app keeps running as a web server (Ctrl+C to stop) and prints the exact commands to try,
+including the real id of that row:
 
 ```bash
 curl http://localhost:8080/tandem/admin/v1/outbox/summary
 curl http://localhost:8080/tandem/admin/v1/outbox/messages
 curl http://localhost:8080/tandem/admin/v1/outbox/messages/1
+
+# Replace 1 with the id the demo printed
+curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/replay
+curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/discard \
+     -H 'Content-Type: application/json' \
+     -d '{"acknowledgeOrderingBreak": true, "reason": "demo"}'
 ```
 
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
@@ -434,10 +442,11 @@ Not yet shipped, in no particular order:
 
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
-- **`tandem-admin`** — an API-first REST Admin API to inspect outbox state and replay failed
-  messages. The read side (health summary, search, message detail) ships today, off by default
-  (`tandem.admin.enabled=true`); replay, discard, and relay pause/resume are still to come. Contract:
-  [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
+- **`tandem-admin`** — an API-first REST Admin API to inspect and act on outbox state. Reads
+  (health summary, search, message detail), single/bulk replay, and discard ship today, off by
+  default (`tandem.admin.enabled=true`); relay pause/resume and per-bucket control are still to
+  come. Contract: [HLD-admin-api.md](docs/HLD-admin-api.md) ·
+  [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
 - **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, a
   forensic per-attempt archive, and W3C trace/correlation propagation. Each has a design document
   ([causal-ordering.md](docs/causal-ordering.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),
@@ -449,6 +458,5 @@ Not yet shipped, in no particular order:
 - **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
   supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
   obstacle — but until it lands, PostgreSQL is the only supported database.
-- **`tandem-micrometer`.** Implemented and tested; release to Maven Central is still pending.
 
 The full per-module status is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).

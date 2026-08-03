@@ -34,6 +34,8 @@ CREATE TABLE tandem_outbox (
     last_error      TEXT,
     next_attempt_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    discard_reason  TEXT,                    -- operator-supplied reason when the Admin API discards a FAILED row (HLD-admin-api §6.1); distinct from last_error, which stays the original delivery failure
+
     UNIQUE (aggregate_id, seq)               -- per-aggregate ordering safety net (HLD §4.2)
 );
 

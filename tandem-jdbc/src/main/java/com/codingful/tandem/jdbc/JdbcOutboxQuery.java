@@ -36,7 +36,7 @@ import javax.sql.DataSource;
 public final class JdbcOutboxQuery implements OutboxQuery {
 
     private static final String VIEW_COLUMNS = "id, aggregate_id, aggregate_type, type, seq, status, "
-            + "attempts, last_error, next_attempt_at, locked_by, locked_until, created_at";
+            + "attempts, last_error, discard_reason, next_attempt_at, locked_by, locked_until, created_at";
 
     private final DataSource dataSource;
 
@@ -154,6 +154,7 @@ public final class JdbcOutboxQuery implements OutboxQuery {
                 OutboxStatus.fromCode(rs.getInt("status")),
                 rs.getInt("attempts"),
                 rs.getString("last_error"),
+                rs.getString("discard_reason"),
                 instantOrNull(rs, "next_attempt_at"),
                 rs.getString("locked_by"),
                 instantOrNull(rs, "locked_until"),

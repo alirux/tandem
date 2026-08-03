@@ -1,6 +1,7 @@
 package com.codingful.tandem.admin.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.codingful.tandem.core.AggregateId;
 import com.codingful.tandem.core.OutboxMessage;
@@ -29,8 +30,8 @@ class OutboxAdminServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-02T12:00:00Z");
 
     private final InMemoryOutbox outbox = new InMemoryOutbox();
-    private final OutboxAdminService service =
-            new OutboxAdminService(outbox, outbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+    private final OutboxAdminService service = new OutboxAdminService(
+            outbox, outbox, outbox, outbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
 
     private void insert(String aggregateId, long seq, String payload) {
         outbox.insert(OutboxMessage.builder()
@@ -144,7 +145,7 @@ class OutboxAdminServiceTest {
     @Test
     void GIVEN_a_store_that_reports_no_lag_WHEN_summarized_THEN_it_falls_back_to_zero() {
         OutboxAdminService serviceOverNoLagStore = new OutboxAdminService(
-                outbox, new NoLagOutboxStore(), new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+                outbox, new NoLagOutboxStore(), outbox, outbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
 
         OutboxSummaryResponse summary = serviceOverNoLagStore.summary();
 
@@ -156,14 +157,185 @@ class OutboxAdminServiceTest {
     void GIVEN_a_stale_pending_row_WHEN_summarized_THEN_the_lag_age_reflects_elapsed_time() {
         Clock start = Clock.fixed(NOW.minus(Duration.ofSeconds(30)), ZoneOffset.UTC);
         InMemoryOutbox lateOutbox = new InMemoryOutbox(256, 10, start);
-        OutboxAdminService lateService =
-                new OutboxAdminService(lateOutbox, lateOutbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+        OutboxAdminService lateService = new OutboxAdminService(
+                lateOutbox, lateOutbox, lateOutbox, lateOutbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
         lateOutbox.insert(OutboxMessage.builder()
                 .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
 
         OutboxSummaryResponse summary = lateService.summary();
 
         assertThat(summary.lagAgeSeconds()).isEqualTo(30.0);
+    }
+
+    // --- replayMessage ---
+
+    @Test
+    void GIVEN_a_failed_row_WHEN_replayed_THEN_it_is_reset_to_pending() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        OutboxEntryResponse replayed = service.replayMessage(id);
+
+        assertThat(replayed.status()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_a_pending_row_WHEN_replayed_THEN_it_is_refused_as_not_replayable() {
+        insert("order-1", 1, "{}");   // still PENDING
+        long id = outbox.all().get(0).id();
+
+        assertThatThrownBy(() -> service.replayMessage(id)).isInstanceOf(MessageNotReplayableException.class);
+    }
+
+    @Test
+    void GIVEN_a_missing_id_WHEN_replayed_THEN_it_is_refused_as_not_found() {
+        assertThatThrownBy(() -> service.replayMessage(999_999L)).isInstanceOf(OutboxMessageNotFoundException.class);
+    }
+
+    // --- discardMessage ---
+
+    @Test
+    void GIVEN_a_failed_row_WHEN_discarded_with_acknowledgement_THEN_it_is_discarded_with_the_reason_recorded() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        OutboxEntryResponse discarded = service.discardMessage(id, new DiscardRequest(true, "no longer needed"));
+
+        assertThat(discarded.status()).isEqualTo("DISCARDED");
+        assertThat(discarded.discardReason()).isEqualTo("no longer needed");
+        assertThat(discarded.lastError()).isEqualTo("boom");
+    }
+
+    @Test
+    void GIVEN_the_ordering_break_is_not_acknowledged_WHEN_discarded_THEN_it_is_refused() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(false, null)))
+                .isInstanceOf(OrderingBreakNotAcknowledgedException.class);
+    }
+
+    @Test
+    void GIVEN_a_pending_row_WHEN_discarded_THEN_it_is_refused_as_not_discardable() {
+        insert("order-1", 1, "{}");   // still PENDING
+        long id = outbox.all().get(0).id();
+
+        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(true, "irrelevant")))
+                .isInstanceOf(MessageNotDiscardableException.class);
+    }
+
+    @Test
+    void GIVEN_a_missing_id_WHEN_discarded_THEN_it_is_refused_as_not_found() {
+        assertThatThrownBy(() -> service.discardMessage(999_999L, new DiscardRequest(true, "irrelevant")))
+                .isInstanceOf(OutboxMessageNotFoundException.class);
+    }
+
+    // --- replayBulk ---
+
+    @Test
+    void GIVEN_a_selector_less_request_WHEN_replayed_in_bulk_THEN_it_is_refused() {
+        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest(null, null, null, null, null, false)))
+                .isInstanceOf(ReplayNoSelectorException.class);
+    }
+
+    @Test
+    void GIVEN_failed_rows_for_an_aggregate_WHEN_replayed_in_bulk_THEN_they_are_reset_and_the_counts_reported() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(result.replayed()).isEqualTo(1);
+        assertThat(result.dryRun()).isFalse();
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_a_dry_run_bulk_replay_WHEN_requested_THEN_nothing_changes_but_the_match_count_is_reported() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, true));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(result.replayed()).isZero();
+        assertThat(result.dryRun()).isTrue();
+        assertThat(outbox.byId(id).status().name()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void GIVEN_a_status_selector_WHEN_replayed_in_bulk_THEN_only_that_status_resets() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result =
+                service.replayBulk(new ReplayRequest(null, "Order", null, null, List.of("FAILED"), false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_an_invalid_status_name_WHEN_replayed_in_bulk_THEN_it_is_rejected() {
+        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of("NOT_A_STATUS"), false)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void GIVEN_only_an_id_range_WHEN_replayed_in_bulk_THEN_it_is_accepted_as_a_selector() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, id, id, null, false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_only_a_to_id_upper_bound_WHEN_replayed_in_bulk_THEN_it_is_accepted_as_a_selector() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, id, null, false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_only_statuses_and_no_other_selector_WHEN_replayed_in_bulk_THEN_it_is_accepted_as_a_selector() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, null, List.of("FAILED"), false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void GIVEN_an_empty_statuses_list_WHEN_replayed_in_bulk_THEN_it_is_treated_the_same_as_omitted() {
+        insert("order-1", 1, "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markDone(id);
+
+        // Empty statuses (as opposed to omitted/null) must default the same way: every replayable
+        // status for the given aggregate, not "no statuses eligible".
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of(), false));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
     }
 
     /** A store that never overrides {@link OutboxStore#lag()} — exercises the summary's fallback path. */

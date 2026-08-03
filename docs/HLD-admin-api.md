@@ -98,7 +98,7 @@ allowlist in the conformance run rather than left silent. See
   identifier first; if docs are published later, the same URLs resolve, with **no contract change**
   (the reason a URL is chosen now over `about:blank`/URN). Current slugs: `unauthorized`,
   `not-found`, `internal-error`, `invalid-parameter`, `message-not-replayable`, `ordering-break-not-acknowledged`,
-  `replay-no-selector`, `attempt-archive-disabled`.
+  `replay-no-selector`, `message-not-discardable`, `attempt-archive-disabled`.
 
 ---
 
@@ -117,7 +117,14 @@ implemented as `JdbcReplayService`), and the lag figures in `OutboxSummary` come
 `IN_FLIGHT`. Nothing exposes read-one-by-id, search-by-criteria, or count-per-status. Those
 arrive as a new core port (`OutboxQuery`) with a `tandem-jdbc` adapter, implemented by
 `InMemoryOutbox` as well so the use cases stay unit-testable without a database. Discard
-(`FAILED` → `DISCARDED`) is likewise a genuinely new verb with no existing code path.
+(`FAILED` → `DISCARDED`) is likewise a genuinely new verb with no existing code path: it gets
+its own core port, `DiscardService` (a single `discard(id, reason)` method), following the same
+shape as `ReplayService` rather than being folded into `OutboxStore` — the admin-only ops never
+belong in the relay's claim/mark/cleanup contract every adapter must implement (the same
+reasoning that kept `OutboxQuery` out of `OutboxStore`, IMPLEMENTATION-PLAN-admin-api.md §3.3).
+A discarded row also records the operator's reason in a new, additive `discard_reason` column —
+kept separate from `last_error` so discarding a `FAILED` row does not erase why it failed in the
+first place.
 See [IMPLEMENTATION-PLAN-admin-api.md](IMPLEMENTATION-PLAN-admin-api.md) §1.
 
 **Three independent models, on purpose.** The read port does **not** return the write/relay
@@ -290,3 +297,16 @@ contract-*driven*, with the OpenAPI authoritative, so it is consistent with this
   to honour that would need custom templates that become their own artifact to maintain, for a
   problem (drift) the CI conformance gate already solves. No other Tandem module uses codegen;
   hand-writing keeps `tandem-admin` consistent with the rest of the codebase.
+- **Discard on a non-`FAILED` row — `409 message-not-discardable`.** The contract originally
+  left this case undefined even though `DISCARDED` is documented (LLD-core §1.2) as reachable
+  only from `FAILED`. Resolved the same way as `replayMessage`'s `409 message-not-replayable`:
+  additive new response, no default-behaviour change. The alternatives — a silent no-op, or
+  forcing the transition regardless of prior state — were rejected for hiding a state an
+  operator would want surfaced, and for breaking the documented precondition, respectively.
+- **Discard reason storage — additive `discard_reason` column.** `DiscardRequest.reason` is
+  documented as "recorded for audit," so it must actually be persisted somewhere durable to
+  keep that promise. Overwriting `last_error` was rejected: it would erase the original
+  delivery-failure reason the moment a row is discarded, which is exactly the context an
+  operator most wants preserved. A new nullable `discard_reason` column keeps the two
+  independent, mirrors the additive-only schema-evolution rule (§1), and is exposed as an
+  optional field on `OutboxEntry`/the core read model, visible via `getOutboxMessage`.

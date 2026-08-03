@@ -18,6 +18,7 @@ public record OutboxRowView(
         OutboxStatus status,
         int attempts,
         String lastError,
+        String discardReason,
         Instant nextAttemptAt,
         String lockedBy,
         Instant lockedUntil,

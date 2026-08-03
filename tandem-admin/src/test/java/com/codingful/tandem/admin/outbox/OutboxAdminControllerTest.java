@@ -1,6 +1,7 @@
 package com.codingful.tandem.admin.outbox;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -32,6 +34,19 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  * {@link OutboxAdminController} + the module-wide {@link TandemAdminExceptionHandler} and this
  * feature's own {@link OutboxExceptionHandler}: HTTP status, JSON shape, and the RFC 9457
  * problem+json error path (HLD-admin-api §3).
+ *
+ * <p><b>Tests that POST a JSON body are tagged {@code boot3-only}.</b> In Spring Framework 7 (Boot
+ * 4), {@code MockHttpServletRequestBuilder}'s fluent setters ({@code content}, {@code contentType},
+ * {@code header}, …) moved onto a new generic supertype, {@code AbstractMockHttpServletRequestBuilder<B>}
+ * — {@code MockHttpServletRequestBuilder} no longer declares them directly. A test class compiled
+ * once against the Boot 3.x baseline (this module's dual-generation gate, LLD-spring-config §1.2)
+ * therefore throws {@code NoSuchMethodError} at the first chained builder call when its *compiled*
+ * bytecode is re-run against the Boot 4.x/Spring 7 classpath — the very first chained method after
+ * the bare static factory ({@code post(uri)}), regardless of which one. Every request that needs
+ * only the static factory (every {@code GET} here, and the two body-less {@code POST} replay calls)
+ * is unaffected; only the six tests that chain {@code .contentType(...).content(...)} to send a JSON
+ * body are excluded from {@code bootFourTest}. This is a test-support-only binary-compatibility gap
+ * in {@code MockMvc} itself, not a {@code tandem-admin} production-code compatibility gap.
  */
 class OutboxAdminControllerTest {
 
@@ -42,7 +57,8 @@ class OutboxAdminControllerTest {
     void setUp() {
         outbox = new InMemoryOutbox();
         ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
-        OutboxAdminService service = new OutboxAdminService(outbox, outbox, objectMapper, Clock.systemUTC());
+        OutboxAdminService service =
+                new OutboxAdminService(outbox, outbox, outbox, outbox, objectMapper, Clock.systemUTC());
         mockMvc = MockMvcBuilders.standaloneSetup(new OutboxAdminController(service))
                 // Order matters here, unlike in a real ApplicationContext: standalone setup does not
                 // honour @Order across manually-supplied advice instances, so the generic catch-all
@@ -155,10 +171,126 @@ class OutboxAdminControllerTest {
     }
 
     @Test
+    void GIVEN_a_failed_message_WHEN_replayed_THEN_it_is_reset_to_pending() throws Exception {
+        insert("order-1", "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/replay", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    void GIVEN_a_pending_message_WHEN_replayed_THEN_a_problem_json_409_is_returned() throws Exception {
+        insert("order-1", "{}");   // still PENDING
+        long id = outbox.all().get(0).id();
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/replay", id))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/message-not-replayable"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    void GIVEN_a_missing_message_WHEN_replayed_THEN_a_problem_json_404_is_returned() throws Exception {
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/replay", 999_999))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/not-found"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")   // POSTs a JSON body — see the class javadoc's Boot4/Spring7 MockMvc builder note
+    void GIVEN_a_failed_message_WHEN_discarded_with_acknowledgement_THEN_it_is_discarded() throws Exception {
+        insert("order-1", "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/discard", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgeOrderingBreak\":true,\"reason\":\"no longer needed\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DISCARDED"))
+                .andExpect(jsonPath("$.discardReason").value("no longer needed"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")
+    void GIVEN_the_ordering_break_is_not_acknowledged_WHEN_discarded_THEN_a_problem_json_400_is_returned() throws Exception {
+        insert("order-1", "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/discard", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgeOrderingBreak\":false}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/ordering-break-not-acknowledged"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")
+    void GIVEN_a_pending_message_WHEN_discarded_THEN_a_problem_json_409_is_returned() throws Exception {
+        insert("order-1", "{}");   // still PENDING, not discardable
+        long id = outbox.all().get(0).id();
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/discard", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgeOrderingBreak\":true}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/message-not-discardable"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")
+    void GIVEN_a_missing_message_WHEN_discarded_THEN_a_problem_json_404_is_returned() throws Exception {
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/discard", 999_999)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgeOrderingBreak\":true}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/not-found"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")
+    void GIVEN_a_selector_less_request_WHEN_bulk_replay_is_requested_THEN_a_problem_json_400_is_returned() throws Exception {
+        mockMvc.perform(post("/tandem/admin/v1/outbox/replay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("https://tandem.codingful.com/problems/replay-no-selector"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    @Tag("boot3-only")
+    void GIVEN_a_matching_selector_WHEN_bulk_replay_is_requested_THEN_the_matched_and_replayed_counts_are_returned() throws Exception {
+        insert("order-1", "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/replay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"aggregateId\":\"order-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.matched").value(1))
+                .andExpect(jsonPath("$.replayed").value(1))
+                .andExpect(jsonPath("$.dryRun").value(false))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
     void GIVEN_an_unexpected_failure_WHEN_summary_is_requested_THEN_a_problem_json_500_is_returned() throws Exception {
         ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         OutboxAdminService brokenService =
-                new OutboxAdminService(new BrokenOutboxQuery(), outbox, objectMapper, Clock.systemUTC());
+                new OutboxAdminService(new BrokenOutboxQuery(), outbox, outbox, outbox, objectMapper, Clock.systemUTC());
         MockMvc brokenMockMvc = MockMvcBuilders.standaloneSetup(new OutboxAdminController(brokenService))
                 .setControllerAdvice(new OutboxExceptionHandler(), new TandemAdminExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))

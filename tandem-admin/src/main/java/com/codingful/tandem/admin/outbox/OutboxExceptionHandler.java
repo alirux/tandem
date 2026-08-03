@@ -30,4 +30,28 @@ class OutboxExceptionHandler {
     ResponseEntity<ProblemDetail> handleNotFound(OutboxMessageNotFoundException e) {
         return ProblemDetails.of(HttpStatus.NOT_FOUND, "not-found", "Resource not found", e.getMessage());
     }
+
+    @ExceptionHandler(MessageNotReplayableException.class)
+    ResponseEntity<ProblemDetail> handleNotReplayable(MessageNotReplayableException e) {
+        return ProblemDetails.of(HttpStatus.CONFLICT, "message-not-replayable",
+                "Message is not in a replayable state", e.getMessage());
+    }
+
+    @ExceptionHandler(MessageNotDiscardableException.class)
+    ResponseEntity<ProblemDetail> handleNotDiscardable(MessageNotDiscardableException e) {
+        return ProblemDetails.of(HttpStatus.CONFLICT, "message-not-discardable",
+                "Message is not in a discardable state", e.getMessage());
+    }
+
+    @ExceptionHandler(OrderingBreakNotAcknowledgedException.class)
+    ResponseEntity<ProblemDetail> handleOrderingBreakNotAcknowledged(OrderingBreakNotAcknowledgedException e) {
+        return ProblemDetails.of(HttpStatus.BAD_REQUEST, "ordering-break-not-acknowledged",
+                "Ordering-break acknowledgement is required to discard", e.getMessage());
+    }
+
+    @ExceptionHandler(ReplayNoSelectorException.class)
+    ResponseEntity<ProblemDetail> handleReplayNoSelector(ReplayNoSelectorException e) {
+        return ProblemDetails.of(HttpStatus.BAD_REQUEST, "replay-no-selector",
+                "At least one replay selector is required", e.getMessage());
+    }
 }

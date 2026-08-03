@@ -209,6 +209,20 @@ class JdbcOutboxQueryIT extends AbstractPostgresIT {
         assertThat(query.findById(999_999L)).isEmpty();
     }
 
+    @Test
+    void GIVEN_a_discarded_row_WHEN_found_by_id_THEN_the_discard_reason_is_returned_and_last_error_is_untouched() {
+        long id = insert("order-1", "Order", 1, "{}");
+        execute("UPDATE tandem_outbox SET status = " + OutboxStatus.FAILED.code() + ", last_error = 'boom' WHERE id = " + id);
+        execute("UPDATE tandem_outbox SET status = " + OutboxStatus.DISCARDED.code()
+                + ", discard_reason = 'no longer needed' WHERE id = " + id);
+
+        Optional<OutboxRowDetail> detail = query.findById(id);
+
+        assertThat(detail).isPresent();
+        assertThat(detail.get().discardReason()).isEqualTo("no longer needed");
+        assertThat(detail.get().lastError()).isEqualTo("boom");
+    }
+
     private static void setStatus(long id, OutboxStatus status) {
         execute("UPDATE tandem_outbox SET status = " + status.code() + " WHERE id = " + id);
     }
