@@ -1,4 +1,4 @@
-package com.codingful.tandem.admin.outbox;
+package com.codingful.tandem.admin.outbox.dto;
 
 import java.util.Map;
 
@@ -8,5 +8,5 @@ import java.util.Map;
  * names, not the core {@code OutboxStatus} enum, so an additive change to that enum never silently
  * changes this contract (HLD-admin-api §4).
  */
-record OutboxSummaryResponse(Map<String, Long> counts, long lagCount, double lagAgeSeconds) {
+public record OutboxSummaryResponse(Map<String, Long> counts, long lagCount, double lagAgeSeconds) {
 }

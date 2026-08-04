@@ -27,6 +27,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -108,6 +109,55 @@ class WorkerPoolTest {
         assertThat(seqsByAggregate).hasSize(aggregates);
         seqsByAggregate.forEach((aggregate, seqs) ->
                 assertThat(seqs).as("order within %s", aggregate).isSorted());
+    }
+
+    @Test
+    void GIVEN_the_relay_is_paused_WHEN_events_are_pending_THEN_nothing_is_claimed() throws InterruptedException {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("p".getBytes()).build());
+        RecordingDispatcher dispatcher = new RecordingDispatcher();
+        RelayConfig cfg = RelayConfig.builder().bucketCount(BUCKETS).pollInterval(Duration.ofMillis(10)).build();
+        MutableControlSource control = new MutableControlSource();
+        control.setWholeRelayPaused(true);
+        WorkerPool pool = new WorkerPool(outbox, dispatcher, cfg, TandemMetrics.NOOP, Clock.systemUTC(),
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS), control);
+
+        pool.start();
+        try {
+            Thread.sleep(200);   // several poll intervals - nothing should ever be claimed
+            assertThat(dispatcher.dispatchCount()).isZero();
+            assertThat(outbox.byStatus(OutboxStatus.PENDING)).hasSize(1);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
+    void GIVEN_a_paused_bucket_WHEN_the_relay_runs_THEN_only_that_buckets_events_stay_pending() {
+        InMemoryOutbox outbox = new InMemoryOutbox();
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload("p".getBytes()).build());
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-2").aggregateType("Order").seq(1).payload("p".getBytes()).build());
+        long pausedId = outbox.all().get(0).id();
+        int pausedBucket = outbox.bucketOf(pausedId);
+        RecordingDispatcher dispatcher = new RecordingDispatcher();
+        RelayConfig cfg = RelayConfig.builder().bucketCount(BUCKETS).pollInterval(Duration.ofMillis(10)).build();
+        MutableControlSource control = new MutableControlSource();
+        control.pauseBucket(pausedBucket);
+        WorkerPool pool = new WorkerPool(outbox, dispatcher, cfg, TandemMetrics.NOOP, Clock.systemUTC(),
+                BackoffStrategy.fullJitter(), BucketSource.embedded(BUCKETS), control);
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(10),
+                    () -> "the unpaused aggregate delivered, got " + outbox.statusCounts(),
+                    () -> outbox.byStatus(OutboxStatus.DONE).size() == 1);
+            assertThat(outbox.byId(pausedId).status()).isEqualTo(OutboxStatus.PENDING);
+        } finally {
+            pool.stop();
+        }
     }
 
     @Test
@@ -846,6 +896,30 @@ class WorkerPoolTest {
 
         int releaseCalls() {
             return releaseCalls.get();
+        }
+    }
+
+    /** A real, mutable {@link RelayControlSource} for tests — no scheduled refresh, set directly. */
+    private static final class MutableControlSource implements RelayControlSource {
+        private volatile boolean wholeRelayPaused;
+        private final Set<Integer> pausedBuckets = ConcurrentHashMap.newKeySet();
+
+        void setWholeRelayPaused(boolean paused) {
+            this.wholeRelayPaused = paused;
+        }
+
+        void pauseBucket(int bucket) {
+            pausedBuckets.add(bucket);
+        }
+
+        @Override
+        public boolean wholeRelayPaused() {
+            return wholeRelayPaused;
+        }
+
+        @Override
+        public boolean bucketPaused(int bucket) {
+            return pausedBuckets.contains(bucket);
         }
     }
 

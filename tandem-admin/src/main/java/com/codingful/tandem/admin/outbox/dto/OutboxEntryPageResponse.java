@@ -1,7 +1,7 @@
-package com.codingful.tandem.admin.outbox;
+package com.codingful.tandem.admin.outbox.dto;
 
 import java.util.List;
 
 /** Wire representation of the OpenAPI {@code OutboxEntryPage} schema — a page of results, not a page number. */
-record OutboxEntryPageResponse(List<OutboxEntryResponse> items, String nextCursor) {
+public record OutboxEntryPageResponse(List<OutboxEntryResponse> items, String nextCursor) {
 }

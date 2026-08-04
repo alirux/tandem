@@ -21,8 +21,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * caught by the generic advice's {@code Exception.class} handler and rendered as a 500 instead of a
  * 404 — verified against a real running Spring context, not just a unit test, precisely because this
  * failure mode does not reproduce in every kind of test (HLD-admin-api, IMPLEMENTATION-PLAN-admin-api.md).
+ *
+ * <p>{@code basePackages} scopes this advice to this package only, so it never applies to a host
+ * application's own controllers in embedded mode — see {@code TandemAdminExceptionHandler}'s javadoc
+ * for why an unscoped {@code @RestControllerAdvice} would be a real interference risk, not a theoretical one.
  */
-@RestControllerAdvice
+@RestControllerAdvice(basePackages = "com.codingful.tandem.admin.outbox")
 @Order(0)
 class OutboxExceptionHandler {
 

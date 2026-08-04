@@ -61,7 +61,7 @@ and governance rules (naming, descriptions, examples) that Specmatic does not en
 | **Outbox — read** | health summary (counts per status, lag count/age); search messages (by status / aggregate / type / time); get one message with full payload + headers |
 | **Outbox — act** | replay one message; bulk replay by criteria (with `dryRun` preview); discard a FAILED message (explicit ordering-break acknowledgement required) |
 | **Attempts** | attempt timeline of one message; search the attempt archive (by aggregate / status / `traceId` / `correlationId` / time) |
-| **Relay** | status (state, bucket coverage, worker count); pause / resume (whole relay or a single bucket); **per-bucket ownership + lag** (spot uncovered/hot buckets); **active workers**; **force-release a bucket** for reassignment (zombie owner recovery) |
+| **Relay** | status (state, bucket coverage, worker count); pause / resume (whole relay or a single bucket); **per-bucket ownership + lag**, listed or one at a time (spot uncovered/hot buckets); **active workers**; **force-release a bucket** for reassignment (zombie owner recovery) |
 
 Replay builds on the per-aggregate `ReplayService` (HLD §8); the attempt endpoints read the
 optional attempt archive (HLD §7.1) and return empty / `503` when it is disabled.
@@ -80,11 +80,27 @@ allowlist in the conformance run rather than left silent. See
 - **Off by default.** The Admin API is an attack surface; it is not exposed unless explicitly
   enabled (`tandem.admin.enabled=true`). When off there is no endpoint, no controller bean,
   and no cost.
+- **Isolated in embedded mode.** Every `@RestControllerAdvice` in `tandem-admin` is scoped with
+  `basePackages` to its own package tree, never left unscoped. An unscoped advice applies to
+  every controller in the whole `ApplicationContext` — in embedded mode that includes the host
+  application's own controllers, which have nothing to do with Tandem; an unrelated exception
+  from the host's own endpoint would otherwise be rendered as one of this module's RFC 9457
+  problems. Scoping keeps the Admin API's error handling from ever touching the host's.
 - **Security is the host's responsibility.** Tandem ships the endpoints, *not* the
   authentication. The OpenAPI declares `bearerAuth` / `apiKeyAuth` security schemes as the
   expected shape, but wiring real authentication/authorization (e.g. Spring Security) is the
   application's job. Tandem documents this prominently and does not ship an open-by-default
   management surface.
+- **Write operations are audit-logged, including the caller when the host authenticates one.**
+  Every mutating endpoint (replay, bulk replay, discard, pause, resume, release) logs at `INFO`
+  once it succeeds, with the affected identifiers and an `actor` field. `actor` is read from the
+  servlet `java.security.Principal` Spring MVC binds automatically on the controller method —
+  populated by *whatever* mechanism the host installs (Basic auth, an OAuth2 resource server, a
+  custom filter), never a hard dependency on Spring Security specifically. When the host runs no
+  authentication, `actor` is absent from the log rather than an invented value — consistent with
+  "security is the host's responsibility" above. Reads are not logged: an operator's own
+  dashboard polling `GET /relay/status` every few seconds would otherwise flood the log with
+  traffic that never mutates anything.
 - **Configurable base path + versioned** — a configurable base (default `/tandem/admin`)
   plus a fixed major-version segment `/v1`, so the effective default is `/tandem/admin/v1`.
   A breaking change ships under `/v2` alongside `/v1` (matching the semver release rule in
@@ -98,7 +114,8 @@ allowlist in the conformance run rather than left silent. See
   identifier first; if docs are published later, the same URLs resolve, with **no contract change**
   (the reason a URL is chosen now over `about:blank`/URN). Current slugs: `unauthorized`,
   `not-found`, `internal-error`, `invalid-parameter`, `message-not-replayable`, `ordering-break-not-acknowledged`,
-  `replay-no-selector`, `message-not-discardable`, `attempt-archive-disabled`.
+  `replay-no-selector`, `message-not-discardable`, `relay-coordination-unsupported`,
+  `attempt-archive-disabled`.
 
 ---
 
@@ -146,9 +163,7 @@ defining property is having no dependencies.
 
 The contract's names are kept **deliberately distinct** from the library's for the same reason:
 the API schema is `OutboxEntry` (paginated as `OutboxEntryPage`), not `OutboxMessage`, which is
-the core's *write* model. An earlier draft of the contract reused the name and made the two look
-like one type — renamed before any implementation existed, since a schema name is a
-code-generation identifier that never appears in the payload, so nothing on the wire changed.
+the core's *write* model. Sharing a name would make two independently-evolving types read as one.
 
 - **Module:** `tandem-admin` (optional). Contains the use-case logic and the Spring-based
   REST adapter that realises [admin-api.openapi.yaml](admin-api.openapi.yaml). It depends
@@ -181,22 +196,52 @@ the client service at runtime except access to its outbox database. It supports 
 | Force-release a bucket | `UPDATE tandem_bucket_lease` to clear the lease → reassigned next cycle | ✅ DB-only |
 | **Relay control (pause / resume / status)** | Runtime state of the relay *process* | ⚠️ needs DB mediation (below) |
 
-**The control tables (concrete).** Relay control and observability are mediated through two
-tables — the same `tandem_bucket_lease` table the relay already uses for bucket assignment (HLD §4.3,
-LLD-jdbc §3.2), plus a tiny `tandem_relay_control` flag table:
+**The control tables (concrete).** Relay control and observability are mediated through tables the
+schema already has — **no `tandem_relay_control` table was added** (decision, §6.1):
 
-- **`tandem_bucket_lease`** (`bucket`, `owner`, `lease_until`, `updated_at`) — written by the relay as
-  workers claim/renew bucket leases. The admin reads it for `GET /relay/status` (covered vs
-  uncovered), `GET /relay/buckets` (owner + lag per bucket), and `GET /relay/workers` (distinct
-  live owners). `POST /relay/buckets/{bucket}/release` clears a row's lease.
-- **`tandem_relay_control`** — a small key/value (or single-row) table holding the desired state
-  (RUNNING / PAUSED, optionally per bucket). The relay reads it each poll cycle and honours it;
-  `POST /relay/pause|resume` writes it.
+- **`tandem_meta`** (`key`, `value`, `updated_at`) — the existing generic key/value table (it already
+  carries `bucket_count`, LLD-bucket-count-guard §5) holds the **whole-relay** desired state under a
+  `relay_paused` key. Every relay instance re-reads it on its control-refresh tick and honours it;
+  `POST /relay/pause|resume` without a bucket selector writes it. This is the only control path that
+  works in **both** coordination modes, which is why it lives in a core table rather than a
+  LEASE-only one.
+- **`tandem_bucket_lease`** (`bucket`, `owner`, `lease_until`, `paused`, `updated_at`) — written by the
+  relay as workers claim/renew bucket leases. The admin reads it for `GET /relay/status` (covered vs
+  uncovered) and `GET /relay/buckets` (owner + lag per bucket), and writes its **additive `paused`
+  column** for a per-bucket pause. `POST /relay/buckets/{bucket}/release` clears a row's lease.
+- **`tandem_relay_member`** (`owner`, `lease_until`, `updated_at`) — the presence table the fair-share
+  divisor already maintains (LLD-jdbc §3.2), read by `GET /relay/workers`.
 
-This keeps every endpoint DB-only and works across multiple relay instances and admin restarts.
-(In embedded mode the same DB-mediated mechanism is used, so behaviour is identical regardless
-of deployment model. The single-instance embedded case may keep these in-process, but the
-table-mediated path is the default so adding a second instance just works.)
+**Coordination mode changes what these endpoints can answer (decision, §6.1).**
+`tandem_bucket_lease` and `tandem_relay_member` are **`LEASE`-only** — under `SINGLE` the relay owns
+every bucket in-process and never reads or writes either table, by design (that is what makes
+`SINGLE` the zero-cost default). The admin therefore **must know the mode before it queries**, which
+is why the relay records it (below):
+
+| Endpoint | `SINGLE` | `LEASE` |
+|---|---|---|
+| `pause`/`resume`, **no** bucket selector | ✅ works (via `tandem_meta`) | ✅ works |
+| `pause`/`resume`, **naming a bucket** | `409 relay-coordination-unsupported` | ✅ works (`404` outside `[0, B)`) |
+| `GET /relay/buckets` | `409` | ✅ works |
+| `GET /relay/buckets/{bucket}` | `409` | ✅ works (`404` outside `[0, B)`) |
+| `GET /relay/workers` | `409` | ✅ works |
+| `POST /relay/buckets/{bucket}/release` | `409` | ✅ works (`404` outside `[0, B)`) |
+| `GET /relay/status` | ✅ works — `workers` and `uncoveredBuckets` are `0` by definition | ✅ works |
+
+**`409`, not an empty list or a `404`**, because the lease tables' *presence* says nothing about
+whether the relay maintains them. Under `SINGLE` those tables are either absent (any query is then a
+`500`) or present-but-unused, in which case a bucket listing shows every bucket unowned — a healthy
+relay rendered as a total coverage stall — and a per-bucket `pause` updates a seeded row and returns
+`200` for something the relay will never act on. `409` cannot be mistaken for data.
+
+**The relay records its mode in `tandem_meta` under a `coordination` key**, written once on every
+`WorkerPool.start()` — the one entry point every assembly (Spring, plain Java, benchmark) goes
+through — because the admin cannot infer it: coordination is the *relay's* configuration and a
+standalone admin has its own. Absent key — no relay of this version has started here — is treated
+as `SINGLE`, since nothing is known to be maintaining the coordination state.
+
+Everything else stays DB-only and works across multiple relay instances and admin restarts, and
+behaves identically embedded or standalone.
 
 ### 4.2 What the independence does and does not imply
 
@@ -275,17 +320,15 @@ contract-*driven*, with the OpenAPI authoritative, so it is consistent with this
   compensating signal emerges later, add it as an explicit opt-in (e.g. an `emitTombstone`
   flag on `DiscardRequest`) rather than changing the default behaviour.
 - **Relay pause scope — whole relay and per-bucket, both in scope.** The contract already
-  allows both via the optional `bucket` field on `BucketSelector`. Pause is applied through
-  `tandem_relay_control` and read once per poll cycle, so its effect lags by at most one
-  cycle — an acceptable, documented latency for an admin action, not a hard requirement to
-  take effect mid-cycle. During a bucket pause the owning worker **keeps renewing its lease**
+  allows both via the optional `bucket` field on `BucketSelector`. Pause is DB-mediated (storage
+  and latency below), so its effect lags by one control-refresh tick — an acceptable, documented
+  latency for an admin action, not a hard requirement to take effect mid-cycle. Per-bucket pause
+  needs `LEASE` coordination. During a bucket pause the owning worker **keeps renewing its lease**
   and simply skips dispatching sends for that bucket; pause is orthogonal to release (the
   existing zombie-recovery endpoint), so a paused bucket is never involuntarily reassigned.
-  This closes a real observability gap found in review: `BucketStatus` had no way to
-  distinguish "paused on purpose" from "genuinely stalled," so a deliberately-paused bucket's
-  growing `pendingCount`/`lagAgeSeconds` would look identical to a real problem on
-  `GET /relay/buckets`. Fixed by adding `paused: boolean` to `BucketStatus` (see the updated
-  contract).
+  `BucketStatus` carries a `paused` flag so a deliberately-idle bucket is distinguishable from a
+  stalled one — without it, a paused bucket's growing `pendingCount`/`lagAgeSeconds` reads as a
+  real problem on `GET /relay/buckets`.
 - **Spec ↔ code binding — hand-write and validate in CI, no codegen.** Server-stub
   generation from the OpenAPI document is rejected in favour of hand-written controllers/DTOs
   verified by the two tools already committed to in §5 (swagger-request-validator +
@@ -297,12 +340,32 @@ contract-*driven*, with the OpenAPI authoritative, so it is consistent with this
   to honour that would need custom templates that become their own artifact to maintain, for a
   problem (drift) the CI conformance gate already solves. No other Tandem module uses codegen;
   hand-writing keeps `tandem-admin` consistent with the rest of the codebase.
-- **Discard on a non-`FAILED` row — `409 message-not-discardable`.** The contract originally
-  left this case undefined even though `DISCARDED` is documented (LLD-core §1.2) as reachable
-  only from `FAILED`. Resolved the same way as `replayMessage`'s `409 message-not-replayable`:
-  additive new response, no default-behaviour change. The alternatives — a silent no-op, or
-  forcing the transition regardless of prior state — were rejected for hiding a state an
-  operator would want surfaced, and for breaking the documented precondition, respectively.
+- **Discard on a non-`FAILED` row — `409 message-not-discardable`,** mirroring `replayMessage`'s
+  `409 message-not-replayable`. `DISCARDED` is reachable only from `FAILED` (LLD-core §1.2), and an
+  attempt from any other state is worth surfacing. Rejected: a silent no-op (hides a state the
+  operator would want to see) and forcing the transition regardless (breaks the precondition).
+- **Relay control storage — reuse `tandem_meta`, no `tandem_relay_control` table.** `tandem_meta` is
+  already a generic `key`/`value` table serving exactly this purpose for `bucket_count`, and is a
+  **core** table present in every deployment — which whole-relay pause must be, unlike
+  `tandem_bucket_lease`, which only `LEASE` maintains. A dedicated flag table would add a migration
+  and a schema surface for no capability the first one lacks (Pareto, §1.1). Per-bucket pause is an
+  additive `paused` column on the `tandem_bucket_lease` row it naturally belongs to, rather than a
+  second place to look for one bucket's state.
+- **Coordination mode limits what relay endpoints can answer.** Under `SINGLE` (the zero-cost
+  default) the relay owns all buckets in-process and never touches
+  `tandem_bucket_lease`/`tandem_relay_member`, so per-bucket and per-worker endpoints have nothing
+  truthful to report and return **`409 relay-coordination-unsupported`** there. Whole-relay
+  pause/resume and `GET /relay/status` work in both modes, their state being in `tandem_meta` —
+  requiring `LEASE` for pause/resume would deny the incident lever to the most common deployment.
+  The relay publishes its mode in `tandem_meta` so the admin can tell the two apart; §4.1 has the
+  mechanics and the per-endpoint table. Rejected: probing `information_schema` for the lease tables
+  (answers whether they exist, not whether anything maintains them), and making `SINGLE` write them
+  purely for observability (a DB dependency on the path whose defining property is not having one).
+- **Pause latency — one control-refresh tick (`reclaimInterval`, 5 s by default), not one poll
+  cycle.** Per-cycle re-reading is not affordable: `pollInterval` defaults to 100 ms and a busy
+  worker loops faster still, so it would put a query on the hot path. The relay refreshes the
+  desired state on its existing maintenance cadence into an in-memory flag the workers read for
+  free.
 - **Discard reason storage — additive `discard_reason` column.** `DiscardRequest.reason` is
   documented as "recorded for audit," so it must actually be persisted somewhere durable to
   keep that promise. Overwriting `last_error` was rejected: it would erase the original

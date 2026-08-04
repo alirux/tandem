@@ -1,4 +1,4 @@
-package com.codingful.tandem.admin.outbox;
+package com.codingful.tandem.admin.outbox.dto;
 
 import com.codingful.tandem.core.OutboxRowDetail;
 import com.codingful.tandem.core.OutboxRowView;
@@ -26,7 +26,7 @@ import java.util.Map;
  * "this row has no value here".
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-record OutboxEntryResponse(
+public record OutboxEntryResponse(
         long id,
         String aggregateId,
         String aggregateType,
@@ -44,7 +44,7 @@ record OutboxEntryResponse(
         Object payload) {
 
     /** From a list-view row — {@code headers}/{@code payload} are {@code null} (HLD-admin-api §4). */
-    static OutboxEntryResponse fromView(OutboxRowView view) {
+    public static OutboxEntryResponse fromView(OutboxRowView view) {
         return new OutboxEntryResponse(
                 view.id(),
                 view.aggregateId().value(),
@@ -64,7 +64,7 @@ record OutboxEntryResponse(
     }
 
     /** From a single-message detail row — carries {@code headers} and the rendered {@code payload}. */
-    static OutboxEntryResponse fromDetail(OutboxRowDetail detail, ObjectMapper objectMapper) {
+    public static OutboxEntryResponse fromDetail(OutboxRowDetail detail, ObjectMapper objectMapper) {
         return new OutboxEntryResponse(
                 detail.id(),
                 detail.aggregateId().value(),

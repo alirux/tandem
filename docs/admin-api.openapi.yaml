@@ -414,10 +414,14 @@ paths:
         - Relay
       summary: Pause the relay (optionally a single bucket)
       description: >
-        The relay reads the desired state once per poll cycle, so the effect lags by at
-        most one cycle - not immediate mid-cycle. When a bucket is paused, its owning worker
-        keeps renewing the bucket's lease and simply stops dispatching sends for it; pause
-        never releases the lease (use POST /relay/buckets/{bucket}/release for that).
+        Each relay instance re-reads the desired state on its own control-refresh tick
+        (the relay's reclaimInterval, 5s by default), so the effect lags by up to that
+        interval - it is not immediate, and a worker mid-dispatch finishes what it already
+        claimed. When a bucket is paused, its owning worker keeps renewing the bucket's
+        lease and simply stops dispatching sends for it; pause never releases the lease
+        (use POST /relay/buckets/{bucket}/release for that). Pausing a single bucket
+        requires LEASE coordination and returns 409 otherwise - see the bucket field on
+        BucketSelector.
       operationId: pauseRelay
       requestBody:
         required: false
@@ -436,6 +440,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
 
   /relay/resume:
     post:
@@ -443,8 +451,10 @@ paths:
         - Relay
       summary: Resume the relay (optionally a single bucket)
       description: >
-        The relay reads the desired state once per poll cycle, so the effect lags by at
-        most one cycle - not immediate mid-cycle.
+        Each relay instance re-reads the desired state on its own control-refresh tick
+        (the relay's reclaimInterval, 5s by default), so the effect lags by up to that
+        interval. Resuming a single bucket requires LEASE coordination and returns 409
+        otherwise - see the bucket field on BucketSelector.
       operationId: resumeRelay
       requestBody:
         required: false
@@ -463,6 +473,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
 
   /relay/buckets:
     get:
@@ -470,8 +484,11 @@ paths:
         - Relay
       summary: Per-bucket ownership and lag
       description: >
-        Owner, lease, and lag for each virtual bucket (LEASE coordination mode — standalone
-        or embedded-multi-replica). Use to spot uncovered (stalled) buckets and hot buckets.
+        Owner, lease, and lag for each virtual bucket. Use to spot uncovered (stalled)
+        buckets and hot buckets. LEASE coordination only (standalone or
+        embedded-multi-replica): SINGLE keeps bucket ownership in-process and never writes
+        tandem_bucket_lease, so there is no per-bucket ownership to report and the request
+        returns 409 rather than a misleading reading.
       operationId: getRelayBuckets
       parameters:
         - name: uncoveredOnly
@@ -493,6 +510,39 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
+
+  /relay/buckets/{bucket}:
+    get:
+      tags:
+        - Relay
+      summary: A single bucket's ownership and lag
+      description: >
+        Owner, lease, and lag for one virtual bucket. LEASE coordination only, same reasoning
+        as GET /relay/buckets - SINGLE returns 409 rather than a misleading reading.
+      operationId: getRelayBucket
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Bucket status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
 
   /relay/buckets/{bucket}/release:
     post:
@@ -501,7 +551,8 @@ paths:
       summary: Force-release a bucket for reassignment
       description: >
         Clears the bucket's ownership lease so another worker can claim it. Use when an owner
-        is a zombie (stale heartbeat) and the bucket is stalled.
+        is a zombie (stale heartbeat) and the bucket is stalled. LEASE coordination only -
+        under SINGLE there is no bucket ownership to release and this returns 409.
       operationId: releaseBucket
       parameters:
         - name: bucket
@@ -522,12 +573,20 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
 
   /relay/workers:
     get:
       tags:
         - Relay
       summary: Active relay workers
+      description: >
+        Live relay instances, read from tandem_relay_member. LEASE coordination only, which
+        is what registers and renews that presence row; under SINGLE nothing writes it, so
+        an empty list would read as "no relay alive" when the relay is perfectly healthy -
+        the request returns 409 instead. Use GET /relay/status for a reading that works in
+        both modes.
       operationId: getRelayWorkers
       responses:
         '200':
@@ -542,6 +601,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '409':
+          $ref: '#/components/responses/CoordinationModeUnsupported'
 
 components:
   securitySchemes:
@@ -565,6 +626,22 @@ components:
             type: https://tandem.codingful.com/problems/invalid-parameter
             title: Invalid request parameter
             status: 400
+    CoordinationModeUnsupported:
+      description: >
+        The operation needs per-bucket coordination state, which only LEASE coordination
+        maintains, and the relay this database serves runs under SINGLE. Not a failure and
+        not a transient condition - the operation is inapplicable to this deployment's
+        static configuration (tandem.relay.coordination). The detail names the mode that
+        was detected.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://tandem.codingful.com/problems/relay-coordination-unsupported
+            title: Not available under this relay coordination mode
+            status: 409
+            detail: 'Per-bucket relay control requires LEASE coordination; this relay runs SINGLE'
     Unauthorized:
       description: Missing or invalid credentials
       content:
@@ -877,7 +954,12 @@ components:
         bucket:
           type: integer
           nullable: true
-          description: When omitted, the action applies to the whole relay
+          description: >
+            When omitted, the action applies to the whole relay - the only form available
+            under SINGLE coordination. Naming a bucket requires LEASE, since per-bucket
+            state lives on the tandem_bucket_lease row that only LEASE maintains and reads;
+            under SINGLE the request returns 409 rather than accepting a pause the relay
+            would never act on. Under LEASE, a bucket outside [0, bucketCount) returns 404.
 
     BucketStatus:
       type: object
@@ -947,10 +1029,19 @@ components:
           description: Total virtual buckets B (fixed)
         uncoveredBuckets:
           type: integer
-          description: Buckets with PENDING rows but no live owner (coverage stall)
+          description: >
+            Buckets with PENDING rows but no live owner (coverage stall). Always 0 under
+            SINGLE coordination, which owns every bucket in-process and so has no coverage
+            to stall - the same reason the relay's own bucket.uncovered gauge reports
+            nothing in that mode.
         workers:
           type: integer
-          description: Number of active relay workers
+          description: >
+            Live relay instances, counted from tandem_relay_member. Always 0 under SINGLE
+            coordination, which does not register presence - it does NOT mean no relay is
+            running. For SINGLE, liveness comes from the relay's own in-process
+            WorkerPool.status() or the tandem.outbox.workers.active metric, neither of
+            which a standalone admin can reach.
 
     ProblemDetail:
       type: object

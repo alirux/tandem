@@ -34,6 +34,7 @@ public final class WorkerPool {
     private final Clock clock;
     private final BackoffStrategy backoff;
     private final BucketSource bucketSource;
+    private final RelayControlSource controlSource;
     private final String instanceId;
 
     private final int workerCount;
@@ -53,11 +54,13 @@ public final class WorkerPool {
     /** Embedded topology with the basic-round defaults (no-op metrics, system clock, full-jitter backoff). */
     public WorkerPool(OutboxStore store, OutboxDispatcher dispatcher, RelayConfig cfg) {
         this(store, dispatcher, cfg, TandemMetrics.NOOP, Clock.systemUTC(),
-                BackoffStrategy.fullJitter(), BucketSource.embedded(cfg.bucketCount()));
+                BackoffStrategy.fullJitter(), BucketSource.embedded(cfg.bucketCount()), RelayControlSource.NOOP);
     }
 
     /**
-     * Full topology constructor — override any of the basic-round defaults.
+     * Full topology constructor — override any of the basic-round defaults. Admin-API pause/resume is a
+     * no-op with this overload, since it has no {@link RelayControlSource}; use the eight-argument
+     * constructor for that (HLD-admin-api §4.1).
      *
      * @param store        relay-side persistence (poll/claim/update/cleanup)
      * @param dispatcher   the publish port (e.g. {@code KafkaRelay})
@@ -70,6 +73,26 @@ public final class WorkerPool {
      */
     public WorkerPool(OutboxStore store, OutboxDispatcher dispatcher, RelayConfig cfg,
                       TandemMetrics metrics, Clock clock, BackoffStrategy backoff, BucketSource bucketSource) {
+        this(store, dispatcher, cfg, metrics, clock, backoff, bucketSource, RelayControlSource.NOOP);
+    }
+
+    /**
+     * Full topology constructor, with Admin-API pause/resume support (HLD-admin-api §4.1).
+     *
+     * @param store         relay-side persistence (poll/claim/update/cleanup)
+     * @param dispatcher    the publish port (e.g. {@code KafkaRelay})
+     * @param cfg           relay engine configuration
+     * @param metrics       metrics sink; {@link TandemMetrics#NOOP} disables it
+     * @param clock         used for cleanup's {@code doneBefore} cutoff; override in tests for determinism
+     * @param backoff       retry-delay strategy for retriable dispatch failures
+     * @param bucketSource  which virtual buckets this instance owns ({@link BucketSource#embedded} or
+     *                      {@link BucketLeaseManager} for the standalone topology)
+     * @param controlSource the Admin API's desired pause state, refreshed on {@code reclaimInterval};
+     *                      {@link RelayControlSource#NOOP} disables pause support entirely
+     */
+    public WorkerPool(OutboxStore store, OutboxDispatcher dispatcher, RelayConfig cfg,
+                      TandemMetrics metrics, Clock clock, BackoffStrategy backoff, BucketSource bucketSource,
+                      RelayControlSource controlSource) {
         this.store = Objects.requireNonNull(store, "store");
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
         this.cfg = Objects.requireNonNull(cfg, "cfg");
@@ -77,6 +100,7 @@ public final class WorkerPool {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.backoff = Objects.requireNonNull(backoff, "backoff");
         this.bucketSource = Objects.requireNonNull(bucketSource, "bucketSource");
+        this.controlSource = Objects.requireNonNull(controlSource, "controlSource");
         // Single instance identity, shared with the LEASE bucket owner (RelayConfig#instanceId), so a
         // worker/thread-name/log line correlates directly to tandem_bucket_lease.owner (LLD-jdbc §3.2).
         this.instanceId = cfg.instanceId();
@@ -107,6 +131,8 @@ public final class WorkerPool {
         }
         cfg.checkRowLeaseSafe(dispatcherTimeout.orElse(cfg.deliveryTimeoutMs()), metrics, LOG);
         bucketSource.validateOnStart(metrics, LOG);   // LEASE precondition: lease table seeded (§3.2)
+        controlSource.onStart();   // publishes this instance's coordination mode (HLD-admin-api §4.1)
+        controlSource.refresh();   // known pause state from the first cycle, not just after the first tick
         running = true;
         LOG.log(Level.INFO, "Starting relay instanceId:" + instanceId + ", workers:" + workerCount
                 + ", coordination:" + cfg.coordination());
@@ -123,6 +149,7 @@ public final class WorkerPool {
         long cleanupMs = cfg.cleanupInterval().toMillis();
         scheduler.scheduleWithFixedDelay(this::cleanupTick, cleanupMs, cleanupMs, TimeUnit.MILLISECONDS);
         scheduler.scheduleWithFixedDelay(this::heartbeatTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
+        scheduler.scheduleWithFixedDelay(this::controlTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
         if (metrics.isEnabled()) {
             // Scheduled only when an adapter is wired: with the no-op default the lag query never runs,
             // so an outbox nobody is watching pays nothing for the gauges (§4). The first reading is
@@ -133,12 +160,19 @@ public final class WorkerPool {
         }
     }
 
-    /** This worker's slice of the instance's currently-owned buckets: {@code bucket % workerCount == index}. */
+    /**
+     * This worker's slice of the instance's currently-owned, not-paused buckets:
+     * {@code bucket % workerCount == index}. Ownership is queried fresh every call (as it always was);
+     * pause is a cached, in-memory read (HLD-admin-api §4.1) — never a query on this hot path.
+     */
     private Set<Integer> sliceFor(int index) {
+        if (controlSource.wholeRelayPaused()) {
+            return Set.of();
+        }
         Set<Integer> owned = bucketSource.ownedBuckets();
         Set<Integer> mine = new HashSet<>();
         for (int bucket : owned) {
-            if (Math.floorMod(bucket, workerCount) == index) {
+            if (Math.floorMod(bucket, workerCount) == index && !controlSource.bucketPaused(bucket)) {
                 mine.add(bucket);
             }
         }
@@ -287,6 +321,15 @@ public final class WorkerPool {
             bucketSource.heartbeat();
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Bucket heartbeat failed", e);
+        }
+    }
+
+    /** Refreshes the cached Admin-API pause state (HLD-admin-api §4.1). Never disturbs delivery on failure. */
+    private void controlTick() {
+        try {
+            controlSource.refresh();
+        } catch (Exception e) {
+            LOG.log(Level.ERROR, "Relay control refresh failed", e);
         }
     }
 

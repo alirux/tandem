@@ -8,7 +8,9 @@ import com.codingful.tandem.core.port.TopicRouter;
 import com.codingful.tandem.jdbc.BackoffStrategy;
 import com.codingful.tandem.jdbc.BucketSource;
 import com.codingful.tandem.jdbc.JdbcOutboxStore;
+import com.codingful.tandem.jdbc.JdbcRelayControlSource;
 import com.codingful.tandem.jdbc.RelayConfig;
+import com.codingful.tandem.jdbc.RelayControlSource;
 import com.codingful.tandem.jdbc.WorkerPool;
 import com.codingful.tandem.kafka.KafkaRelay;
 import com.codingful.tandem.kafka.KafkaRelayConfig;
@@ -143,12 +145,19 @@ public class TandemRelayAutoConfiguration {
         return BucketSource.forCoordination(relayConfig, dataSource);
     }
 
+    /** Publishes this instance's {@link RelayConfig#coordination()} and honours Admin-API pause/resume (HLD-admin-api §4.1). */
+    @Bean
+    @ConditionalOnMissingBean
+    RelayControlSource tandemRelayControlSource(RelayConfig relayConfig, DataSource dataSource) {
+        return new JdbcRelayControlSource(dataSource, relayConfig.coordination());
+    }
+
     @Bean
     @ConditionalOnMissingBean
     WorkerPool tandemWorkerPool(OutboxStore outboxStore, OutboxDispatcher outboxDispatcher, RelayConfig relayConfig,
-            TandemMetrics tandemMetrics, BucketSource bucketSource) {
+            TandemMetrics tandemMetrics, BucketSource bucketSource, RelayControlSource relayControlSource) {
         return new WorkerPool(outboxStore, outboxDispatcher, relayConfig, tandemMetrics, Clock.systemUTC(),
-                BackoffStrategy.fullJitter(), bucketSource);
+                BackoffStrategy.fullJitter(), bucketSource, relayControlSource);
     }
 
     @Bean

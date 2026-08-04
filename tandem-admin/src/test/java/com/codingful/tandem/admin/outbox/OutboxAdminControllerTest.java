@@ -203,6 +203,19 @@ class OutboxAdminControllerTest {
     }
 
     @Test
+    @Tag("boot3-only")   // chains .principal(...) after the bare static factory — same builder note
+    void GIVEN_an_authenticated_caller_WHEN_a_message_is_replayed_THEN_the_request_still_succeeds() throws Exception {
+        insert("order-1", "{}");
+        long id = outbox.all().get(0).id();
+        outbox.markFailed(id, "boom");
+
+        mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/replay", id).principal(() -> "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
     @Tag("boot3-only")   // POSTs a JSON body — see the class javadoc's Boot4/Spring7 MockMvc builder note
     void GIVEN_a_failed_message_WHEN_discarded_with_acknowledgement_THEN_it_is_discarded() throws Exception {
         insert("order-1", "{}");

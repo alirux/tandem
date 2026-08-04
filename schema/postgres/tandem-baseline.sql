@@ -39,8 +39,17 @@ CREATE TABLE tandem_outbox (
     UNIQUE (aggregate_id, seq)               -- per-aggregate ordering safety net (HLD §4.2)
 );
 
--- Cross-cutting Tandem metadata, keyed by name (LLD-bucket-count-guard §5). Holds `bucket_count`:
--- the single value the write-side and the relay must agree on. Deliberately NOT seeded here — the
+-- Cross-cutting Tandem metadata, keyed by name (LLD-bucket-count-guard §5). Three keys today:
+--   bucket_count  — the single value the write-side and the relay must agree on.
+--   relay_paused  — the whole-relay desired state the Admin API writes and every relay instance
+--                   re-reads on its control-refresh tick (HLD-admin-api §4.1).
+--   coordination  — SINGLE or LEASE, written by the relay at startup so the Admin API knows which
+--                   per-bucket endpoints this deployment can actually answer (HLD-admin-api §4.1);
+--                   without it the admin would query LEASE-only tables that either do not exist or
+--                   are present but unmaintained, and report a healthy relay as stalled.
+-- All three live here rather than in dedicated tables because this is the one key/value table
+-- present in EVERY deployment — `tandem_bucket_lease` below exists only under LEASE coordination,
+-- so a pause stored there could not reach a SINGLE-mode relay. Deliberately NOT seeded here — the
 -- guard seeds it on first startup with whatever bucketCount the operator configured, so a fresh
 -- database with a non-default bucketCount is correct without editing this file (unlike the lease
 -- table below, whose row count must equal B and so is seeded). A database created before this table
@@ -97,6 +106,10 @@ CREATE TABLE tandem_bucket_lease (
     bucket       SMALLINT     PRIMARY KEY,   -- 0 .. B-1
     owner        VARCHAR(64),                -- worker id; NULL = free
     lease_until  TIMESTAMPTZ,                -- ownership expiry; renewed on heartbeat
+    -- Set by the Admin API's POST /relay/pause with a bucket selector (HLD-admin-api §4.1). The owning
+    -- worker keeps renewing the lease while paused and simply stops dispatching for this bucket, so a
+    -- deliberately-idle bucket stays distinguishable from an uncovered (stalled) one.
+    paused       BOOLEAN      NOT NULL DEFAULT false,
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 

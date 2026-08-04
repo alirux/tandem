@@ -3,6 +3,12 @@ package com.codingful.tandem.admin.outbox;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.codingful.tandem.admin.outbox.dto.DiscardRequest;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryPageResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxSummaryResponse;
+import com.codingful.tandem.admin.outbox.dto.ReplayRequest;
+import com.codingful.tandem.admin.outbox.dto.ReplayResultResponse;
 import com.codingful.tandem.core.AggregateId;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
@@ -175,7 +181,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        OutboxEntryResponse replayed = service.replayMessage(id);
+        OutboxEntryResponse replayed = service.replayMessage(id, "test-user");
 
         assertThat(replayed.status()).isEqualTo("PENDING");
     }
@@ -185,12 +191,12 @@ class OutboxAdminServiceTest {
         insert("order-1", 1, "{}");   // still PENDING
         long id = outbox.all().get(0).id();
 
-        assertThatThrownBy(() -> service.replayMessage(id)).isInstanceOf(MessageNotReplayableException.class);
+        assertThatThrownBy(() -> service.replayMessage(id, "test-user")).isInstanceOf(MessageNotReplayableException.class);
     }
 
     @Test
     void GIVEN_a_missing_id_WHEN_replayed_THEN_it_is_refused_as_not_found() {
-        assertThatThrownBy(() -> service.replayMessage(999_999L)).isInstanceOf(OutboxMessageNotFoundException.class);
+        assertThatThrownBy(() -> service.replayMessage(999_999L, "test-user")).isInstanceOf(OutboxMessageNotFoundException.class);
     }
 
     // --- discardMessage ---
@@ -201,7 +207,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        OutboxEntryResponse discarded = service.discardMessage(id, new DiscardRequest(true, "no longer needed"));
+        OutboxEntryResponse discarded = service.discardMessage(id, new DiscardRequest(true, "no longer needed"), "test-user");
 
         assertThat(discarded.status()).isEqualTo("DISCARDED");
         assertThat(discarded.discardReason()).isEqualTo("no longer needed");
@@ -214,7 +220,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(false, null)))
+        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(false, null), "test-user"))
                 .isInstanceOf(OrderingBreakNotAcknowledgedException.class);
     }
 
@@ -223,13 +229,13 @@ class OutboxAdminServiceTest {
         insert("order-1", 1, "{}");   // still PENDING
         long id = outbox.all().get(0).id();
 
-        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(true, "irrelevant")))
+        assertThatThrownBy(() -> service.discardMessage(id, new DiscardRequest(true, "irrelevant"), "test-user"))
                 .isInstanceOf(MessageNotDiscardableException.class);
     }
 
     @Test
     void GIVEN_a_missing_id_WHEN_discarded_THEN_it_is_refused_as_not_found() {
-        assertThatThrownBy(() -> service.discardMessage(999_999L, new DiscardRequest(true, "irrelevant")))
+        assertThatThrownBy(() -> service.discardMessage(999_999L, new DiscardRequest(true, "irrelevant"), "test-user"))
                 .isInstanceOf(OutboxMessageNotFoundException.class);
     }
 
@@ -237,7 +243,7 @@ class OutboxAdminServiceTest {
 
     @Test
     void GIVEN_a_selector_less_request_WHEN_replayed_in_bulk_THEN_it_is_refused() {
-        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest(null, null, null, null, null, false)))
+        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest(null, null, null, null, null, false), "test-user"))
                 .isInstanceOf(ReplayNoSelectorException.class);
     }
 
@@ -247,7 +253,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, false));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(result.replayed()).isEqualTo(1);
@@ -261,7 +267,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, true));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, null, true), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(result.replayed()).isZero();
@@ -276,7 +282,7 @@ class OutboxAdminServiceTest {
         outbox.markFailed(id, "boom");
 
         ReplayResultResponse result =
-                service.replayBulk(new ReplayRequest(null, "Order", null, null, List.of("FAILED"), false));
+                service.replayBulk(new ReplayRequest(null, "Order", null, null, List.of("FAILED"), false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
@@ -284,7 +290,7 @@ class OutboxAdminServiceTest {
 
     @Test
     void GIVEN_an_invalid_status_name_WHEN_replayed_in_bulk_THEN_it_is_rejected() {
-        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of("NOT_A_STATUS"), false)))
+        assertThatThrownBy(() -> service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of("NOT_A_STATUS"), false), "test-user"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -294,7 +300,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, id, id, null, false));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, id, id, null, false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
@@ -306,7 +312,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, id, null, false));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, id, null, false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
@@ -318,7 +324,7 @@ class OutboxAdminServiceTest {
         long id = outbox.all().get(0).id();
         outbox.markFailed(id, "boom");
 
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, null, List.of("FAILED"), false));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest(null, null, null, null, List.of("FAILED"), false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");
@@ -332,7 +338,7 @@ class OutboxAdminServiceTest {
 
         // Empty statuses (as opposed to omitted/null) must default the same way: every replayable
         // status for the given aggregate, not "no statuses eligible".
-        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of(), false));
+        ReplayResultResponse result = service.replayBulk(new ReplayRequest("order-1", null, null, null, List.of(), false), "test-user");
 
         assertThat(result.matched()).isEqualTo(1);
         assertThat(outbox.byId(id).status().name()).isEqualTo("PENDING");

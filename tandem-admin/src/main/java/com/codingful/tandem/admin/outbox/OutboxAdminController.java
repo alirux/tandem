@@ -1,8 +1,15 @@
 package com.codingful.tandem.admin.outbox;
 
+import com.codingful.tandem.admin.outbox.dto.DiscardRequest;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryPageResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxSummaryResponse;
+import com.codingful.tandem.admin.outbox.dto.ReplayRequest;
+import com.codingful.tandem.admin.outbox.dto.ReplayResultResponse;
 import com.codingful.tandem.core.AggregateId;
 import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
+import java.security.Principal;
 import java.time.Instant;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -67,18 +74,29 @@ class OutboxAdminController {
     }
 
     @PostMapping("/messages/{id}/replay")
-    OutboxEntryResponse replay(@PathVariable("id") long id) {
-        return service.replayMessage(id);
+    OutboxEntryResponse replay(@PathVariable("id") long id, Principal principal) {
+        return service.replayMessage(id, actorOf(principal));
     }
 
     @PostMapping("/messages/{id}/discard")
-    OutboxEntryResponse discard(@PathVariable("id") long id, @RequestBody DiscardRequest request) {
-        return service.discardMessage(id, request);
+    OutboxEntryResponse discard(@PathVariable("id") long id, @RequestBody DiscardRequest request, Principal principal) {
+        return service.discardMessage(id, request, actorOf(principal));
     }
 
     @PostMapping("/replay")
-    ReplayResultResponse replayBulk(@RequestBody ReplayRequest request) {
-        return service.replayBulk(request);
+    ReplayResultResponse replayBulk(@RequestBody ReplayRequest request, Principal principal) {
+        return service.replayBulk(request, actorOf(principal));
+    }
+
+    /**
+     * The caller's identity when the host application authenticates requests, read from the servlet
+     * {@link Principal} Spring MVC binds automatically — set by whatever mechanism the host installs
+     * (Basic auth, an OAuth2 resource server, a custom filter), never Spring Security specifically.
+     * {@code null} when the host runs no authentication (HLD-admin-api §3: Tandem ships the endpoints,
+     * not the authentication) — the audit log then simply has no actor, rather than an invented one.
+     */
+    private static String actorOf(Principal principal) {
+        return principal == null ? null : principal.getName();
     }
 
     private static OutboxStatus parseStatus(String status) {

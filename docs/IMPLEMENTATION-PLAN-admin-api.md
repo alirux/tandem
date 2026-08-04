@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Status:** Active
 **Scope:** the Admin API module, shipped in slices. **Slice 1 (reads) is done — see §6.
-Slice 2 (replay/discard) is done — see §8/§9.**
+Slice 2 (replay/discard) is done — see §8/§9. Slice 3 (relay control) is done — see §10.**
 **Contract:** [admin-api.openapi.yaml](admin-api.openapi.yaml) — frozen and reviewed (API-first).
 **Design:** [HLD-admin-api.md](HLD-admin-api.md).
 
@@ -57,7 +57,7 @@ shrinks as slices land. An unimplemented operation that is *not* on that list fa
 |---|---|---|
 | **1** | **Reads** — `getOutboxSummary`, `searchOutboxMessages`, `getOutboxMessage`. No state change; the safe first cut that answers "what is stuck and why". | **Done** |
 | 2 | **Replay + discard** — `replayMessage`, `replayBulk`, `discardMessage`. The transition that unblocks an aggregate; closes the product's biggest hole. Fold in `JdbcReplayService`'s 4 uncovered `ReplayCriteria` branches. | **Done** |
-| 3 | **Relay control + observability** — `getRelayStatus`, `pauseRelay`, `resumeRelay`, `getRelayBuckets`, `releaseBucket`, `getRelayWorkers`. Needs the `tandem_relay_control` DDL (additive) and the relay honouring it once per poll cycle, plus the `paused` flag on `BucketStatus`. | Later |
+| 3 | **Relay control + observability** — `getRelayStatus`, `pauseRelay`, `resumeRelay`, `getRelayBuckets`, `getRelayBucket`, `releaseBucket`, `getRelayWorkers`. Reuses `tandem_meta`/`tandem_bucket_lease`/`tandem_relay_member`, no new table; the relay honours pause on its own maintenance cadence. | **Done** |
 | 4 | Runtime metrics knobs (Q30): change `metricsInterval` during an incident; on-demand lag reading. | Later |
 | — | Attempt endpoints | **Deferred (§1.1)** |
 
@@ -423,6 +423,14 @@ package would already be cluttered with just the first one built. Restructured:
   Not created yet — an empty package ahead of the slice that needs it would be exactly the
   premature structure Pareto (§1.1) warns against.
 
+**Update, 2026-08-04, once both feature packages existed:** each feature's request/response DTOs
+moved into their own `outbox.dto`/`relay.dto` sub-package (§10.4), leaving each feature package's
+top level to just its configuration/service/controller/exceptions/advice. Necessarily `public` —
+Java's package-private visibility does not reach across a sub-package boundary, so the controller
+and service in the parent package could not otherwise see them. Accepted: every one of these types
+is a 1:1 rendering of the already-public OpenAPI schema, so nothing is exposed that a REST client
+could not already see on the wire.
+
 **Two real bugs found while making this change, not invented ahead of it — both explained by the
 same root cause:**
 
@@ -643,3 +651,162 @@ on both generations.
 - **Accepted, unchanged from slice 1's precedent:** every `catch (SQLException e)` (now including
   `JdbcDiscardService`'s), and `OutboxRowDetail.equals()`'s remaining combinatorial branch —
   neither touched by slice 2's changes.
+
+---
+
+## 10. Slice 3 — relay control (done)
+
+`getRelayStatus`, `pauseRelay`, `resumeRelay`, `getRelayBuckets`, `getRelayBucket`, `releaseBucket`,
+`getRelayWorkers`. Storage and coordination-mode decisions are in HLD-admin-api §4.1/§6.1 — not
+repeated here; this section is the implementation that followed from them.
+
+### 10.1 New in `tandem-core`
+
+- **`RelayCoordinationMode`** (`SINGLE`/`LEASE`) — the admin's own vocabulary, independent of
+  `tandem-jdbc`'s internal `Coordination` enum (same reasoning as every other API/core boundary
+  in this module, §3.9): the relay writes its mode as a plain string, the admin reads it back into
+  its own type. No shared type, no new dependency edge.
+- **`RelayStatusView`, `BucketStatusView`, `WorkerView`** (records) — the read model, mirroring the
+  `OutboxRowView`/`OutboxRowDetail` split: one shape per query, nothing carried "just in case."
+- **`RelayQuery`/`RelayControl`** (ports) — read and write sides, kept off `OutboxStore` for the
+  same reason `OutboxQuery`/`DiscardService` are (§3.3/§8.3): admin-only operations don't belong in
+  the relay's claim/mark/cleanup contract every `OutboxStore` adapter must implement.
+
+### 10.2 New in `tandem-jdbc`
+
+- **`JdbcRelayQuery`/`JdbcRelayControl`** — the admin-side adapters, over `tandem_meta` /
+  `tandem_bucket_lease` / `tandem_relay_member`. No new tables.
+- **`RelayControlSource`** (port) + **`JdbcRelayControlSource`** — the *relay's own* read of the
+  desired pause state, deliberately separate from `RelayControl` (admin write side) and from
+  `BucketSource` (bucket ownership): pause must work under `SINGLE`, which `BucketSource` does not
+  touch at all. Cached — `refresh()` runs on `WorkerPool`'s existing `reclaimInterval` cadence, so
+  the claim hot path (`RelayWorker.claimAndDispatch`, called continuously while busy) is never a
+  database call for this. `RelayControlSource.NOOP` is the default for `WorkerPool`'s
+  no-`DataSource` convenience constructor, which structurally cannot check control state.
+- **`WorkerPool`** — a new 8-argument constructor overload (`RelayControlSource` added; the
+  7-argument one now delegates to it with `NOOP`, so no existing call site broke). `start()` calls
+  `controlSource.onStart()` (publishes `coordinationMode` to `tandem_meta`, once) and an immediate
+  `refresh()` (so pause state is known from the first cycle, not just after the first tick);
+  `sliceFor()` returns `Set.of()` when the whole relay is paused, else filters owned buckets by
+  `controlSource.bucketPaused(bucket)`. Ownership itself is still queried fresh every call, exactly
+  as before — only the new pause check is cached.
+- **`TandemRelayAutoConfiguration`** (`tandem-spring-relay`) wires a `JdbcRelayControlSource` bean
+  and passes it into the `WorkerPool` bean — without this, a real embedded relay would compile and
+  run but never honour anything the Admin API writes. Caught by re-reading the autoconfiguration
+  after the port existed, not by a failing test (the old 7-argument construction call remained
+  valid), and closed with a new wiring assertion in `TandemRelayAutoConfigurationTest`.
+
+### 10.3 New in `tandem-test`
+
+- **`InMemoryRelayControl`** implementing both `RelayQuery` and `RelayControl` — the no-mocks
+  collaborator for the admin unit tests. Takes an `InMemoryOutbox` at construction and reads its
+  rows for `pendingCount`/`lagAgeSeconds`, mirroring exactly how the real adapter joins
+  `tandem_bucket_lease` with `tandem_outbox` — one shared source of row state, never a second copy.
+
+### 10.4 New in `tandem-admin`
+
+`com.codingful.tandem.admin.relay` — the third feature package, alongside `outbox`, following the
+shape §7 already set: `RelayAdminConfiguration` is the one public type; `RelayAdminService`/
+`RelayAdminController`/`RelayExceptionHandler` (`@Order(0)`, same load-bearing reason as
+`OutboxExceptionHandler`) are package-private. `RelayAdminService.requireLeaseCoordination()` is
+the single choke point every per-bucket/per-worker method calls before touching `RelayQuery`/
+`RelayControl` — the 409 decision lives in one place, not duplicated per endpoint. The
+request/response DTOs (`BucketSelectorRequest`, `BucketStatusResponse`, `RelayStatusResponse`,
+`WorkerInfoResponse`) live in `relay.dto`, `public` (§7's 2026-08-04 update) — same treatment
+`outbox.dto` got at the same time.
+
+### 10.5 Tests
+
+Same layering as slices 1/2: `RelayAdminServiceTest` (unit, `InMemoryRelayControl`),
+`RelayAdminControllerTest` (MockMvc), `RelayAdminIT` (`TandemTestContainer`, real
+`JdbcRelayQuery`/`JdbcRelayControl`), plus two new `WorkerPoolTest` cases proving the relay itself
+stops claiming when paused (whole-relay and single-bucket), and JDBC-level ITs for
+`JdbcRelayQuery`/`JdbcRelayControl`/`JdbcRelayControlSource`.
+
+**One shared-fixture bug the JDBC ITs caught, not code review:** `AbstractPostgresIT.resetTables()`
+reset `tandem_bucket_lease.owner`/`lease_until` between tests but not the new `paused` column, so a
+test that paused a bucket leaked that state into the next one sharing the same container. Fixed by
+adding `paused = false` to the same reset statement.
+
+**One real bug the MockMvc IT caught, exactly like slice 1's original find:** `RelayAdminIT`'s
+`MockMvc` was built without the configured `ObjectMapper`, so `Instant` fields serialized as epoch
+numbers and failed the `date-time` conformance check on the first run. Fixed by wiring
+`TandemAdminObjectMappers.newDefault()` through a `MappingJackson2HttpMessageConverter`, matching
+every other test in this module.
+
+**Coverage review closed two genuine gaps:** `RelayAdminService.resume()`'s not-found branch
+(only `pause()`'s was tested) and `RelayStatusResponse`'s `uncoveredBuckets` count under `LEASE`
+with a real uncovered-and-pending bucket. Accepted, matching precedent: the `catch (SQLException e)`
+blocks in every new JDBC adapter, and two defensive guards in `InMemoryRelayControl` (a constructor
+argument check and a test-affordance's bad-bucket guard) that only a misused test helper could ever
+reach.
+
+**A real bug found manually, against the `run-lease.sh` demo, after the test suite was already
+green — every `@RestControllerAdvice` in `tandem-admin` was unscoped.** `GET /relay/buckets/{id}`
+(not a contract operation) hit no controller, Spring routed it to `NoResourceFoundException`, and
+`TandemAdminExceptionHandler`'s `@ExceptionHandler(Exception.class)` caught it and rendered a
+`500 internal-error` — masking what should have been a plain `404`. The deeper problem an unscoped
+advice has nothing to do with routing misses specifically: `@RestControllerAdvice` with no
+`basePackages`/`basePackageClasses` applies to **every controller in the whole
+`ApplicationContext`**, so in embedded mode it would also catch exceptions from the *host
+application's own* controllers, rendering an unrelated `IllegalArgumentException` as one of this
+module's RFC 9457 problems. Fixed by scoping all three advice beans
+(`TandemAdminExceptionHandler` → `com.codingful.tandem.admin`, `OutboxExceptionHandler` →
+`.outbox`, `RelayExceptionHandler` → `.relay`) with `basePackages`, string-based rather than
+`basePackageClasses` because most controllers are package-private and cannot be referenced from a
+sibling package. As a side effect this also fixed the original routing-miss bug for free:
+`NoResourceFoundException` is thrown by `ResourceHttpRequestHandler`, not a `@Controller`, so a
+scoped advice never matches it and it now falls through to Spring Boot's own default `404`.
+Verified against the real `run-lease.sh`/`run.sh` apps, not just the test suite — this class of bug
+does not reproduce in `MockMvcBuilders.standaloneSetup(...)` (it registers advice instances
+directly, bypassing `ControllerAdviceBean`'s package-scoping evaluation entirely) nor in the
+existing `TandemAdminEndToEndTest` (its only controller *is* in-scope, so scoping was never
+exercised as a boundary). Confirmed all three test styles still pass after scoping.
+
+**`GET /relay/buckets/{bucket}` added afterwards** — reading a single bucket had no dedicated
+operation; `GET /relay/buckets` only supports listing (optionally filtered to uncovered). Added
+contract-first (new `getRelayBucket` operation, same `409`/`404` shape as the sibling endpoints) and
+wired straight onto the existing `RelayQuery.bucket(int)` method, which slice 3 already had for
+`releaseBucket`'s return value — no new port method needed.
+
+**Write-operation audit logging added afterwards, prompted by two user questions in the same
+turn: does the admin log its write operations, and can the host's authenticated caller be
+attributed in the log?** Answer to the first was no — `OutboxAdminService`/`RelayAdminService` had
+no logger at all before this. Design decision recorded in HLD-admin-api §3; implementation:
+- Both use-case classes gained an SLF4J `Logger` (this module already logs via SLF4J —
+  `TandemAdminExceptionHandler` did from slice 1) and now log once, at `INFO`, after every
+  write operation succeeds: `replayMessage`, `discardMessage`, `replayBulk`
+  (`OutboxAdminService`); `pause`, `resume`, `releaseBucket` (`RelayAdminService`). Reads are
+  deliberately not logged — a monitoring dashboard polling `GET /relay/status` would flood the
+  log with traffic that mutates nothing.
+- Every write method gained a trailing `String actor` parameter, threaded through from
+  `OutboxAdminController`/`RelayAdminController`, which extract it from a
+  `java.security.Principal` method parameter — a plain JDK type, not a servlet-API or Spring
+  Security dependency; Spring MVC's built-in argument resolver binds it from
+  `HttpServletRequest.getUserPrincipal()` for *any* authentication mechanism the host installs.
+  `null` when the host runs no authentication, which the log then simply omits rather than
+  inventing an identity. Kept the use-case layer framework-agnostic per its own javadoc: it
+  receives a plain `String`, never the `Principal` itself.
+- Log format follows AGENTS.md's logging rules: fixed message text, then a `name:value` tail —
+  e.g. `"Outbox message replayed id:{}, actor:{}"`, `"Relay pause applied bucket:{}, actor:{}"`
+  (`bucket` renders as the literal string `ALL` for a whole-relay pause/resume, since those
+  operations have no bucket number to log).
+- Verified against the real `run.sh` demo (port 8082, to avoid the user's own instance), not just
+  compiled code: hit `replay`/`pause`/`resume` over curl and confirmed the exact log lines,
+  `actor:null` since the demo configures no authentication — e.g.
+  `INFO ... c.c.t.admin.outbox.OutboxAdminService : Outbox message replayed id:8, actor:null`.
+  New MockMvc regression tests (`GIVEN_an_authenticated_caller_WHEN_...`, one per controller)
+  chain `.principal(() -> "alice")` onto a body-less `POST` and assert the request still
+  succeeds — tagged `boot3-only` since chaining *any* builder method after the bare static
+  factory hits the same Boot4/Spring7 `MockMvc` incompatibility as `.contentType(...)`/`.content(...)`
+  (§10.5 above). Asserting the log line's actual text was deliberately not attempted: the module
+  has no SLF4J test binding (by design, AGENTS.md §Logging — "the library ships no logging
+  configuration") and adding one just to capture log output for one feature would be
+  disproportionate; the real-demo run above is the verification of record, same precedent already
+  followed for other observability work in this project (show the actual emitted output before
+  proposing a commit, rather than relying only on a unit assertion).
+- `tandem-sample-spring/application.yml`'s `logging.level` gained `com.codingful.tandem: INFO`
+  alongside the existing `root: WARN`, scoped rather than raising root wholesale — the demo's own
+  narration (`System.out`) stays the star of the console, uncluttered by Spring's own startup
+  noise, while the new audit lines (and any other Tandem `INFO` logging) are visible when driving
+  the running app with the curl commands it prints.

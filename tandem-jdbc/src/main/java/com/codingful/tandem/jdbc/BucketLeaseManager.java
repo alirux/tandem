@@ -10,7 +10,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -31,6 +33,8 @@ import javax.sql.DataSource;
  * and the fleet rebalances (LLD-jdbc §3.2).
  */
 public final class BucketLeaseManager implements BucketSource {
+
+    private static final Logger LOG = System.getLogger(BucketLeaseManager.class.getName());
 
     /** Metric/log identifier for the {@code LEASE} lease-table precondition (LLD-jdbc §3.2/§3.5). */
     public static final String CHECK_BUCKET_LEASE_SEEDED = "bucket_lease_not_seeded";
@@ -69,16 +73,18 @@ public final class BucketLeaseManager implements BucketSource {
 
     private static final String RELEASE_EXCESS_SQL =
             "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL, updated_at = now()"
-                    + " WHERE bucket IN (SELECT bucket FROM tandem_bucket_lease WHERE owner = ? ORDER BY bucket DESC LIMIT ?)";
+                    + " WHERE bucket IN (SELECT bucket FROM tandem_bucket_lease WHERE owner = ? ORDER BY bucket DESC LIMIT ?)"
+                    + " RETURNING bucket";
 
     private static final String CLAIM_DEFICIT_SQL =
             "UPDATE tandem_bucket_lease SET owner = ?, lease_until = now() + (? * interval '1 millisecond'), updated_at = now()"
                     + " WHERE bucket IN (SELECT bucket FROM tandem_bucket_lease"
                     + "                   WHERE owner IS NULL OR lease_until < now()"
-                    + "                   ORDER BY bucket LIMIT ? FOR UPDATE SKIP LOCKED)";
+                    + "                   ORDER BY bucket LIMIT ? FOR UPDATE SKIP LOCKED)"
+                    + " RETURNING bucket";
 
     private static final String RELEASE_ALL_SQL =
-            "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL, updated_at = now() WHERE owner = ?";
+            "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL, updated_at = now() WHERE owner = ? RETURNING bucket";
 
     // A bucket is a coverage stall when it is free/expired (same predicate as CLAIM_DEFICIT_SQL) AND
     // has work waiting — the EXISTS rides tandem_outbox's own idx_tandem_outbox_dispatch partial index
@@ -277,7 +283,11 @@ public final class BucketLeaseManager implements BucketSource {
     private void releaseOwnedBuckets(Connection conn) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(RELEASE_ALL_SQL)) {
             ps.setString(1, ownerId);
-            ps.executeUpdate();
+            List<Integer> released = returnedBuckets(ps);
+            if (!released.isEmpty()) {
+                LOG.log(Level.INFO, "Relay released all owned buckets owner:" + ownerId
+                        + ", count:" + released.size() + describeIfSmall(released));
+            }
         }
     }
 
@@ -285,7 +295,11 @@ public final class BucketLeaseManager implements BucketSource {
         try (PreparedStatement ps = conn.prepareStatement(RELEASE_EXCESS_SQL)) {
             ps.setString(1, ownerId);
             ps.setInt(2, excess);
-            ps.executeUpdate();
+            List<Integer> released = returnedBuckets(ps);
+            if (!released.isEmpty()) {
+                LOG.log(Level.INFO, "Relay released excess buckets owner:" + ownerId
+                        + ", count:" + released.size() + describeIfSmall(released));
+            }
         }
     }
 
@@ -294,7 +308,41 @@ public final class BucketLeaseManager implements BucketSource {
             ps.setString(1, ownerId);
             ps.setLong(2, leaseMillis);
             ps.setInt(3, deficit);
-            ps.executeUpdate();
+            List<Integer> claimed = returnedBuckets(ps);
+            if (!claimed.isEmpty()) {
+                LOG.log(Level.INFO, "Relay claimed buckets owner:" + ownerId
+                        + ", count:" + claimed.size() + describeIfSmall(claimed));
+            }
         }
+    }
+
+    /**
+     * Runs an {@code UPDATE ... RETURNING bucket} as a query (PostgreSQL returns a result set for it)
+     * and collects the affected bucket numbers — the log line then names exactly which buckets moved,
+     * not just how many.
+     */
+    private static List<Integer> returnedBuckets(PreparedStatement ps) throws SQLException {
+        List<Integer> buckets = new ArrayList<>();
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                buckets.add(rs.getInt(1));
+            }
+        }
+        return buckets;
+    }
+
+    /**
+     * The full bucket list, sorted, appended as {@code , buckets:[...]} — but only up to 20 of them.
+     * A single-instance {@code LEASE} startup claims every bucket at once (up to a few hundred by
+     * default), and enumerating all of them would turn one coordination event into an unreadable
+     * line; {@code count} above already answers "how many" for that case.
+     */
+    private static String describeIfSmall(List<Integer> buckets) {
+        if (buckets.size() > 20) {
+            return "";
+        }
+        List<Integer> sorted = new ArrayList<>(buckets);
+        sorted.sort(null);
+        return ", buckets:" + sorted;
     }
 }

@@ -38,7 +38,7 @@ abstract class AbstractPostgresIT {
     @BeforeEach
     void resetTables() {
         execute("TRUNCATE tandem_outbox RESTART IDENTITY",
-                "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL",
+                "UPDATE tandem_bucket_lease SET owner = NULL, lease_until = NULL, paused = false",
                 "TRUNCATE tandem_relay_member",
                 // Cleared so each test's first component construction re-seeds the bucket-count guard
                 // (LLD-bucket-count-guard); every IT uses bucketCount 256, so re-seeding is consistent.

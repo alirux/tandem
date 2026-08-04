@@ -8,7 +8,9 @@ import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.core.port.TopicRouter;
 import com.codingful.tandem.jdbc.BucketSource;
+import com.codingful.tandem.jdbc.JdbcRelayControlSource;
 import com.codingful.tandem.jdbc.RelayConfig;
+import com.codingful.tandem.jdbc.RelayControlSource;
 import com.codingful.tandem.jdbc.WorkerPool;
 import java.time.Duration;
 import javax.sql.DataSource;
@@ -53,6 +55,8 @@ class TandemRelayAutoConfigurationTest {
             assertThat(context).hasSingleBean(BucketSource.class);
             assertThat(context).hasSingleBean(WorkerPool.class);
             assertThat(context).hasSingleBean(RelayConfig.class);
+            assertThat(context).hasSingleBean(RelayControlSource.class);
+            assertThat(context.getBean(RelayControlSource.class)).isInstanceOf(JdbcRelayControlSource.class);
             assertThat(context.getBean(TandemMetrics.class)).isSameAs(TandemMetrics.NOOP);
         });
     }

@@ -33,8 +33,17 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  * <p>Public: every feature package composes this alongside its own advice, both in production (via
  * the root autoconfiguration's {@code @Import}) and in a feature's own standalone MockMvc tests that
  * want the full, realistic error-rendering behaviour rather than just their own specific mapping.
+ *
+ * <p><b>{@code basePackages} is load-bearing, not decorative.</b> An unscoped {@code @RestControllerAdvice}
+ * applies to every {@code @Controller} in the whole {@code ApplicationContext} — in embedded mode, that
+ * includes the host application's own controllers, which have nothing to do with Tandem. Without this,
+ * an unrelated {@code IllegalArgumentException} thrown by the host's own endpoint would be rendered as
+ * one of *this* module's RFC 9457 problems. Scoped to the whole {@code admin} package tree (a prefix
+ * match, so it also covers {@code outbox}, {@code relay}, and any future feature package without needing
+ * to list them here) rather than to specific controller classes, which this generic advice — by design —
+ * does not know about.
  */
-@RestControllerAdvice
+@RestControllerAdvice(basePackages = "com.codingful.tandem.admin")
 @Order(Ordered.LOWEST_PRECEDENCE)
 public class TandemAdminExceptionHandler {
 

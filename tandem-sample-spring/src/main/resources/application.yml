@@ -8,6 +8,11 @@ spring:
 logging:
   level:
     root: WARN
+    # Scoped, not root: WARN keeps Spring's own startup noise out of the demo's console so the
+    # sample's own narration (System.out) stays the star of it, while this still surfaces Tandem's
+    # own log lines — notably the Admin API's audit log for every write operation (replay, discard,
+    # pause, resume, release) — when you drive the running app with the curl commands it prints.
+    com.codingful.tandem: INFO
 
 # [DEMO-ONLY] Start the Testcontainers PostgreSQL + Kafka and publish their addresses as properties
 # before the context binds, so the DataSource and Tandem's autoconfigurations wire from real properties.
@@ -24,6 +29,22 @@ context:
 tandem:
   outbox:
     bucket-count: 256
-  # [DEMO-ONLY] Also demonstrates the Admin API's slice-1 read endpoints, off by default otherwise.
+  # [DEMO-ONLY] Also demonstrates the Admin API's read/replay/discard/relay-control endpoints,
+  # off by default otherwise.
   admin:
     enabled: true
+
+---
+# [DEMO-ONLY] The "lease" profile (run-lease.sh) demonstrates the Admin API's LEASE-only relay
+# endpoints (GET /relay/buckets, GET /relay/workers, POST /relay/buckets/{bucket}/release) against
+# a real tandem_bucket_lease/tandem_relay_member, which SINGLE (the default above, and the common
+# case) never touches. A faster reclaimInterval just makes the demo's own wait shorter — real
+# deployments keep the 5s default.
+spring:
+  config:
+    activate:
+      on-profile: lease
+tandem:
+  relay:
+    coordination: LEASE
+    reclaim-interval: 2s

@@ -110,6 +110,15 @@ class BucketLeaseManagerIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_an_instance_owning_nothing_WHEN_it_releases_THEN_nothing_happens() {
+        BucketLeaseManager idle = manager("instance-1");   // never heartbeat, so it owns zero buckets
+
+        assertThatCode(idle::release).doesNotThrowAnyException();
+
+        assertThat(idle.ownedBuckets()).isEmpty();
+    }
+
+    @Test
     void GIVEN_an_instance_owning_buckets_WHEN_it_releases_THEN_the_buckets_become_free_again() {
         BucketLeaseManager only = manager("instance-1");
         only.heartbeat();

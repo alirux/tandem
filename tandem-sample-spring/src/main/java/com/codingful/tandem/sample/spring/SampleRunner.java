@@ -27,7 +27,7 @@ import org.springframework.stereotype.Component;
  * just the {@code @TransactionalOutbox} methods on {@link OrderService}, and its relay runs itself.
  */
 @Component
-@Profile("!test")   // the smoke test drives the tiers itself; the demo narration would be an uncontrolled precondition
+@Profile("!test & !lease")   // the smoke test drives the tiers itself; "lease" runs LeaseRelayDemoRunner instead
 class SampleRunner implements CommandLineRunner {
 
     private static final int EXPECTED_EVENTS = 8;
@@ -179,6 +179,15 @@ class SampleRunner implements CommandLineRunner {
         System.out.printf("  curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/%d/discard \\%n", failedId);
         System.out.println("       -H 'Content-Type: application/json' \\");
         System.out.println("       -d '{\"acknowledgeOrderingBreak\": true, \"reason\": \"demo\"}'");
+        System.out.println();
+        System.out.println("  Relay control (works under this SINGLE coordination, the default):");
+        System.out.println("  curl http://localhost:8080/tandem/admin/v1/relay/status");
+        System.out.println("  curl -X POST http://localhost:8080/tandem/admin/v1/relay/pause");
+        System.out.println("  curl -X POST http://localhost:8080/tandem/admin/v1/relay/resume");
+        System.out.println();
+        System.out.println("  Per-bucket/per-worker endpoints need LEASE coordination - SINGLE (this demo)");
+        System.out.println("  refuses them rather than answer with misleading data:");
+        System.out.println("  curl -i http://localhost:8080/tandem/admin/v1/relay/buckets   # 409, see run-lease.sh instead");
     }
 
     /** [DEMO-ONLY] The object payload for the template tier; Jackson serializes it to JSON. */

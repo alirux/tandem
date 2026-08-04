@@ -142,6 +142,12 @@ this step is skipped entirely (no `tandem_aggregate_clock` table, no upsert) —
 - **Connections:** plain pooled connections (HikariCP or the app's `DataSource`). **No dedicated/affined
   connection** is required (the bucket-lease design removed the advisory-lock connection-affinity of the
   rejected claim model).
+- **Admin-API pause (HLD-admin-api §4.1) is a cached read, never a hot-path query.** A `RelayControlSource`
+  refreshes the desired whole-relay/per-bucket pause state on the same maintenance cadence as
+  `heartbeatTick`/`reclaimTick` (`reclaimInterval`, 5 s by default); `sliceFor()` consults the cached
+  result on every claim, so pause support costs nothing beyond that one periodic query — the claim loop
+  itself (§3.1, continuous while busy) never touches the database for it. `RelayControlSource.NOOP`
+  keeps this a no-op where no `DataSource` is available (the basic-round convenience constructor).
 
 ### 3.2 Bucket assignment — the coordination mode
 
@@ -192,6 +198,14 @@ interface BucketSource {
   its presence row expires too and is pruned. On graceful shutdown an instance releases its buckets
   **and** deletes its presence row, so peers rebalance immediately rather than waiting for expiry.
   Ownership is queryable (the Admin API reads `tandem_bucket_lease` for relay status / `bucket.uncovered`).
+  **Every actual ownership change logs at `INFO`** — a claim, an excess release, or a full release on
+  shutdown — naming which buckets moved (`UPDATE ... RETURNING bucket`), not just a count; a single-instance
+  startup claiming hundreds of buckets at once is logged as a count only (`buckets:` is added only up to
+  20 entries) so one coordination event does not become one unreadable line. A heartbeat tick that changes
+  nothing (`owned == target`) logs nothing — this is a low-frequency coordination-event log, not a
+  per-cycle one (AGENTS.md logging §4). This is what lets an operator see, from the log alone, that a
+  bucket the Admin API force-released (`RelayAdminService`, HLD-admin-api §3) was picked back up by a
+  live instance on its next heartbeat.
 
   > **Why presence is decoupled from ownership (the fair-share divisor counts `tandem_relay_member`,
   > not bucket owners).** If `live` were derived from bucket ownership, an instance that currently owns
@@ -581,6 +595,13 @@ WorkerPool        relay      = new WorkerPool(store, dispatcher, cfg,
                                    TandemMetrics.NOOP, Clock.systemUTC(),
                                    BackoffStrategy.fullJitter(), buckets);       // full constructor
 
+// With Admin-API pause/resume support (HLD-admin-api §4.1) — an eighth argument, RelayControlSource,
+// publishes this instance's coordination mode to tandem_meta and caches the desired pause state:
+RelayControlSource control    = new JdbcRelayControlSource(dataSource, cfg.coordination());
+WorkerPool        relay       = new WorkerPool(store, dispatcher, cfg,
+                                   TandemMetrics.NOOP, Clock.systemUTC(),
+                                   BackoffStrategy.fullJitter(), buckets, control);
+
 relay.start();
 // on shutdown: relay.stop();   // graceful — buckets released (LEASE), in-flight recovered by row lease
 ```
@@ -599,8 +620,10 @@ a sample payload to bytes and asserts the CloudEvent body on the topic (LLD-test
 
 - **Q6** — full property reference (the `tandem.*` contract in `tandem-spring-producer` / `tandem-spring-relay`, LLD-spring-config §2); the basic-round defaults are in §6.
 - **Q28** — full MySQL DDL (partial-index workaround, partitioning).
-- The `tandem_bucket_lease` table doubles as / aligns with the **relay heartbeat-status** the Admin API needs
-  (HLD-admin-api §4.1) — reconcile the two into one mechanism when writing `tandem-admin`.
+- ~~The `tandem_bucket_lease` table doubles as / aligns with the relay heartbeat-status the Admin API
+  needs~~ — **done**: `JdbcRelayQuery`/`JdbcRelayControl` (`tandem-admin`) read/write the same
+  `tandem_bucket_lease`/`tandem_relay_member`/`tandem_meta` tables the relay engine already
+  maintains; no separate mechanism (HLD-admin-api §4.1).
 
 *(Q17 — producer retriable/permanent classification — resolved in LLD-kafka §4; the verdict rides in
 `OutboxDispatchException.isRetriable()`, LLD-core §3.)*

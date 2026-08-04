@@ -67,6 +67,13 @@ If the relay crashes after publishing but before marking the row done, it republ
   mode: `SINGLE` (one instance owns all buckets, zero cost) or `LEASE` (lease-partitioned ownership
   for a horizontally-scaled client or multiple relay processes). Both modes are implemented and
   tested. Only the outbox INSERT must live in the client, which stays dependency-light.
+- **An Admin API to see and act on a stuck outbox** — `tandem-admin`, an optional REST module
+  (off by default) covering the outbox (health summary, search, message detail, replay, bulk
+  replay, discard) and the relay (status, pause/resume — whole relay or one bucket under `LEASE`,
+  per-bucket/per-worker observability, force-release a stalled bucket). API-first: the OpenAPI
+  contract is the source of truth. Every write operation is audit-logged, including the caller's
+  identity when the host application authenticates requests. Contract:
+  [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
 - **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
   implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
   INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
@@ -288,6 +295,20 @@ curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/replay
 curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/discard \
      -H 'Content-Type: application/json' \
      -d '{"acknowledgeOrderingBreak": true, "reason": "demo"}'
+
+# Relay control - works under this SINGLE coordination, the default:
+curl http://localhost:8080/tandem/admin/v1/relay/status
+curl -X POST http://localhost:8080/tandem/admin/v1/relay/pause
+curl -X POST http://localhost:8080/tandem/admin/v1/relay/resume
+```
+
+`GET /relay/buckets`, `GET /relay/buckets/{bucket}`, `GET /relay/workers`, and
+`POST /relay/buckets/{bucket}/release` need `LEASE` coordination — `SINGLE` refuses them (`409`)
+rather than answer with misleading data. Run the sample under `LEASE` instead to try those for real,
+against an actually-owned bucket:
+
+```bash
+./tandem-sample-spring/run-lease.sh
 ```
 
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
@@ -442,11 +463,9 @@ Not yet shipped, in no particular order:
 
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
-- **`tandem-admin`** — an API-first REST Admin API to inspect and act on outbox state. Reads
-  (health summary, search, message detail), single/bulk replay, and discard ship today, off by
-  default (`tandem.admin.enabled=true`); relay pause/resume and per-bucket control are still to
-  come. Contract: [HLD-admin-api.md](docs/HLD-admin-api.md) ·
-  [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
+- **The Admin API's attempt archive endpoints** — `getMessageAttempts`/`searchAttempts` are in the
+  committed contract but not implemented; they depend on the forensic per-attempt archive below,
+  itself not yet built.
 - **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, a
   forensic per-attempt archive, and W3C trace/correlation propagation. Each has a design document
   ([causal-ordering.md](docs/causal-ordering.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),

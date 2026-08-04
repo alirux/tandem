@@ -1,5 +1,11 @@
 package com.codingful.tandem.admin.outbox;
 
+import com.codingful.tandem.admin.outbox.dto.DiscardRequest;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryPageResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxEntryResponse;
+import com.codingful.tandem.admin.outbox.dto.OutboxSummaryResponse;
+import com.codingful.tandem.admin.outbox.dto.ReplayRequest;
+import com.codingful.tandem.admin.outbox.dto.ReplayResultResponse;
 import com.codingful.tandem.core.AggregateId;
 import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxRowView;
@@ -22,6 +28,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Slice 1 (reads) and slice 2 (replay/discard) use cases for the Admin API (HLD-admin-api §4) —
@@ -30,8 +38,16 @@ import java.util.function.Supplier;
  * {@link OutboxStore#lag()} for the backlog reading {@link OutboxSummaryResponse} needs, to
  * {@link ReplayService} for replay (reused almost 1:1 from the existing per-aggregate replay), and to
  * {@link DiscardService} for discard (new in slice 2, IMPLEMENTATION-PLAN-admin-api.md §8).
+ *
+ * <p>Every write operation logs at INFO once it succeeds — the audit trail HLD-admin-api §3 promises
+ * for a surface that mutates delivery state. {@code actor} is the caller's identity when the host
+ * application authenticates requests, or {@code null} when it does not; {@link OutboxAdminController}
+ * extracts it from the servlet {@link java.security.Principal}, so this class stays framework-agnostic
+ * and never invents an identity of its own.
  */
 final class OutboxAdminService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(OutboxAdminService.class);
 
     private final OutboxQuery outboxQuery;
     private final OutboxStore outboxStore;
@@ -99,16 +115,17 @@ final class OutboxAdminService {
      * satisfies {@link ReplayCriteria}'s "at least one selector" invariant for free; no status
      * filter is needed since {@code ReplayService} already restricts to {@code DONE}/{@code FAILED}.
      */
-    OutboxEntryResponse replayMessage(long id) {
+    OutboxEntryResponse replayMessage(long id, String actor) {
         ReplayResult result = replayService.replay(new ReplayCriteria(null, null, id, id, Set.of(), false));
         if (result.replayed() == 0) {
             requireExists(id, () -> new MessageNotReplayableException(id));
         }
+        LOG.info("Outbox message replayed id:{}, actor:{}", id, actor);
         return findById(id).orElseThrow(() -> new OutboxMessageNotFoundException(id));
     }
 
     /** {@code POST /outbox/messages/{id}/discard}: marks one {@code FAILED} row {@code DISCARDED}. */
-    OutboxEntryResponse discardMessage(long id, DiscardRequest request) {
+    OutboxEntryResponse discardMessage(long id, DiscardRequest request, String actor) {
         if (!request.acknowledgeOrderingBreak()) {
             throw new OrderingBreakNotAcknowledgedException();
         }
@@ -116,6 +133,7 @@ final class OutboxAdminService {
         if (!discarded) {
             requireExists(id, () -> new MessageNotDiscardableException(id));
         }
+        LOG.info("Outbox message discarded id:{}, reason:{}, actor:{}", id, request.reason(), actor);
         return findById(id).orElseThrow(() -> new OutboxMessageNotFoundException(id));
     }
 
@@ -123,7 +141,7 @@ final class OutboxAdminService {
      * {@code POST /outbox/replay}: replays every {@code DONE}/{@code FAILED} row matching the given
      * criteria, or previews the match count when {@code dryRun} is set.
      */
-    ReplayResultResponse replayBulk(ReplayRequest request) {
+    ReplayResultResponse replayBulk(ReplayRequest request, String actor) {
         Set<OutboxStatus> statuses = parseStatuses(request.statuses());
         boolean hasSelector = request.aggregateId() != null
                 || request.aggregateType() != null
@@ -140,7 +158,10 @@ final class OutboxAdminService {
                 request.toId(),
                 statuses,
                 request.dryRun());
-        return ReplayResultResponse.from(replayService.replay(criteria));
+        ReplayResult result = replayService.replay(criteria);
+        LOG.info("Outbox bulk replay executed matched:{}, replayed:{}, dryRun:{}, actor:{}",
+                result.matched(), result.replayed(), result.dryRun(), actor);
+        return ReplayResultResponse.from(result);
     }
 
     /**
