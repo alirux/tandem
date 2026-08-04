@@ -135,7 +135,9 @@ public final class WorkerPool {
         controlSource.refresh();   // known pause state from the first cycle, not just after the first tick
         running = true;
         LOG.log(Level.INFO, "Starting relay instanceId:" + instanceId + ", workers:" + workerCount
-                + ", coordination:" + cfg.coordination());
+                + ", coordination:" + cfg.coordination() + ", bucketCount:" + cfg.bucketCount()
+                + ", batchSize:" + cfg.batchSize() + ", pollIntervalMs:" + cfg.pollInterval().toMillis()
+                + ", maxAttempts:" + cfg.maxAttempts() + ", rowLeaseMs:" + cfg.rowLease().toMillis());
         for (int i = 0; i < workerCount; i++) {
             int index = i;
             String workerId = "tandem-relay-" + instanceId + "-w" + index;
@@ -148,7 +150,10 @@ public final class WorkerPool {
         scheduler.scheduleWithFixedDelay(this::reclaimTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
         long cleanupMs = cfg.cleanupInterval().toMillis();
         scheduler.scheduleWithFixedDelay(this::cleanupTick, cleanupMs, cleanupMs, TimeUnit.MILLISECONDS);
-        scheduler.scheduleWithFixedDelay(this::heartbeatTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
+        // Initial delay 0, unlike reclaimTick/controlTick: under LEASE this is the first bucket claim, and
+        // a relay that waited a full reclaimInterval to own any bucket would sit idle for no reason — same
+        // rationale as metricsTick's immediate first read below.
+        scheduler.scheduleWithFixedDelay(this::heartbeatTick, 0, reclaimMs, TimeUnit.MILLISECONDS);
         scheduler.scheduleWithFixedDelay(this::controlTick, reclaimMs, reclaimMs, TimeUnit.MILLISECONDS);
         if (metrics.isEnabled()) {
             // Scheduled only when an adapter is wired: with the no-op default the lag query never runs,
