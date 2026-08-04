@@ -753,6 +753,11 @@ Design highlights (full design: [HLD-tracing.md](HLD-tracing.md)):
   in `tandem-spring-producer`) and OpenTelemetry (optional `tandem-tracing-otel`).
 - **Off by default, zero cost when off.** Guarded capture — no context lookup, no
   allocation, nothing added to `headers` when disabled.
+- **Rich mode is per record, and only where work happened.** The optional relay-side span is
+  emitted **one per outbox record**, parented to that record's own captured context — a claimed
+  batch is a fan-in of unrelated traces, so no single parent for it is correct — and never for a
+  poll that claimed nothing. Span attributes carry the same structural identifiers as logs, never
+  payloads (HLD-tracing.md §6.1–§6.4).
 - **Feeds the attempt archive (§7.1)**, whose `trace_id` / `correlation_id` columns are
   populated from these headers. `correlation_id` is distinct from the `causation_id` of §9.
 

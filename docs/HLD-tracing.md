@@ -111,6 +111,61 @@ consumer continues the trace with zero Tandem-specific knowledge.
   attempt archive (§7.1). Requires a tracing adapter on the relay side; off unless asked
   for.
 
+Four rules constrain rich mode. Each one, broken, produces traces that *look* plausible and
+are wrong.
+
+### 6.1 One span per record — a batch span has no correct parent
+
+`tandem.relay.publish` is emitted **per outbox record**, parented to the context captured on
+*that* record. It is never one span per claimed batch.
+
+A batch is a **fan-in**: `batchSize` rows claimed together routinely come from as many
+unrelated business transactions, each with its own captured `traceparent`. A single span
+covering the batch would have to pick one of them as its parent — and every such pick is wrong
+for every other record in the batch, silently attributing the relay's work to whichever trace
+happened to be first while the others show no publish at all. There is no "the" parent of a
+batch.
+
+Per-record spans are also the natural shape for this relay: the worker overlaps `batchSize`
+sends of *distinct* aggregates on one async dispatcher, so there is no single batch-wide
+operation to time (LLD-jdbc §3.4).
+
+If a batch-level span is ever wanted for engine diagnostics (claim + flush timings), it is a
+**root** span carrying one **span link** per record — links being the standard way to relate
+one span to *many* causally-related traces — never a parent-child edge to one member's trace.
+
+### 6.2 Span scope must not rely on a thread-local
+
+The relay dispatches asynchronously and does not await per record (LLD-jdbc §3.4). A
+scope-based idiom — open a thread-local span scope, run, close it — is therefore **invalid
+here**: the scope would close when the dispatch call returns, not when the send completes, so
+any span opened downstream would attach to whatever record was being dispatched at the time.
+
+The captured context must be carried explicitly alongside the in-flight record, and the span
+ended in the completion callback that already handles the ack/failure. The adapter contract
+therefore must not assume ambient context.
+
+### 6.3 A span is emitted only when work happened — never per poll
+
+The relay polls continuously and, on an idle outbox, the overwhelming majority of cycles claim
+nothing (dispatch-latency.md §1). A span per poll cycle, per empty claim, or per housekeeping
+tick would emit tens of spans per second per worker that describe *the absence of work*,
+burying the traces an operator is actually looking for and inflating export cost for nothing.
+
+So: **no span for a poll that claimed nothing, no span for a reclaim/cleanup tick that changed
+nothing.** A span exists only where a record was published, retried, or failed. For Tandem's own
+instrumentation the guard is not creating the span, never filtering it afterwards. A *host
+framework's* automatic instrumentation — scheduler or connection-pool spans around the relay's
+own loop — is the application's to exclude, and the documentation must say so.
+
+### 6.4 Span attributes carry identifiers, never payloads
+
+Attributes are limited to the structural identifiers already deemed safe to log — `aggregate_id`,
+`aggregate_type`, row id, bucket, topic/partition, attempt number, status. **Never** the payload,
+header *values*, `last_error` bodies, or bound SQL parameters. The rule and its reasoning are the
+same as for logging ([HLD-logging.md](HLD-logging.md)); a span exported to a tracing backend is at
+least as widely readable as a log line, so it gets no exemption.
+
 ---
 
 ## 7. Off by default, zero cost when off (Pareto, §1.1)
@@ -149,9 +204,31 @@ propagation is off).
 
 ## 10. Open decisions
 
+**Sampling is frozen at insert time, for the life of the row.** The sampling decision travels in
+the `traceparent`'s trace-flags, so capturing the header also captures the verdict. A row written
+while its trace was sampled out stays sampled out — when the relay publishes it seconds later,
+when a retry publishes it an hour later, and when a replay publishes it next year. That inheritance
+is what keeps a trace coherent end to end, and it has a consequence: **the outbox dwell and relay
+behaviour are observable in traces only for the sampled fraction**, so tracing cannot be the primary
+evidence for "is the relay keeping up" — that is the metrics port's job, which samples nothing
+(HLD §7). Open: whether the relay may override the inherited decision for rows that failed or aged
+past a threshold, so the interesting minority is always traced.
+
+**Replay must not resurrect the original trace as a live parent.** A replayed row still carries
+the `traceparent` of the business transaction that produced it, possibly long expired: making the
+republish a child of it would append spans to a trace whose root has aged out of the backend,
+producing an orphan fragment dated in the present under an identifier from the past — and would
+mix a deliberate operator action into the trace of an unrelated user request. The likely answer is
+that replay opens a **new** trace with a **span link** to the captured context, keeping the original
+ids as attributes so the connection stays queryable. The choice also governs what the Admin API's
+replay endpoint reports back.
+
 | Area | Options |
 |---|---|
 | Enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is detected on the classpath | 
 | Correlation-id source | MDC key (default, e.g. `correlationId`) vs. explicit `TandemContext` API vs. both |
 | Relay publish span | Off by default (basic mode) vs. on (rich mode) when a relay-side tracing adapter is present |
 | OTel adapter module | Dedicated `tandem-tracing-otel` (preferred for non-Spring) vs. fold capture into existing modules |
+| Sampling | Inherit the captured decision unconditionally vs. let the relay force-sample failed/aged rows |
+| Replay semantics | New trace + span link to the original (preferred) vs. reuse the captured context as parent vs. no trace at all |
+| Verification | Assert span structure in tests only vs. also a runnable demo through a real tracing backend, the way the metrics are demonstrated (LLD-benchmark.md §6.3) |
