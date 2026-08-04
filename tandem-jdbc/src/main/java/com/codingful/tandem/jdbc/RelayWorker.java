@@ -5,6 +5,9 @@ import com.codingful.tandem.core.exception.OutboxDispatchException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -31,6 +34,8 @@ import java.util.function.Supplier;
  * with it, every other in-flight send.
  */
 final class RelayWorker {
+
+    private static final Logger LOG = System.getLogger(RelayWorker.class.getName());
 
     private final OutboxStore store;
     private final OutboxDispatcher dispatcher;
@@ -116,11 +121,18 @@ final class RelayWorker {
         String message = cause.getMessage();
         int attemptsAfter = record.attempts() + 1;
         if (retriable && attemptsAfter < cfg.maxAttempts()) {
-            store.markForRetry(record.id(), message, backoff.delayFor(record.attempts()));
+            Duration delay = backoff.delayFor(record.attempts());
+            LOG.log(Level.WARNING, "Outbox row dispatch failed, retrying rowId:" + record.id()
+                    + ", aggregateType:" + record.aggregateType() + ", aggregateId:" + record.aggregateId()
+                    + ", attempts:" + attemptsAfter + ", delayMs:" + delay.toMillis(), cause);
+            store.markForRetry(record.id(), message, delay);
             if (metrics.isEnabled()) {
                 metrics.incrementRetry();
             }
         } else {
+            LOG.log(Level.ERROR, "Outbox row dispatch failed permanently rowId:" + record.id()
+                    + ", aggregateType:" + record.aggregateType() + ", aggregateId:" + record.aggregateId()
+                    + ", attempts:" + attemptsAfter, cause);
             store.markFailed(record.id(), message);
             // No metrics call here: failed.count is a live count of FAILED rows (WorkerPool.metricsTick,
             // via OutboxStore.failedCount()), not a tally of failure events — a row can later leave
