@@ -75,6 +75,17 @@ tandem:
     # log-every-rows: 10000
 
   # ----------------------------------------------------------------------------------------------
+  # tandem.metrics — the tandem-micrometer adapter. Only takes effect when Micrometer and a
+  # MeterRegistry bean are on the classpath; a no-op TandemMetrics otherwise ignores these.
+  # ----------------------------------------------------------------------------------------------
+  metrics:
+    # tandem.metrics.max-publish-latency — the publish.latency histogram's ceiling. A latency above
+    # it is still recorded (in the +Inf bucket), just without the resolution to place it precisely
+    # between finite buckets — and histogram_quantile() then caps its estimate at this ceiling rather
+    # than reporting the true, higher value. Default: 5m.
+    # max-publish-latency: 5m
+
+  # ----------------------------------------------------------------------------------------------
   # tandem.kafka — the CloudEvents envelope and the Kafka producer.
   # ----------------------------------------------------------------------------------------------
   kafka:

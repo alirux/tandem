@@ -70,12 +70,23 @@ throughput rate is a query the TSDB derives, never something Tandem computes).
 **`publish.latency` is a histogram, not a precomputed percentile.** A relay-computed p95/p99 cannot be
 averaged across instances — the classic mistake with an aggregated multi-instance dashboard — so the
 `Timer` is built with `publishPercentileHistogram(true)` and publishes bucket counts instead; the TSDB
-(e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance percentile from those. Not
-independently unit-testable against `SimpleMeterRegistry` — it tracks count/sum only and never
-materializes histogram buckets regardless of this config (no export format to populate them for), so
-the test coverage here is the `Timer`'s count/sum plus a read of the *intent* from the code; a real
-percentile read needs a registry that actually renders histograms (Prometheus), exercised only by the
-Grafana demo (LLD-benchmark §6.3), not by this module's own tests.
+(e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance percentile from those.
+`SimpleMeterRegistry` (used by every other test in this module) tracks count/sum only and never
+materializes histogram buckets regardless of this config — so the ceiling below is verified against a
+real `PrometheusMeterRegistry` instead (`MicrometerTandemMetricsMaxLatencyTest`, a test-only dependency,
+no redistributed footprint), the same technique the Grafana demo uses (LLD-benchmark §6.3).
+
+**The histogram ceiling (`maximumExpectedValue`) is configurable, not left at Micrometer's own 30s
+default — a real bug the Grafana demo caught, not a hypothetical.** `histogram_quantile()` cannot
+report a value above the highest *finite* bucket once the true sample falls in the `+Inf` bucket: it
+silently caps its estimate there rather than reporting the true, higher value. At Micrometer's default
+30s ceiling, the demo's p50/p95/p99 lines flattened at exactly 30s during backlog-heavy phases instead
+of showing the real (higher) wait — under-reporting, not a missing data point, so nothing about it
+looked wrong until the shape was read closely. Fixed with
+`MicrometerTandemMetrics.DEFAULT_MAX_EXPECTED_PUBLISH_LATENCY` = **5 minutes** (covers realistic
+backlog/failover delays — up to ~158s was observed on a live run — without pushing bucket resolution,
+which is exponential between min and max, too coarse to be useful) and a `Timer.Builder#maximumExpectedValue`
+constructor overload, overridable via `tandem.metrics.max-publish-latency` in `tandem-spring-relay` (§5).
 
 ---
 
@@ -201,16 +212,26 @@ using it costs nothing and removes the guesswork:
 // New file: TandemMicrometerAutoConfiguration.java
 @AutoConfiguration(before = TandemRelayAutoConfiguration.class)
 @ConditionalOnClass({MeterRegistry.class, MicrometerTandemMetrics.class})
+@EnableConfigurationProperties(TandemMetricsProperties.class)
 public class TandemMicrometerAutoConfiguration {
 
     @Bean
     @ConditionalOnBean(MeterRegistry.class)
     @ConditionalOnMissingBean(TandemMetrics.class)
-    TandemMetrics tandemMicrometerMetrics(MeterRegistry registry) {
-        return new MicrometerTandemMetrics(registry);
+    TandemMetrics tandemMicrometerMetrics(MeterRegistry registry, TandemMetricsProperties properties) {
+        return properties.maxPublishLatency() != null
+                ? new MicrometerTandemMetrics(registry, properties.maxPublishLatency())
+                : new MicrometerTandemMetrics(registry);
     }
 }
 ```
+
+`TandemMetricsProperties` binds `tandem.metrics.*` — currently just `maxPublishLatency`, the
+`publish.latency` histogram ceiling (§2 default 5 minutes). Nullable, same reasoning as every field on
+`TandemRelayProperties`: unset leaves `MicrometerTandemMetrics`'s own default in force, so that class
+stays the single source of truth. Kept as its own properties class rather than folded into
+`TandemRelayProperties` — it configures the metrics *adapter*, not the relay engine, and belongs to
+`TandemMicrometerAutoConfiguration`'s own `@EnableConfigurationProperties`, not the relay's.
 
 Registered in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
 alongside `TandemRelayAutoConfiguration`. `TandemRelayAutoConfiguration`'s own

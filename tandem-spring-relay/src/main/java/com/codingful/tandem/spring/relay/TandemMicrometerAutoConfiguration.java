@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 /**
@@ -28,12 +29,15 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration(before = TandemRelayAutoConfiguration.class)
 @ConditionalOnClass({MeterRegistry.class, MicrometerTandemMetrics.class})
+@EnableConfigurationProperties(TandemMetricsProperties.class)
 public class TandemMicrometerAutoConfiguration {
 
     @Bean
     @ConditionalOnBean(MeterRegistry.class)
     @ConditionalOnMissingBean(TandemMetrics.class)
-    TandemMetrics tandemMicrometerMetrics(MeterRegistry registry) {
-        return new MicrometerTandemMetrics(registry);
+    TandemMetrics tandemMicrometerMetrics(MeterRegistry registry, TandemMetricsProperties properties) {
+        return properties.maxPublishLatency() != null
+                ? new MicrometerTandemMetrics(registry, properties.maxPublishLatency())
+                : new MicrometerTandemMetrics(registry);
     }
 }

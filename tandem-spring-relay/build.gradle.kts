@@ -33,6 +33,11 @@ dependencies {
     // fires with a real MeterRegistry bean present and backs off to NOOP without one.
     testImplementation(project(":tandem-micrometer"))
     testImplementation(libs.micrometer.core)
+    // SimpleMeterRegistry (used everywhere else in this module's tests) never materializes real
+    // histogram buckets regardless of Timer config, so verifying tandem.metrics.max-publish-latency
+    // actually reaches MicrometerTandemMetrics needs a registry that renders one (mirrors the same
+    // trade-off in tandem-micrometer's own test suite).
+    testImplementation(libs.micrometer.registry.prometheus)
     // The reference-configuration check shared with tandem-spring-producer (LLD-spring-config §2.4) —
     // internal-only, not published (see tandem-test/build.gradle.kts).
     testImplementation(testFixtures(project(":tandem-test")))
@@ -67,6 +72,7 @@ dependencies {
     bootFourTestRuntimeClasspath(testFixtures(project(":tandem-test")))
     bootFourTestRuntimeClasspath(project(":tandem-micrometer"))
     bootFourTestRuntimeClasspath(libs.micrometer.core)
+    bootFourTestRuntimeClasspath(libs.micrometer.registry.prometheus)
     bootFourTestRuntimeClasspath(platform(libs.junit.bom))
     bootFourTestRuntimeClasspath(libs.junit.jupiter)
     bootFourTestRuntimeClasspath(libs.junit.platform.launcher)

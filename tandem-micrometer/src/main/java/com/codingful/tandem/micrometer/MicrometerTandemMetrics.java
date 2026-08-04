@@ -22,6 +22,17 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MicrometerTandemMetrics implements TandemMetrics {
 
+    /**
+     * Overrides Micrometer's own {@code Timer} default (30s) for {@code publish.latency}'s histogram
+     * ceiling. 30s is too low for this specific meter: a row delayed behind a failure or a relay
+     * restart can carry a wait well past it, and {@code histogram_quantile()} silently caps a reported
+     * percentile at the highest finite bucket once the true value falls in the {@code +Inf} bucket —
+     * so an under-sized ceiling doesn't drop the sample, it quietly under-reports it. 5 minutes covers
+     * realistic backlog/failover delays (observed up to ~158s on a live run) without moving so far out
+     * that bucket resolution (exponential between min and max) gets too coarse to be useful.
+     */
+    public static final Duration DEFAULT_MAX_EXPECTED_PUBLISH_LATENCY = Duration.ofMinutes(5);
+
     private final MeterRegistry registry;
     private final AtomicLong lag = new AtomicLong();
     private final AtomicLong lagAgeMillis = new AtomicLong();
@@ -38,7 +49,20 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
 
     /** @param registry where every meter below is registered; kept to register a new one per distinct {@code check} name */
     public MicrometerTandemMetrics(MeterRegistry registry) {
+        this(registry, DEFAULT_MAX_EXPECTED_PUBLISH_LATENCY);
+    }
+
+    /**
+     * @param registry                    where every meter below is registered; kept to register a new
+     *                                     one per distinct {@code check} name
+     * @param maxExpectedPublishLatency    the histogram ceiling for {@code publish.latency} — see
+     *                                     {@link #DEFAULT_MAX_EXPECTED_PUBLISH_LATENCY}. A latency above
+     *                                     it is still recorded (in the {@code +Inf} bucket), just without
+     *                                     the resolution to place it precisely between finite buckets.
+     */
+    public MicrometerTandemMetrics(MeterRegistry registry, Duration maxExpectedPublishLatency) {
         this.registry = Objects.requireNonNull(registry, "registry");
+        Objects.requireNonNull(maxExpectedPublishLatency, "maxExpectedPublishLatency");
         Gauge.builder("tandem.outbox.lag.count", lag, AtomicLong::get).register(registry);
         Gauge.builder("tandem.outbox.lag.age_seconds", lagAgeMillis, holder -> holder.get() / 1000d).register(registry);
         Gauge.builder("tandem.outbox.failed.count", failed, AtomicLong::get).register(registry);
@@ -53,6 +77,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
         // from the published histogram buckets (LLD-micrometer §2).
         this.publishLatency = Timer.builder("tandem.outbox.publish.latency")
                 .publishPercentileHistogram(true)
+                .maximumExpectedValue(maxExpectedPublishLatency)
                 .register(registry);
         this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
         this.leaseExpired = Counter.builder("tandem.outbox.lease_expired.count").register(registry);

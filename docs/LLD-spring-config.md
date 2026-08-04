@@ -279,8 +279,8 @@ be **discoverable in the editor** and **documented as a copy-pasteable reference
 one source of truth.
 
 **Single source of truth: the `@ConfigurationProperties` Javadoc.** Every property's meaning, default,
-and unit lives as Javadoc on the corresponding field/record component. The tables in §2.1–§2.3 mirror
-it; they must not drift from it.
+and unit lives as Javadoc on the corresponding field/record component. The tables in §2.1–§2.3, §2.5
+mirror it; they must not drift from it.
 
 **IDE tooltips + auto-completion — `spring-configuration-metadata.json`.** Each Spring module depends
 on `spring-boot-configuration-processor` (annotation processor, `annotationProcessor` scope — compile
@@ -328,6 +328,23 @@ never pull `tandem-kafka`). Kept out of the published jar entirely — the build
 
 Adding, renaming or removing a property without touching the reference fails the build.
 
+### 2.5 `tandem.metrics.*` — the tandem-micrometer adapter
+
+Numbered after §2.4 rather than inline with §2.2/§2.3, deliberately: renumbering would invalidate the
+existing `LLD-spring-config §2.1`/`§2.2`/`§2.3`/`§2.4` citations already in code Javadoc across three
+modules — additive-only numbering, same reasoning §6 applies to the property contract itself.
+
+| Property | Type | Default |
+|---|---|---|
+| `tandem.metrics.max-publish-latency` | Duration | `5m` (`MicrometerTandemMetrics.DEFAULT_MAX_EXPECTED_PUBLISH_LATENCY`) |
+
+Bound by `TandemMetricsProperties`, registered on `TandemMicrometerAutoConfiguration` — not on
+`TandemRelayAutoConfiguration`/`TandemRelayProperties` — since it configures the metrics *adapter*
+(`tandem-micrometer`, an optional dependency of this module, §5) rather than the relay engine. Only
+takes effect when that adapter is actually wired (a `MeterRegistry` bean present); otherwise the
+no-op `TandemMetrics` default ignores it. Nullable, same pattern as `TandemRelayProperties`: unset
+leaves `MicrometerTandemMetrics`'s own default in force (LLD-micrometer §2).
+
 ---
 
 ## 3. The cross-module `bucket-count` guard
@@ -370,7 +387,7 @@ multiple unqualified `DataSource`s therefore wires Tandem explicitly (its own `@
 
 ### 4.2 The `@ConfigurationProperties` types
 
-The property contract (§2) binds through three `@ConfigurationProperties` types — the single source
+The property contract (§2) binds through four `@ConfigurationProperties` types — the single source
 of truth for names, defaults and Javadoc (§2.4):
 
 | Type | Prefix | Module(s) |
@@ -378,6 +395,7 @@ of truth for names, defaults and Javadoc (§2.4):
 | `TandemOutboxProperties` | `tandem.outbox` | producer **and** relay |
 | `TandemRelayProperties` | `tandem.relay` | relay |
 | `TandemKafkaProperties` | `tandem.kafka` | relay |
+| `TandemMetricsProperties` | `tandem.metrics` | relay (§2.5), registered on `TandemMicrometerAutoConfiguration`, not this section's `TandemRelayAutoConfiguration` |
 
 Their only job is to be **mapped onto the core configuration objects**, which stay the source of truth
 for behaviour: `TandemRelayProperties` (+ `tandem.outbox.bucket-count`) is copied field-for-field onto

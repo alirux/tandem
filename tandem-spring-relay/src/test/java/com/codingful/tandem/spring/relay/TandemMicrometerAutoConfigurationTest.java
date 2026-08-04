@@ -6,9 +6,14 @@ import com.codingful.tandem.core.port.TandemMetrics;
 import com.codingful.tandem.micrometer.MicrometerTandemMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -44,6 +49,29 @@ class TandemMicrometerAutoConfigurationTest {
                     assertThat(context).hasSingleBean(TandemMetrics.class);
                     assertThat(context.getBean(TandemMetrics.class)).isInstanceOf(MicrometerTandemMetrics.class);
                 });
+    }
+
+    @Test
+    void GIVEN_tandem_metrics_max_publish_latency_set_WHEN_a_sample_is_recorded_THEN_the_histogram_uses_it() {
+        PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+
+        runner.withBean(MeterRegistry.class, () -> registry)
+                .withPropertyValues("tandem.metrics.max-publish-latency=90s")
+                .run(context -> {
+                    TandemMetrics metrics = context.getBean(TandemMetrics.class);
+                    metrics.recordPublishLatency(Duration.ofSeconds(80));
+                    assertThat(highestFiniteBucket(registry)).isEqualTo(90.0);
+                });
+    }
+
+    private static double highestFiniteBucket(PrometheusMeterRegistry registry) {
+        Pattern finiteBucket = Pattern.compile("tandem_outbox_publish_latency_seconds_bucket\\{le=\"([0-9.]+)\"}");
+        Matcher matcher = finiteBucket.matcher(registry.scrape());
+        double highest = -1;
+        while (matcher.find()) {
+            highest = Math.max(highest, Double.parseDouble(matcher.group(1)));
+        }
+        return highest;
     }
 
     @Test
