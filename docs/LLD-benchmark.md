@@ -480,6 +480,16 @@ passing assertion:
   what a dying process does, and makes "relay instances reporting" drop from 2 to 1.
 - **Every meter's `# HELP` is empty**, because `MicrometerTandemMetrics` never calls
   `.description(...)`. Cosmetic, additive, not yet done.
+- **`publish.latency` spikes to tens of seconds during the backlog-heavy phases, and that is correct,
+  not a bug.** A run showed p99 climbing past 22s right after the initial no-relay backlog drained, and
+  again past 29s after the crash/recovery phase — because a row published at that instant had been
+  sitting `PENDING` since before any relay existed, or since before the survivor took over the crashed
+  instance's buckets, and the metric is `created_at` (insert) to ack, not dispatch-call to ack. The
+  panel's own description says as much (an `INSERT`→ack proxy, HLD §10), but seeing a healthy-looking
+  relay post a 30s p99 is the kind of thing worth confirming against the backlog panel before assuming
+  a regression: `histogram_quantile(0.99, sum(rate(tandem_outbox_publish_latency_seconds_bucket[30s]))
+  by (le))`, queried directly against Prometheus during steady load with no backlog to drain, read a
+  much more ordinary p50 ≈ 62ms / p95 ≈ 123ms / p99 ≈ 1.6s on this hardware.
 - **The `config.invalid` panel was dropped, not left empty.** It fires once, immediately before the
   relay aborts (LLD-micrometer §4), so this demo — which never triggers that path — can only ever show
   it as "never seen." A panel that is permanently empty by construction teaches nothing by being

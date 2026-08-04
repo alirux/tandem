@@ -42,6 +42,7 @@ public final class RelayConfig {
     private final Duration cleanupInterval;
     private final Duration metricsInterval;
     private final long deliveryTimeoutMs;
+    private final long logEveryRows;
 
     private RelayConfig(Builder b) {
         this.bucketCount = b.bucketCount;
@@ -59,6 +60,7 @@ public final class RelayConfig {
         this.cleanupInterval = b.cleanupInterval;
         this.metricsInterval = b.metricsInterval;
         this.deliveryTimeoutMs = b.deliveryTimeoutMs;
+        this.logEveryRows = b.logEveryRows;
     }
 
     public int bucketCount() {
@@ -128,6 +130,10 @@ public final class RelayConfig {
 
     public long deliveryTimeoutMs() {
         return deliveryTimeoutMs;
+    }
+
+    public long logEveryRows() {
+        return logEveryRows;
     }
 
     /** The §6 defaults. */
@@ -231,6 +237,7 @@ public final class RelayConfig {
         private Duration cleanupInterval = Duration.ofMinutes(15);
         private Duration metricsInterval = Duration.ofSeconds(10);
         private long deliveryTimeoutMs = 30_000;   // Kafka producer default (LLD-kafka §1)
+        private long logEveryRows = 10_000;
 
         private Builder() {
         }
@@ -355,6 +362,16 @@ public final class RelayConfig {
          */
         public Builder deliveryTimeoutMs(long deliveryTimeoutMs) {
             this.deliveryTimeoutMs = positive(deliveryTimeoutMs, "deliveryTimeoutMs");
+            return this;
+        }
+
+        /**
+         * How many dispatch outcomes (success or failure, each worker counted separately) between one
+         * coarse-grained {@code INFO} progress log line — independent of whether a metrics adapter is
+         * wired. Default 10,000.
+         */
+        public Builder logEveryRows(long logEveryRows) {
+            this.logEveryRows = positive(logEveryRows, "logEveryRows");
             return this;
         }
 

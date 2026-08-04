@@ -12,7 +12,8 @@ class TandemRelayConfigMappingTest {
     private static final TandemOutboxProperties OUTBOX = new TandemOutboxProperties(256);
 
     private static TandemRelayProperties allUnset() {
-        return new TandemRelayProperties(null, null, null, null, null, null, null, null, null, null, null, null, null);
+        return new TandemRelayProperties(
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -27,6 +28,7 @@ class TandemRelayConfigMappingTest {
         assertThat(config.maxAttempts()).isEqualTo(defaults.maxAttempts());
         assertThat(config.cleanupInterval()).isEqualTo(defaults.cleanupInterval());
         assertThat(config.metricsInterval()).isEqualTo(defaults.metricsInterval());
+        assertThat(config.logEveryRows()).isEqualTo(defaults.logEveryRows());
         assertThat(config.bucketCount()).isEqualTo(256);
     }
 
@@ -35,7 +37,7 @@ class TandemRelayConfigMappingTest {
         TandemRelayProperties relay = new TandemRelayProperties(
                 Coordination.LEASE, "relay-1", Duration.ofSeconds(45), 8, Duration.ofMillis(250),
                 50, Duration.ofSeconds(90), 5, Duration.ofDays(7), 500, Duration.ofSeconds(10),
-                Duration.ofMinutes(30), Duration.ofSeconds(30));
+                Duration.ofMinutes(30), Duration.ofSeconds(30), 5_000L);
 
         RelayConfig config = TandemRelayAutoConfiguration.buildRelayConfig(OUTBOX, relay);
 
@@ -52,5 +54,6 @@ class TandemRelayConfigMappingTest {
         assertThat(config.reclaimInterval()).isEqualTo(Duration.ofSeconds(10));
         assertThat(config.cleanupInterval()).isEqualTo(Duration.ofMinutes(30));
         assertThat(config.metricsInterval()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(config.logEveryRows()).isEqualTo(5_000L);
     }
 }

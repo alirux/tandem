@@ -231,6 +231,7 @@ programmatic builder never drift:
 | `tandem.relay.reclaim-interval` | Duration | `5s` |
 | `tandem.relay.cleanup-interval` | Duration | `15m` |
 | `tandem.relay.metrics-interval` | Duration | `10s` |
+| `tandem.relay.log-every-rows` | long | `10000` |
 
 `tandem.relay.enabled=false` is the supported way to deploy the relay module without running a relay
 — for example when the same application image is deployed both as a write-side service and as a

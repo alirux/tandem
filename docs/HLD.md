@@ -618,6 +618,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.lag.count` | Gauge | Number of rows with `status=PENDING` | High |
 | `tandem.outbox.lag.age_seconds` | Gauge | Age of the oldest PENDING row in seconds | **Critical** |
 | `tandem.outbox.published` | Counter | Rows transitioned to `status=DONE`, cumulative — a throughput *rate* is a query the TSDB derives (e.g. Prometheus `rate()`), not something Tandem computes, hence no `.rate` suffix on a plain counter | High |
+| `tandem.outbox.publish.latency` | Timer (histogram) | Time from a row's `created_at` to its Kafka ack, one sample per successfully published row — the runtime-verifiable approximation of the §10 NFR "relay latency" KPI (`COMMIT` → ack, p50 < 200 ms / p99 < 1 s at normal load). Approximation, not exact: `created_at` is set at `INSERT`, not `COMMIT` (a caller transaction that does more work after the outbox insert makes this an upper bound, never an underestimate), and the two ends are read from different clocks — the database's and the relay's — so a persistent skew between them shows up as a constant offset, not noise. Published as a **percentile histogram**, not a client-computed percentile: percentiles cannot be averaged across relay instances, but a TSDB (e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance p95/p99 from the published buckets | **Critical** |
 | `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
 | `tandem.outbox.blocked.count` | Gauge | PENDING rows sitting behind a `FAILED` row of the same aggregate — waiting, but unclaimable until an operator resolves the head. Counted by `lag.count` as well, deliberately: they are undelivered events, and a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported separately because the two situations demand opposite responses — see the alerting rules below | High |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
@@ -963,8 +964,8 @@ All throughput/latency targets are stated against the **reference baseline** (si
 | Requirement | Target |
 |---|---|
 | Throughput | Sustain ≥ 10k events/s **per shard** (≈80k/s aggregate at `N=8`) on the reference baseline, where *sustained* = rate held ≥ 10 min with `lag.age_seconds` flat (not growing) **and `blocked.count` == 0** — a run containing even one terminally failed row makes the age climb for ever regardless of throughput, so the flatness criterion is only meaningful with nothing blocked (§7) |
-| Relay latency — median | `COMMIT` → Kafka ack **p50 < 200 ms** at *normal load* (≈50% of measured sustainable max) |
-| Relay latency — tail | `COMMIT` → Kafka ack **p99 < 1 s** at normal load |
+| Relay latency — median | `COMMIT` → Kafka ack **p50 < 200 ms** at *normal load* (≈50% of measured sustainable max). Runtime-verifiable via the `tandem.outbox.publish.latency` metric (§7) — an `INSERT`→ack approximation of this `COMMIT`→ack target, not an exact measurement of it |
+| Relay latency — tail | `COMMIT` → Kafka ack **p99 < 1 s** at normal load. Same metric and caveat as above |
 | Ordering guarantee | Strict per-aggregate, best-effort cross-aggregate; **zero per-aggregate ordering violations** under all load scenarios |
 | Delivery semantics | At-least-once; consumers must be idempotent; **zero lost events** under all load scenarios |
 | Java compatibility | Java 17+ (LTS) |

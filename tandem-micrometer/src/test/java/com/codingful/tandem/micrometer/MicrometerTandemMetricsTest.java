@@ -3,6 +3,8 @@ package com.codingful.tandem.micrometer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class MicrometerTandemMetricsTest {
@@ -108,6 +110,16 @@ class MicrometerTandemMetricsTest {
                 .isEqualTo(1);
         assertThat(registry.get("tandem.relay.config.invalid").tag("check", "bucket_lease_not_seeded").gauge().value())
                 .isEqualTo(1);
+    }
+
+    @Test
+    void GIVEN_several_publish_latencies_WHEN_read_THEN_the_timer_accumulates_count_and_sum() {
+        metrics.recordPublishLatency(Duration.ofMillis(100));
+        metrics.recordPublishLatency(Duration.ofMillis(300));
+
+        assertThat(registry.get("tandem.outbox.publish.latency").timer().count()).isEqualTo(2);
+        assertThat(registry.get("tandem.outbox.publish.latency").timer().totalTime(TimeUnit.MILLISECONDS))
+                .isEqualTo(400);
     }
 
     @Test

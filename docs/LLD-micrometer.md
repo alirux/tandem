@@ -57,6 +57,7 @@ throughput rate is a query the TSDB derives, never something Tandem computes).
 | `recordLag(long)` | `lag.count` | Gauge | — |
 | `recordLagAgeSeconds(double)` | `lag.age_seconds` | Gauge | — |
 | `incrementPublished(long)` | `published` | Counter | — |
+| `recordPublishLatency(Duration)` | `publish.latency` | Timer, `publishPercentileHistogram(true)` | — |
 | `recordFailed(long)` | `failed.count` | Gauge | — |
 | `recordBlocked(long)` | `blocked.count` | Gauge | — |
 | `incrementRetry()` | `retry.count` | Counter | — |
@@ -65,6 +66,16 @@ throughput rate is a query the TSDB derives, never something Tandem computes).
 | `recordWorkerCycleAgeSeconds(double)` | `workers.cycle_age_seconds` | Gauge | — |
 | `recordUncoveredBuckets(int)` | `bucket.uncovered` | Gauge | — |
 | `recordConfigInvalid(String)` | `tandem.relay.config.invalid` | Gauge | `check=<name>` |
+
+**`publish.latency` is a histogram, not a precomputed percentile.** A relay-computed p95/p99 cannot be
+averaged across instances — the classic mistake with an aggregated multi-instance dashboard — so the
+`Timer` is built with `publishPercentileHistogram(true)` and publishes bucket counts instead; the TSDB
+(e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance percentile from those. Not
+independently unit-testable against `SimpleMeterRegistry` — it tracks count/sum only and never
+materializes histogram buckets regardless of this config (no export format to populate them for), so
+the test coverage here is the `Timer`'s count/sum plus a read of the *intent* from the code; a real
+percentile read needs a registry that actually renders histograms (Prometheus), exercised only by the
+Grafana demo (LLD-benchmark §6.3), not by this module's own tests.
 
 ---
 

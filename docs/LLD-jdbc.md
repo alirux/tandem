@@ -318,12 +318,19 @@ for row in batch:                              # distinct aggregates → indepen
     dispatcher.dispatch(row)                   # async; future completes on ack (LLD-kafka §2)
         .whenComplete((ok, err) -> {
             if err == null: doneIds.add(row.id)               # success → DONE (batched, §3.4.1)
+                            metrics.recordPublishLatency(now() - row.createdAt())   # §4, HLD §7
             else:           store.markForRetryOrFailed(row, err)   # §3.4.2; this aggregate stops
             freeInFlightSlot()                                 # lets the loop claim more (§3.1)
         })
 # flush periodically (every N ids / few ms), not once per row:
 store.markDoneBatch(drain(doneIds))            # tx2
 ```
+
+The latency sample is taken **on the completion handler, at the ack instant** — `RelayWorker` carries
+a `Clock` for exactly this (and nothing else: retry backoff still stays relative, anchored on the DB
+clock, §3.2/§3.6, never on this one). `now()` is the *relay's* clock, `row.createdAt()` is the
+*database's*, so the reading also carries a `created_at`-at-`INSERT`-not-`COMMIT` bias and a DB/relay
+clock-skew offset — both documented as caveats on the port method, not hidden (§4).
 
 Per-aggregate ordering and the poison gate hold **structurally**, not via an inner await-loop:
 
@@ -511,7 +518,10 @@ aggregate, then range-scanned forward on `idx_tandem_outbox_aggregate`, so its c
 of blocked rows rather than the size of the outbox; `idx_tandem_outbox_failed` was added for the
 `status = 3` step it shares with `failedCount()`, which until then seq-scanned the whole table on every
 tick),
-`incrementPublished` (on `markDoneBatch`), `incrementRetry`, `incrementLeaseExpired`
+`incrementPublished` (on `markDoneBatch`), `recordPublishLatency` (§3.4 — one sample per successfully
+published row, computed on `RelayWorker`'s completion handler at the ack instant, never on the
+`markDoneBatch` cadence; unlike every gauge above it needs no DB round trip of its own, since both ends
+of the measurement — `row.createdAt()` and the ack — are already in hand), `incrementRetry`, `incrementLeaseExpired`
 (reclaim count), `recordActiveWorkers` and `recordWorkerCycleAgeSeconds` (both from one `WorkerPool.status()`
 call, §3.8 — an in-process, database-free reading, unlike every other metric in this list; the second
 is what separates a worker merely alive from one making progress, since `Thread.isAlive()` cannot),
@@ -559,6 +569,7 @@ The defaults the basic round needs (the full property reference is the `tandem.*
 | backoff | base 1 s, ×2, cap ~5 min, max 10 attempts | full jitter (§3.6) |
 | `retention` | 14 days | cleanup of DONE/DISCARDED (§3.7) |
 | `metricsInterval` | 10 s | how often the lag gauges are read; the job is **only scheduled when a metrics adapter is wired** (§4) |
+| `logEveryRows` | 10,000 | per-worker `INFO` progress log every N dispatch outcomes (ok + ko combined) — a row-count cadence, not a clock one, so an idle relay stays silent; unlike `metricsInterval`, always on, no adapter needed |
 | `topicSuffix` | `-topic` | LLD-kafka §5 |
 | `defaultContentType` | `application/json` | LLD-kafka §3.2 |
 

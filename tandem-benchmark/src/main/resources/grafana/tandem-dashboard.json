@@ -190,6 +190,57 @@
       "panels": []
     },
     {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Publish latency \u2014 insert to ack",
+      "description": "tandem.outbox.publish.latency, one sample per successfully published row. p50/p95/p99 read off histogram_quantile over the summed bucket counts across every reporting instance \u2014 correct the way a client-computed percentile average across instances is not (LLD-micrometer \u00a72). Approximates the HLD \u00a710 KPI (COMMIT\u2192ack, p50 < 200ms / p99 < 1s at normal load), not an exact reading of it: created_at is stamped at INSERT, not COMMIT, and the two ends are read from different clocks (database vs. relay) \u2014 both push this reading up, never down.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum(rate(tandem_outbox_publish_latency_seconds_bucket[30s])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(tandem_outbox_publish_latency_seconds_bucket[30s])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum(rate(tandem_outbox_publish_latency_seconds_bucket[30s])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
       "id": 3,
       "type": "timeseries",
       "title": "Publish rate",
@@ -202,7 +253,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -243,7 +294,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -288,7 +339,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -341,7 +392,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "collapsed": false,
       "panels": []
@@ -359,7 +410,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -400,7 +451,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -454,7 +505,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -512,7 +563,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -553,7 +604,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 51
+        "y": 59
       },
       "fieldConfig": {
         "defaults": {
@@ -597,7 +648,7 @@
         "h": 5,
         "w": 12,
         "x": 12,
-        "y": 51
+        "y": 59
       },
       "fieldConfig": {
         "defaults": {

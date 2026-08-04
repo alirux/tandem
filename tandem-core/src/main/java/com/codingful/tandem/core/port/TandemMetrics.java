@@ -1,5 +1,7 @@
 package com.codingful.tandem.core.port;
 
+import java.time.Duration;
+
 /**
  * Optional metrics port (LLD-core §2.5, §7). The default is a no-op: {@link #isEnabled()} returns
  * {@code false} and callers guard on it so the off-path costs nothing. A real adapter ships in
@@ -44,6 +46,18 @@ public interface TandemMetrics {
 
     /** A retriable dispatch failure was retried. */
     default void incrementRetry() {
+    }
+
+    /**
+     * @param latency time from this row's {@code created_at} to its Kafka ack, one sample per
+     *                successfully published row. An approximation of the HLD §10 "relay latency"
+     *                KPI, not an exact measurement of it: {@code created_at} is set at {@code INSERT},
+     *                not at {@code COMMIT}, so a caller transaction that does more work after the
+     *                outbox insert makes this reading an upper bound, never an underestimate; and the
+     *                two ends are read from different clocks (the database's and the relay's), so a
+     *                persistent skew between them shows up here as a constant offset.
+     */
+    default void recordPublishLatency(Duration latency) {
     }
 
     /** @param n rows reclaimed because their lease expired */

@@ -70,6 +70,10 @@ tandem:
     # Default: 10s.
     # metrics-interval: 10s
 
+    # tandem.relay.log-every-rows — per-worker INFO progress log every N dispatch outcomes (ok + ko
+    # combined), independent of any metrics adapter. Default: 10000.
+    # log-every-rows: 10000
+
   # ----------------------------------------------------------------------------------------------
   # tandem.kafka — the CloudEvents envelope and the Kafka producer.
   # ----------------------------------------------------------------------------------------------

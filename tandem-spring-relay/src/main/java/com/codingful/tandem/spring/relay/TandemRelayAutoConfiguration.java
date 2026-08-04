@@ -101,6 +101,9 @@ public class TandemRelayAutoConfiguration {
         if (relay.metricsInterval() != null) {
             builder.metricsInterval(relay.metricsInterval());
         }
+        if (relay.logEveryRows() != null) {
+            builder.logEveryRows(relay.logEveryRows());
+        }
         return builder.build();
     }
 

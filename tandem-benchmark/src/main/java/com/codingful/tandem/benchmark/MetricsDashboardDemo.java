@@ -11,7 +11,7 @@ import java.util.Locale;
  * Drives every meter the relay reports through a real Micrometer → Prometheus → Grafana pipeline, so
  * the signals can be judged on a dashboard instead of in an assertion (LLD-benchmark §6.3). Same
  * intent as {@link LagGaugeDemo} one level up: that one prints two numbers to a terminal, this one
- * shows all eleven on the surface an operator would actually be watching.
+ * shows all twelve on the surface an operator would actually be watching.
  *
  * <p>It <b>measures nothing and gates nothing</b>. The scripted run walks the relay through the states
  * each meter exists to reveal — a backlog with no relay behind it, a drain, steady load, a failing
@@ -206,7 +206,7 @@ public final class MetricsDashboardDemo {
         System.out.println("  Open the Grafana link now — the run below takes about three minutes and the");
         System.out.println("  dashboard is worth watching live. Every phase is announced here as it starts.");
         System.out.println();
-        System.out.println("  Ten of the eleven meters are driven below. The eleventh, tandem.relay.config.invalid,");
+        System.out.println("  Eleven of the twelve meters are driven below. The twelfth, tandem.relay.config.invalid,");
         System.out.println("  is not: it fires once and then aborts the process by design (LLD-micrometer §4),");
         System.out.println("  so there is nothing left running for a scraper to read it from.");
         System.out.println();

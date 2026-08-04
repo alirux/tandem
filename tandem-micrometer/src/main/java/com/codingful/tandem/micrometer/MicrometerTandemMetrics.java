@@ -4,6 +4,8 @@ import com.codingful.tandem.core.port.TandemMetrics;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +31,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     private final AtomicLong workerCycleAgeMillis = new AtomicLong();
     private final AtomicInteger uncoveredBuckets = new AtomicInteger();
     private final Counter published;
+    private final Timer publishLatency;
     private final Counter retries;
     private final Counter leaseExpired;
     private final Map<String, AtomicInteger> configInvalidByCheck = new ConcurrentHashMap<>();
@@ -45,6 +48,12 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
                 .register(registry);
         Gauge.builder("tandem.outbox.bucket.uncovered", uncoveredBuckets, AtomicInteger::get).register(registry);
         this.published = Counter.builder("tandem.outbox.published").register(registry);
+        // publishPercentileHistogram, not a client-computed percentile: percentiles cannot be averaged
+        // across instances, but Prometheus (or any TSDB) can derive a correct multi-instance percentile
+        // from the published histogram buckets (LLD-micrometer §2).
+        this.publishLatency = Timer.builder("tandem.outbox.publish.latency")
+                .publishPercentileHistogram(true)
+                .register(registry);
         this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
         this.leaseExpired = Counter.builder("tandem.outbox.lease_expired.count").register(registry);
     }
@@ -92,6 +101,11 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     @Override
     public void incrementPublished(long n) {
         published.increment(n);
+    }
+
+    @Override
+    public void recordPublishLatency(Duration latency) {
+        publishLatency.record(latency);
     }
 
     @Override

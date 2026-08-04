@@ -7,6 +7,7 @@ import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 /**
@@ -42,6 +44,7 @@ final class RelayWorker {
     private final RelayConfig cfg;
     private final BackoffStrategy backoff;
     private final TandemMetrics metrics;
+    private final Clock clock;
     private final String workerId;
     private final Supplier<Set<Integer>> ownedBuckets;
 
@@ -49,20 +52,26 @@ final class RelayWorker {
     private final ConcurrentLinkedQueue<Long> doneIds = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<FailedDispatch> failures = new ConcurrentLinkedQueue<>();
 
+    // Coarse-grained throughput visibility independent of any metrics adapter — see recordProgress().
+    private final AtomicLong outcomeCount = new AtomicLong();
+    private final AtomicLong okCount = new AtomicLong();
+    private final AtomicLong koCount = new AtomicLong();
+
     /** A failed publish, captured on the completion thread and processed by {@link #flushFailures()}. */
     private record FailedDispatch(OutboxRecord record, Throwable error) {
     }
 
-    // No Clock here on purpose: the worker only ever computes a *relative* backoff and hands it to the
-    // store, which anchors it on the DB clock (§3.2/§3.6). Keeping a Clock out of the worker makes a
-    // locally-anchored deadline impossible to reintroduce by accident.
+    // Backoff still stays *relative*, handed to the store to anchor on the DB clock (§3.2/§3.6) — the
+    // Clock below is used for exactly one thing, timestamping the ack instant for recordPublishLatency,
+    // and must never be used to compute a locally-anchored retry deadline.
     RelayWorker(OutboxStore store, OutboxDispatcher dispatcher, RelayConfig cfg, BackoffStrategy backoff,
-                TandemMetrics metrics, String workerId, Supplier<Set<Integer>> ownedBuckets) {
+                TandemMetrics metrics, Clock clock, String workerId, Supplier<Set<Integer>> ownedBuckets) {
         this.store = store;
         this.dispatcher = dispatcher;
         this.cfg = cfg;
         this.backoff = backoff;
         this.metrics = metrics;
+        this.clock = clock;
         this.workerId = workerId;
         this.ownedBuckets = ownedBuckets;
     }
@@ -105,13 +114,36 @@ final class RelayWorker {
                 doneIds.add(record.id());
                 if (metrics.isEnabled()) {
                     metrics.incrementPublished(1);
+                    metrics.recordPublishLatency(Duration.between(record.createdAt(), clock.instant()));
                 }
+                recordProgress(true);
             } else {
                 failures.add(new FailedDispatch(record, error));
+                recordProgress(false);
             }
         } finally {
             inFlight.decrementAndGet();
         }
+    }
+
+    /**
+     * One {@code INFO} line every {@code cfg.logEveryRows()} dispatch outcomes on this worker, ok and ko
+     * combined — a row-count cadence rather than a clock one, so an idle relay logs nothing and a busy
+     * one gets a bounded number of lines regardless of throughput. Always on: unlike the metrics port
+     * (§4), this needs no adapter wired.
+     */
+    private void recordProgress(boolean ok) {
+        long total = outcomeCount.incrementAndGet();
+        (ok ? okCount : koCount).incrementAndGet();
+        if (crossesLogThreshold(total, cfg.logEveryRows())) {
+            LOG.log(Level.INFO, "Relay worker progress workerId:" + workerId
+                    + ", processed:" + total + ", ok:" + okCount.get() + ", ko:" + koCount.get());
+        }
+    }
+
+    /** Whether {@code total} is exactly on a {@code every}-row boundary — pulled out so it is testable without a logger. */
+    static boolean crossesLogThreshold(long total, long every) {
+        return total % every == 0;
     }
 
     /** Route a failed publish to retry-with-backoff or permanent FAILED (§3.4.2), per the verdict. */
@@ -174,6 +206,14 @@ final class RelayWorker {
 
     int inFlight() {
         return inFlight.get();
+    }
+
+    long okCount() {
+        return okCount.get();
+    }
+
+    long koCount() {
+        return koCount.get();
     }
 
     private static Throwable unwrap(Throwable error) {

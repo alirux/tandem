@@ -41,11 +41,11 @@ class RelayWorkerTest {
     private RelayWorker worker() {
         Supplier<Set<Integer>> allBuckets = outbox::allBuckets;
         return new RelayWorker(outbox, dispatcher, cfg, attempts -> Duration.ofSeconds(10),
-                TandemMetrics.NOOP, "worker-1", allBuckets);
+                TandemMetrics.NOOP, clock, "worker-1", allBuckets);
     }
 
     private RelayWorker worker(BackoffStrategy backoff, TandemMetrics metrics) {
-        return new RelayWorker(outbox, dispatcher, cfg, backoff, metrics, "worker-1", outbox::allBuckets);
+        return new RelayWorker(outbox, dispatcher, cfg, backoff, metrics, clock, "worker-1", outbox::allBuckets);
     }
 
     private void insert(String aggregateId, long seq) {
@@ -208,5 +208,80 @@ class RelayWorkerTest {
         // this worker's job — it's a live read of the store (WorkerPool.metricsTick, LLD-jdbc §4),
         // not something RelayWorker reports per event, so it is exercised at that level instead.
         assertThat(metrics.retries()).isZero();
+    }
+
+    @Test
+    void GIVEN_metrics_enabled_WHEN_a_row_is_published_THEN_publish_latency_is_the_gap_from_created_at_to_ack() {
+        insert("order-1", 1);   // createdAt stamped at the clock's current instant
+        clock.advance(Duration.ofMillis(250));   // dispatch settles synchronously at the advanced instant
+        RecordingMetrics metrics = new RecordingMetrics();
+
+        drain(worker(attempts -> Duration.ZERO, metrics));
+
+        assertThat(metrics.publishLatencies()).containsExactly(Duration.ofMillis(250));
+    }
+
+    @Test
+    void GIVEN_metrics_enabled_WHEN_a_dispatch_fails_permanently_THEN_no_publish_latency_is_recorded() {
+        insert("order-1", 1);
+        dispatcher.failRecord(1, false);
+        RecordingMetrics metrics = new RecordingMetrics();
+
+        drain(worker(attempts -> Duration.ZERO, metrics));
+
+        assertThat(metrics.publishLatencies()).isEmpty();
+    }
+
+    @Test
+    void GIVEN_a_mix_of_successes_and_failures_WHEN_the_relay_runs_THEN_ok_and_ko_are_tallied_separately() {
+        insert("order-1", 1);   // succeeds
+        insert("order-2", 1);   // fails permanently
+        insert("order-3", 1);   // succeeds
+        dispatcher.failRecord(2, false);
+
+        RelayWorker worker = worker(attempts -> Duration.ZERO, TandemMetrics.NOOP);
+        drain(worker);
+
+        assertThat(worker.okCount()).isEqualTo(2);
+        assertThat(worker.koCount()).isEqualTo(1);
+    }
+
+    @Test
+    void GIVEN_a_row_that_is_retried_before_succeeding_WHEN_the_relay_runs_THEN_every_attempt_counts_toward_ko_or_ok() {
+        insert("order-1", 1);
+        dispatcher.failRecord(1, true, 1);   // fail once retriably, then succeed
+
+        RelayWorker worker = worker(attempts -> Duration.ZERO, TandemMetrics.NOOP);
+        drain(worker);
+
+        // Two attempts total: the failed one and the retry that succeeded.
+        assertThat(worker.koCount()).isEqualTo(1);
+        assertThat(worker.okCount()).isEqualTo(1);
+    }
+
+    @Test
+    void GIVEN_only_a_multiple_of_the_configured_threshold_WHEN_checked_THEN_it_crosses_the_log_boundary() {
+        assertThat(RelayWorker.crossesLogThreshold(9, 10)).isFalse();
+        assertThat(RelayWorker.crossesLogThreshold(10, 10)).isTrue();
+        assertThat(RelayWorker.crossesLogThreshold(11, 10)).isFalse();
+        assertThat(RelayWorker.crossesLogThreshold(20, 10)).isTrue();
+        assertThat(RelayWorker.crossesLogThreshold(1, 1)).isTrue();
+    }
+
+    @Test
+    void GIVEN_a_progress_log_threshold_of_one_row_WHEN_the_relay_runs_THEN_every_outcome_still_crosses_it_without_losing_the_tally() {
+        insert("order-1", 1);   // succeeds
+        insert("order-2", 1);   // fails permanently
+        insert("order-3", 1);   // succeeds
+        dispatcher.failRecord(2, false);
+        RelayConfig lowThreshold = RelayConfig.builder()
+                .bucketCount(BUCKETS).batchSize(100).maxAttempts(MAX_ATTEMPTS).logEveryRows(1).build();
+        RelayWorker worker = new RelayWorker(outbox, dispatcher, lowThreshold,
+                attempts -> Duration.ZERO, TandemMetrics.NOOP, clock, "worker-1", outbox::allBuckets);
+
+        drain(worker);
+
+        assertThat(worker.okCount()).isEqualTo(2);
+        assertThat(worker.koCount()).isEqualTo(1);
     }
 }

@@ -1,6 +1,7 @@
 package com.codingful.tandem.test;
 
 import com.codingful.tandem.core.port.TandemMetrics;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,6 +23,7 @@ public final class RecordingMetrics implements TandemMetrics {
 
     private final List<String> configInvalidChecks = new CopyOnWriteArrayList<>();
     private final AtomicLong published = new AtomicLong();
+    private final List<Duration> publishLatencies = new CopyOnWriteArrayList<>();
     private final AtomicLong retries = new AtomicLong();
     private final AtomicLong failed = new AtomicLong(-1);
     private final AtomicLong blocked = new AtomicLong(-1);
@@ -63,6 +65,11 @@ public final class RecordingMetrics implements TandemMetrics {
     }
 
     @Override
+    public void recordPublishLatency(Duration latency) {
+        publishLatencies.add(latency);
+    }
+
+    @Override
     public void incrementRetry() {
         retries.incrementAndGet();
     }
@@ -94,6 +101,11 @@ public final class RecordingMetrics implements TandemMetrics {
 
     public long published() {
         return published.get();
+    }
+
+    /** Every latency sample recorded so far, in call order. */
+    public List<Duration> publishLatencies() {
+        return publishLatencies;
     }
 
     public long retries() {

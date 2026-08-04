@@ -24,6 +24,7 @@ class RelayConfigTest {
         assertThat(cfg.rowLease()).isEqualTo(Duration.ofSeconds(60));
         assertThat(cfg.maxAttempts()).isEqualTo(10);
         assertThat(cfg.retention()).isEqualTo(Duration.ofDays(14));
+        assertThat(cfg.logEveryRows()).isEqualTo(10_000);
     }
 
     @Test
@@ -59,6 +60,13 @@ class RelayConfigTest {
         assertThatThrownBy(() -> RelayConfig.builder().bucketCount(RelayConfig.MAX_BUCKET_COUNT + 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("SMALLINT");
+    }
+
+    @Test
+    void GIVEN_a_non_positive_log_every_rows_WHEN_built_THEN_it_is_rejected() {
+        assertThatThrownBy(() -> RelayConfig.builder().logEveryRows(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("logEveryRows must be positive");
     }
 
     @Test
@@ -117,6 +125,7 @@ class RelayConfigTest {
                 .reclaimInterval(Duration.ofSeconds(10))
                 .cleanupInterval(Duration.ofMinutes(30))
                 .deliveryTimeoutMs(15_000)
+                .logEveryRows(5_000)
                 .build();
 
         assertThat(cfg.bucketCount()).isEqualTo(128);
@@ -133,5 +142,6 @@ class RelayConfigTest {
         assertThat(cfg.reclaimInterval()).isEqualTo(Duration.ofSeconds(10));
         assertThat(cfg.cleanupInterval()).isEqualTo(Duration.ofMinutes(30));
         assertThat(cfg.deliveryTimeoutMs()).isEqualTo(15_000);
+        assertThat(cfg.logEveryRows()).isEqualTo(5_000);
     }
 }

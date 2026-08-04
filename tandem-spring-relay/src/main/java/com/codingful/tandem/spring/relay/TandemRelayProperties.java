@@ -25,6 +25,7 @@ import java.time.Duration;
  * @param reclaimInterval    how often expired row leases are reclaimed; default {@code 5s}
  * @param cleanupInterval    how often DONE rows are cleaned up; default {@code 15m}
  * @param metricsInterval    how often the relay reports backlog, backlog age and live workers; default {@code 10s}
+ * @param logEveryRows       per-worker INFO progress log every N dispatch outcomes (ok + ko); default {@code 10000}
  */
 @org.springframework.boot.context.properties.ConfigurationProperties("tandem.relay")
 public record TandemRelayProperties(
@@ -40,5 +41,6 @@ public record TandemRelayProperties(
         Integer cleanupBatchSize,
         Duration reclaimInterval,
         Duration cleanupInterval,
-        Duration metricsInterval) {
+        Duration metricsInterval,
+        Long logEveryRows) {
 }

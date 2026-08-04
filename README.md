@@ -54,14 +54,15 @@ If the relay crashes after publishing but before marking the row done, it republ
 - **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
   programmatic Java API (`ReplayService`).
 - **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published and retried counts,
-  config-validation failures, and the signals an operator actually alerts on: how many events are
-  waiting, how long the oldest has been waiting, how many are permanently failed right now, how many
-  later events are blocked behind one of those failures (queued but unclaimable until it is resolved —
-  reported separately so it never gets confused with a relay that is merely falling behind), how many
-  relay workers are alive, and — under `LEASE` coordination — how many buckets have work waiting but
-  no live owner. All of it is read periodically and **only when an adapter is wired**, so a no-op
-  default costs nothing. `tandem-micrometer` binds all of it to a real Micrometer `MeterRegistry`,
-  autoconfigured by `tandem-spring-relay` the moment both are on the classpath.
+  a per-row publish-latency histogram (insert-to-ack, the runtime-checkable read on the p50/p99
+  latency targets), config-validation failures, and the signals an operator actually alerts on: how
+  many events are waiting, how long the oldest has been waiting, how many are permanently failed right
+  now, how many later events are blocked behind one of those failures (queued but unclaimable until it
+  is resolved — reported separately so it never gets confused with a relay that is merely falling
+  behind), how many relay workers are alive, and — under `LEASE` coordination — how many buckets have
+  work waiting but no live owner. All of it is read periodically and **only when an adapter is wired**,
+  so a no-op default costs nothing. `tandem-micrometer` binds all of it to a real Micrometer
+  `MeterRegistry`, autoconfigured by `tandem-spring-relay` the moment both are on the classpath.
 - **Embedded or standalone, single or multi-instance** — the relay runs in your app or in a separate
   process you assemble yourself, and coordinates one or many concurrent instances via a declared
   mode: `SINGLE` (one instance owns all buckets, zero cost) or `LEASE` (lease-partitioned ownership
