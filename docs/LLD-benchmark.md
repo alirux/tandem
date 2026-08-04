@@ -462,6 +462,17 @@ passing assertion:
   clear. This is what `blocked.count` was added for, and the dashboard's "waiting: claimable vs blocked"
   panel is where the distinction is read. (First observed at a ~10× larger offered rate, with the same
   shape and the same straight line — the effect is structural, not a function of volume.)
+- **Backlog drain time is governed by depth-per-aggregate, not `batchSize`.** The claim already returns
+  at most one row per aggregate (structural per-aggregate ordering), so a shallow backlog drains in a
+  single claim cycle regardless of how small `batchSize` is — the original demo config (20 events/s for
+  20s, depth ~25 across 16 aggregates) fell from ~400 to ~0 within a single 1s scrape sample, too fast to
+  read on the panel. Cutting `batchSize` from 20 to 4 barely helped (402 → 14 within one second, still a
+  snap): with `workers` held fixed, `batchSize` only changes how many claim/dispatch/mark round trips one
+  depth level costs, and a local Postgres+Kafka round trip is a few milliseconds — cheap enough that even
+  several extra round trips per depth level are still sub-second. What actually worked was making the
+  backlog **deeper**: raising the burst rate (20 → 30 events/s) and stretching the no-relay window (20s →
+  60s) to depth ~112 drained as a clean multi-point staircase — 1801 → 1493 → 1103 → 711 → 333 → 0 over
+  ~6 seconds, queried directly against Prometheus, not eyeballed off the panel.
 - **`bucket.uncovered` is a sustained-stall detector, not a failover detector.** At 1s resolution across
   a whole run it was non-zero exactly twice: 56 buckets for ~5s when the relay started onto an inherited
   backlog, and 16→27 for ~5s while a joining second instance rebalanced. It never moved during the

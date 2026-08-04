@@ -30,7 +30,16 @@ public final class MetricsDashboardDemo {
     // clearly non-zero, not large — a few hundred rows read exactly like a few thousand on a graph,
     // and cost less to build and drain.
     private static final double STEADY_RATE = 10;
-    private static final double BURST_RATE = 20;
+    private static final double BURST_RATE = 30;
+
+    /**
+     * Deliberately long: the claim returns at most one row per aggregate (structural per-aggregate
+     * ordering), so drain time scales with backlog DEPTH per aggregate, not with batchSize — a shallow
+     * backlog drains in a single claim cycle regardless of how small batchSize is, too fast to read on
+     * the panel. Verified against a real run: with the previous 20s/20-events-per-second window (depth
+     * ~25), the backlog panel fell from ~400 to ~0 within one 1s scrape sample.
+     */
+    private static final Duration BACKLOG_BUILD_WINDOW = Duration.ofSeconds(60);
 
     /** Short enough that a whole phase is many points on the dashboard rather than two or three. */
     private static final Duration METRICS_INTERVAL = Duration.ofSeconds(1);
@@ -64,7 +73,13 @@ public final class MetricsDashboardDemo {
         BenchmarkConfig cfg = BenchmarkConfig.builder()
                 .bucketCount(256)   // must match the lease table seeded by the baseline DDL
                 .workers(2)
-                .batchSize(20)
+                // Below aggregateCardinality (16) on purpose: a claim already returns at most one row
+                // per aggregate, so once batchSize >= cardinality a cycle drains the whole backlog's
+                // current depth in one round trip — too fast to read on the backlog panel. A smaller
+                // batchSize forces several claim/dispatch/mark round trips per depth level instead. On
+                // its own this is a minor factor next to BACKLOG_BUILD_WINDOW below (depth dominates
+                // drain time), but it still stretches each depth level out a little further.
+                .batchSize(2)
                 .deliveryTimeoutMs(8_000)
                 .rowLease(Duration.ofSeconds(20))
                 .maxAttempts(4)
@@ -96,14 +111,14 @@ public final class MetricsDashboardDemo {
                         emitted BY the relay, and there is no relay. This is the blind spot HLD §7
                         describes: absence looks exactly like health.""");
                 generator.start(BURST_RATE);
-                await(Duration.ofSeconds(20), env);
+                await(BACKLOG_BUILD_WINDOW, env);
 
                 phase(observability, "The relay starts and drains the backlog", """
                         One instance under LEASE coordination. Watch backlog fall, publish rate rise,
                         workers.active jump to 2, and bucket.uncovered drop to 0 as it takes ownership.""");
                 generator.stop();
                 relayOne.pool().start();
-                await(Duration.ofSeconds(25), env);
+                await(Duration.ofSeconds(30), env);
 
                 phase(observability, "Steady load", """
                         A rate the relay absorbs comfortably. Backlog hovers near zero; the oldest
@@ -191,6 +206,9 @@ public final class MetricsDashboardDemo {
                 .instanceId(instanceId)
                 .bucketLease(BUCKET_LEASE)
                 .metricsInterval(METRICS_INTERVAL)
+                // Lowered from the 10,000 default so the progress log actually fires during this
+                // demo's few-hundred-row run instead of staying silent throughout.
+                .logEveryRows(100)
                 .build();
     }
 

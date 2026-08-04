@@ -33,6 +33,10 @@ tandem:
   # off by default otherwise.
   admin:
     enabled: true
+  relay:
+    # [DEMO-ONLY] Lowered from the 10,000 default so the relay's progress log actually fires
+    # during the sample's handful of writes instead of staying silent throughout.
+    log-every-rows: 100
 
 ---
 # [DEMO-ONLY] The "lease" profile (run-lease.sh) demonstrates the Admin API's LEASE-only relay
