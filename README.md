@@ -313,10 +313,11 @@ against an actually-owned bucket:
 ```
 
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
-`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through seven
+`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through eight
 scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
-joining, a crash with rows in flight, recovery — and holds the dashboard open so every signal
-`TandemMetrics` reports can be read on a live graph instead of asserted in a test:
+joining, that instance's worker getting stuck without crashing, a crash with rows in flight,
+recovery — and holds the dashboard open so every signal `TandemMetrics` reports can be read on a
+live graph instead of asserted in a test:
 
 ```bash
 ./gradlew :tandem-benchmark:metricsDashboardDemo
@@ -413,8 +414,9 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
   failure, so the blast radius is observable without querying the table directly — but it stays
   above zero, and a naive alert on backlog age alone will misread this as the relay stalling, until
   the failure is resolved.
-  **Resolution:** there is no supported operator action today — inspect `last_error` and move the
-  row to `status = 4` (DISCARDED) with SQL to unblock the chain.
+  **Resolution:** the Admin API's replay/discard endpoints (`tandem-admin`) inspect `last_error` and
+  either retry the row or move it to `status = 4` (DISCARDED) to unblock the chain — see
+  [Try it](#try-it).
 
 - **Ordering within an aggregate is only as good as your write-side.** Tandem relays rows in `id`
   order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
@@ -452,9 +454,10 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
   Terminal rows also stay in the table for the whole retention window, which is what keeps the table
   large enough to be worth an index-only dispatch scan.
 
-- **No runtime controls.** Configuration is read at startup: there is no pause/resume, and no way to
-  retune the relay without restarting the process. Today, taking a misbehaving relay out of the
-  picture means stopping it — which also stops the buckets that were perfectly healthy.
+- **Configuration is still read once, at startup.** The Admin API can pause/resume the whole relay or
+  a single bucket under `LEASE` at runtime (see [Try it](#try-it)) — so taking a misbehaving relay, or
+  just one bucket, out of the picture no longer means stopping the process — but tunables like
+  `pollInterval`, `batchSize` or `metricsInterval` still can't be changed without a restart.
 
 - **Blocking JDBC only.** The relay is a thread-per-worker pool over a `DataSource`; R2DBC and
   reactive pipelines are not supported.
