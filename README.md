@@ -337,6 +337,7 @@ gap the first real runs found — the reason `blocked.count` exists.
 | [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
 | [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive |
 | [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
+| [tracing-concepts.md](docs/tracing-concepts.md) | Distributed tracing vocabulary — span, trace, `traceparent`, span link (reference, not Tandem-specific) |
 | [LLD-micrometer.md](docs/LLD-micrometer.md) | Micrometer metrics adapter — meter mapping, gauge registration mechanics, Spring autoconfiguration |
 | [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
 | [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |

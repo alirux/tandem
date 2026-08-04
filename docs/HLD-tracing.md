@@ -9,6 +9,9 @@ boundary — domain transaction → outbox → relay → Kafka → consumer — 
 can be traced back to the business operation that produced it. **Opt-in, off by default**;
 when off it adds no cost and nothing to the headers.
 
+Assumes the vocabulary (span, trace, `traceparent`, span link) covered in
+[tracing-concepts.md](tracing-concepts.md).
+
 ---
 
 ## 1. Why the outbox makes this non-trivial
