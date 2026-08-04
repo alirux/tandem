@@ -52,7 +52,7 @@ public final class BucketLeaseManager implements BucketSource {
 
     // Drop members whose presence lease has expired (dead instances), keeping the table bounded.
     private static final String PRUNE_MEMBERS_SQL =
-            "DELETE FROM tandem_relay_member WHERE lease_until < now()";
+            "DELETE FROM tandem_relay_member WHERE lease_until < now() RETURNING owner";
 
     // Fair-share divisor: live relay instances (includes self, just registered).
     private static final String LIVE_MEMBERS_SQL =
@@ -245,9 +245,18 @@ public final class BucketLeaseManager implements BucketSource {
         }
     }
 
+    /**
+     * Drops presence rows for instances that stopped renewing (crashed or otherwise never called
+     * {@link #release()}) — the earliest point a survivor's heartbeat can tell a peer is gone, ahead of
+     * the buckets it held actually being reclaimed by {@link #claimDeficit}.
+     */
     private void pruneExpiredMembers(Connection conn) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(PRUNE_MEMBERS_SQL)) {
-            ps.executeUpdate();
+            List<String> pruned = returnedOwners(ps);
+            if (!pruned.isEmpty()) {
+                LOG.log(Level.WARNING, "Relay pruned dead member(s), presence lease expired owner:" + ownerId
+                        + ", deadOwners:" + pruned);
+            }
         }
     }
 
@@ -329,6 +338,17 @@ public final class BucketLeaseManager implements BucketSource {
             }
         }
         return buckets;
+    }
+
+    /** As {@link #returnedBuckets}, for the {@code owner} column pruned from {@code tandem_relay_member}. */
+    private static List<String> returnedOwners(PreparedStatement ps) throws SQLException {
+        List<String> owners = new ArrayList<>();
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                owners.add(rs.getString(1));
+            }
+        }
+        return owners;
     }
 
     /**

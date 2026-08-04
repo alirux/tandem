@@ -177,7 +177,9 @@ interface BucketSource {
   Each instance, on a heartbeat tick (`reclaimInterval`):
   1. **Register presence:** upsert its liveness into `tandem_relay_member`
      (`INSERT ... (owner, lease_until) VALUES (:me, now() + :lease) ON CONFLICT (owner) DO UPDATE SET lease_until = ...`),
-     then **prune** expired members (`DELETE FROM tandem_relay_member WHERE lease_until < now()`).
+     then **prune** expired members (`DELETE FROM tandem_relay_member WHERE lease_until < now() RETURNING owner`),
+     logging the pruned owner id(s) at `WARNING` — the earliest point a survivor's heartbeat can tell a
+     peer is gone, ahead of its buckets actually being reclaimed (step 4).
   2. **Renew** its owned buckets: `UPDATE tandem_bucket_lease SET lease_until = now() + :lease, updated_at = now() WHERE owner = :me;`
   3. **Compute fair share** `target = ceil(B / live_members)`, where `live_members` = `count(*)` of
      `tandem_relay_member` rows with `lease_until > now()` (includes self, just registered).
@@ -205,7 +207,9 @@ interface BucketSource {
   nothing (`owned == target`) logs nothing — this is a low-frequency coordination-event log, not a
   per-cycle one (AGENTS.md logging §4). This is what lets an operator see, from the log alone, that a
   bucket the Admin API force-released (`RelayAdminService`, HLD-admin-api §3) was picked back up by a
-  live instance on its next heartbeat.
+  live instance on its next heartbeat. The `WARNING` presence-prune log (step 1) and the `INFO` claim log
+  (step 4) together tell the causal story of a crash — peer died, buckets freed, buckets claimed — as two
+  distinct, correlatable lines rather than a claim with no visible cause.
 
   > **Why presence is decoupled from ownership (the fair-share divisor counts `tandem_relay_member`,
   > not bucket owners).** If `live` were derived from bucket ownership, an instance that currently owns
