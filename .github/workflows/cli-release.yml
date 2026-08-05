@@ -31,16 +31,43 @@ jobs:
       # The annotated tag's message becomes the release notes, same convention as the
       # library's own release.yml (AGENTS.md §Releases): first line is the title,
       # everything below it the body.
+      #
+      # semver strips the cli- prefix: GoReleaser OSS parses the current tag as plain
+      # semver and errors on anything else ("invalid semantic version"); honouring a
+      # prefixed tag is monorepo.tag_prefix, a Pro-only feature. So GoReleaser is told
+      # the semver part via GORELEASER_CURRENT_TAG (which is what lands in the binaries'
+      # -X ...Version and the archive names) and only builds; the GitHub Release itself
+      # is published below against the real cli-v* tag, keeping the documented tag scheme
+      # intact (LLD-cli.md §9.1).
       - name: Extract tag message
         id: tag_message
         run: |
           git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" > RELEASE_BODY.md
           echo "title=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+          echo "semver=${GITHUB_REF_NAME#cli-}" >> "$GITHUB_OUTPUT"
 
+      # --skip=publish: build and archive only, see above. --skip=validate as well,
+      # because GORELEASER_CURRENT_TAG names a tag that does not exist in this repo,
+      # and validation would reject it for that reason alone.
       - uses: goreleaser/goreleaser-action@v6
         with:
           workdir: tandem-cli
           version: '~> v2'
-          args: release --clean --release-notes=RELEASE_BODY.md
+          args: release --clean --skip=publish,validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.tag_message.outputs.semver }}
+
+      # --latest=false: the CLI and the library share one repository but not one version
+      # line (LLD-cli.md §9.1), and "Latest" is a single repo-wide badge - letting a
+      # cli-v* release claim it would bury the library's own newest release on the repo
+      # front page, which is what most visitors are actually looking for.
+      - name: Publish the GitHub Release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "${{ steps.tag_message.outputs.title }}" \
+            --notes-file RELEASE_BODY.md \
+            --latest=false \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

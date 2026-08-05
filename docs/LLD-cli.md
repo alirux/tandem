@@ -411,6 +411,17 @@ just captured to a browsable file instead of a terminal.
   needs Intel macOS or ARM Linux/Windows (§11).
 - **Binaries attach to the GitHub Release**, not Maven Central (`tandem-cli` is not a JVM
   artifact — Central publication in `LLD-base.md` §1 doesn't apply to it).
+- **GoReleaser builds; `gh` publishes.** GoReleaser OSS parses the current tag as plain semver
+  and hard-errors on anything else (`invalid semantic version`) — honouring a prefixed tag is
+  `monorepo.tag_prefix`, a **Pro-only** feature, so the `cli-v*` scheme (§9.1) cannot be handed
+  to it directly. Rather than give up the tag scheme (which is what actually keeps the two
+  release paths from colliding), the workflow strips the prefix into `GORELEASER_CURRENT_TAG`
+  and runs `release --skip=publish,validate`: goreleaser cross-compiles, stamps the version, and
+  archives, then `gh release create` publishes those artifacts against the **real** `cli-v*` tag.
+  `validate` is skipped because the semver it is told about is deliberately not a tag that
+  exists here. The release is created with `--latest=false`: "Latest" is one repo-wide badge and
+  belongs to the library's own newest release, not to a CLI release that happens to be more
+  recent.
 - **No package-manager distribution in v1** (no Homebrew tap, no `apt`/`scoop` recipe) — a raw
   binary download plus `go install` (when a Go toolchain is already present) covers the common
   case; revisit if adoption asks for it (§11).

@@ -49,10 +49,8 @@ checksum:
 changelog:
   disable: true # the annotated tag's own message is the release notes, per AGENTS.md §Releases
 
-release:
-  github:
-    owner: alirux
-    name: tandem
-  # tandem-cli is versioned and released independently of the library (cli-v<semver>,
-  # LLD-cli.md §9.1) - never mark the library's own v<semver> release as latest from here.
-  prerelease: auto
+# No `release:` section on purpose: the workflow runs goreleaser with --skip=publish and
+# creates the GitHub Release itself with `gh`. GoReleaser OSS can only parse a plain-semver
+# current tag, and this module's tags carry a cli- prefix (LLD-cli.md §9.1); honouring a
+# prefixed tag is monorepo.tag_prefix, a Pro-only feature. So goreleaser builds and archives
+# here, and cli-release.yml publishes against the real cli-v* tag.
