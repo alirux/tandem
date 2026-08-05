@@ -100,7 +100,7 @@ var b = CloudEventBuilder.v1()
 // optional extensions — added ONLY when their feature is on (guard against null):
 if (record.lamport() != null)                       // causal ordering enabled
     b.withExtension("logicalclock", record.lamport());  // → header ce_logicalclock
-// trace extensions (traceparent/tracestate) copied from stored headers when present (§7.2)
+// trace extensions (traceparent/tracestate) copied from stored headers when present (§7.1)
 CloudEvent ce = b.build();
 ProducerRecord<…> pr = KafkaMessageFactory.createWriter(topic, key=aggregateId)
     .writeBinary(ce);                               // binary mode (default); writeStructured for structured
@@ -184,4 +184,4 @@ Override via a custom `TopicRouter` bean, or a static `aggregateType → topic` 
 - **`source` convention** → a **single configured URI** (`tandem.kafka.source`, e.g. `/tandem/orders`).
   Per-`aggregate_type` derivation can be added later without breaking consumers (additive).
 - **Trace extension header naming** → **deferred**: it only applies when tracing is enabled (off in the
-  basic round). Decide bare `traceparent` vs `ce_traceparent` when `tandem-tracing-otel` lands (§7.2).
+  basic round). Decide bare `traceparent` vs `ce_traceparent` when `tandem-tracing-otel` lands (§7.1).

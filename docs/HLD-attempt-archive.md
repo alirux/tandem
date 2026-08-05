@@ -1,13 +1,20 @@
 # Tandem — Send Attempt Archive (Design Note)
 
-**Version:** 1.0  
-**Status:** Draft  
-**Companion to:** HLD §7.1 (Attempt Archive)
+**Version:** 1.1  
+**Status:** Designed, **not implemented** — and deliberately absent from both the code and the
+API contract.
 
 A durable, append-only history of **every** publish attempt — temporal data, outcome,
 error detail, attempt number, trace/correlation id, and the destination coordinates — for
 forensic debugging and operations. The feature is **opt-in and off by default**; when off
 it adds **no performance cost** and **no setup or configuration burden**.
+
+**Nothing in Tandem implements any of this**, and nothing reserves surface for it: there is no
+`AttemptRecorder` port, no `tandem_outbox_attempt` table, and no Admin API operation. Unused
+API surface is worse than none — it appears in a consumer's IDE autocomplete and in a published
+contract while doing nothing — so the design lives here alone, and everything below describes
+what **would** be built. The definitions in §5.1 and §8 are exact, so a future implementation
+starts from a specification rather than a sketch.
 
 ---
 
@@ -143,6 +150,52 @@ if (attemptRecorder.isEnabled()) {      // false by default → nothing below ru
 A no-op recorder alone is not enough — the *construction* of the record must also be
 skipped. The guard guarantees the off path adds nothing measurable.
 
+### 5.1 Port and model
+
+Both belong in `tandem-core`, which is dependency-free — so neither references anything beyond
+the JDK and the core's own types.
+
+```java
+public interface AttemptRecorder {
+
+    /** A no-op recorder — the default when the archive is disabled. */
+    AttemptRecorder NOOP = new AttemptRecorder() {
+    };
+
+    /** {@code true} once a real adapter is wired; the relay only builds AttemptOutcome when enabled. */
+    default boolean isEnabled() {
+        return false;
+    }
+
+    default void record(AttemptOutcome outcome) {
+    }
+}
+
+public record AttemptOutcome(long outboxId,
+                             AggregateId aggregateId,
+                             String aggregateType,
+                             int attemptNumber,
+                             AttemptStatus status,      // SUCCESS(1) | FAILED(2)
+                             Instant startedAt,
+                             Instant finishedAt,
+                             Integer latencyMs,
+                             String workerId,
+                             String topic,              // success only
+                             Integer partition,         // success only
+                             Long kafkaOffset,          // success only
+                             String errorClass,         // failure only
+                             String errorMessage,       // failure only
+                             String errorDetail,        // failure only
+                             String traceId,
+                             String correlationId) {
+}
+```
+
+`AttemptOutcome` mirrors the `tandem_outbox_attempt` columns of §3 minus the two the database
+owns (`id`, `created_at`). Note it is a **17-field record carrying `errorMessage` / `errorDetail`**:
+building it would require the `toString()` redaction rule and its dedicated unit test that
+AGENTS.md's logging conventions demand of every core type reachable from a log statement.
+
 ---
 
 ## 6. Retention
@@ -163,14 +216,88 @@ it needs its own retention policy — independent of the outbox cleanup:
 `trace_id` and `correlation_id` are read from the event's headers/context at attempt time.
 Fully populating them depends on those identifiers being propagated into the outbox
 `headers` at write time — the **trace & correlation propagation** feature
-([HLD-tracing.md](HLD-tracing.md), HLD §7.2). With propagation off, the archive simply captures
+([HLD-tracing.md](HLD-tracing.md), HLD §7.1). With propagation off, the archive simply captures
 whatever identifiers the application already placed in the headers; with it on, capture is
 automatic. The archive is the primary *consumer* of those ids, which is why the two
-features are designed together.
+features are designed together: propagation puts the ids in `headers`, the archive reads them
+out for forensics. **Each works without the other** — with propagation off the archive leaves
+the two columns null, and propagation is fully useful on its own, since the standard
+`traceparent` reaches consumers whether or not anything archives attempts. Tracing's rich mode
+would additionally supply the `trace_id` of the real send instant rather than the write's.
+
+Also note the distinction that HLD §9 draws: `correlation_id` groups related work, whereas
+`causation_id` links an effect to its one cause. The archive stores the former.
 
 ---
 
-## 8. Open decisions
+## 8. Admin API surface
+
+The archive is a *read* surface for operators, exposed through the Admin API
+([HLD-admin-api.md](HLD-admin-api.md), [admin-api.openapi.yaml](admin-api.openapi.yaml)) —
+never a second control path. Two operations:
+
+| Operation | Endpoint | Purpose |
+|---|---|---|
+| `getMessageAttempts` | `GET /outbox/messages/{id}/attempts` | Attempt timeline of one message, chronological — returns `AttemptRecord[]` |
+| `searchAttempts` | `GET /outbox/attempts` | Search the archive by `aggregateId` / `aggregateType` / `status` / `traceId` / `correlationId` / `createdFrom` / `createdTo`, cursor-paginated (`limit` 1–500, default 50) — returns `AttemptPage` |
+
+**`503 attempt-archive-disabled`** answers `searchAttempts` when the archive is off — a
+canonical RFC 9457 problem (`https://tandem.codingful.com/problems/attempt-archive-disabled`,
+title *The attempt archive is disabled*). `getMessageAttempts` returns an **empty list**
+instead: a message with no recorded attempts is a legitimate reading, whereas a *search*
+returning empty would falsely imply the archive was consulted and found nothing.
+
+**The API model is its own type, not the core's** (a project invariant — the read model, the
+write model, and the wire model evolve independently). `AttemptRecord` is what the contract
+publishes; `AttemptOutcome` (§5.1) is what the relay hands the port. They differ deliberately:
+the API adds the database-owned `id` and `createdAt`, and names the Kafka offset `offset`
+rather than `kafkaOffset`.
+
+```yaml
+AttemptStatus:                    # shared by the search filter and AttemptRecord
+  type: string
+  enum: [SUCCESS, FAILED]
+
+AttemptRecord:
+  type: object
+  required: [id, outboxId, aggregateId, aggregateType, attemptNumber, status,
+             startedAt, finishedAt, createdAt]
+  properties:
+    id:             { type: integer, format: int64 }
+    outboxId:       { type: integer, format: int64 }
+    aggregateId:    { type: string }
+    aggregateType:  { type: string }
+    attemptNumber:  { type: integer }
+    status:         { $ref: '#/components/schemas/AttemptStatus' }
+    startedAt:      { type: string, format: date-time }
+    finishedAt:     { type: string, format: date-time }
+    latencyMs:      { type: integer, nullable: true }
+    workerId:       { type: string,  nullable: true }
+    topic:          { type: string,  nullable: true }
+    partition:      { type: integer, nullable: true }
+    offset:         { type: integer, format: int64, nullable: true }
+    errorClass:     { type: string,  nullable: true }
+    errorMessage:   { type: string,  nullable: true }
+    errorDetail:    { type: string,  nullable: true }
+    traceId:        { type: string,  nullable: true }
+    correlationId:  { type: string,  nullable: true }
+    createdAt:      { type: string, format: date-time }
+
+AttemptPage:
+  type: object
+  required: [items]
+  properties:
+    items:      { type: array, items: { $ref: '#/components/schemas/AttemptRecord' } }
+    nextCursor: { type: string, nullable: true }
+```
+
+Restoring these is an **additive** contract change (new endpoints, new schemas, a new problem
+slug), so it lands within `/v1` rather than forcing a `/v2` — the same compatibility rule that
+governs every Tandem contract.
+
+---
+
+## 9. Open decisions
 
 | Area | Options |
 |---|---|

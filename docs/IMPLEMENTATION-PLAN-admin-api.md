@@ -28,7 +28,7 @@ false for every read.
 | Read one row by id / search by criteria / count per status | **Nothing.** No port exposes any of these. |
 | Replay | `ReplayService` + `JdbcReplayService` + `ReplayCriteria`/`ReplayResult` — **reusable almost 1:1** for slice 2. |
 | Discard (`FAILED` → `DISCARDED`) | **No code path anywhere.** `OutboxStatus.DISCARDED` is documented as "reachable only via the Admin API". Genuinely new verb. |
-| Attempt archive | **Ghost port.** `AttemptRecorder` is an interface plus `NOOP` with `isEnabled()` returning `false`; no JDBC adapter, no `tandem_outbox_attempt` table in the baseline DDL, no relay call site. `AttemptOutcome`/`AttemptStatus` have zero product references. |
+| Attempt archive | **Removed, 2026-08-05 (§1.1).** Was a ghost port (`AttemptRecorder`/`AttemptOutcome`/`AttemptStatus`, zero product references) — deleted from `tandem-core` and from the contract rather than kept as dead API surface. |
 | Relay control state | `tandem_relay_control` **does not exist** in the baseline schema. |
 | In-process relay status | `WorkerPool.status()` → `RelayStatus` (`tandem-jdbc`). Database-free, so it answers only for *this* JVM — the contract's `/relay/*` endpoints must work standalone, which needs the DB-mediated path (HLD-admin-api §4.1). Note the name collides with the OpenAPI `RelayStatus` schema; the two are different shapes. |
 
@@ -36,18 +36,19 @@ false for every read.
 JDBC adapter. That is the substance of the slice, not incidental plumbing. [HLD-admin-api.md](HLD-admin-api.md)
 §4 has been corrected accordingly.
 
-### 1.1 Attempt archive — deferred, and excluded from every slice
+### 1.1 Attempt archive — removed from scope entirely
 
-**User decision, 2026-08-02: the attempt archive is future, low-priority work. Until it is
-explicitly requested, it is not to be considered in the scope of any other feature.**
+**User decision, 2026-08-02: the attempt archive is future, low-priority work, excluded from
+every slice.** The two attempt `operationId`s — `getMessageAttempts`, `searchAttempts` —
+were therefore never implemented in any slice below, and the ghost port backing them
+(`AttemptRecorder`/`AttemptOutcome`/`AttemptStatus`) shipped unused since `0.1.1`.
 
-The two attempt `operationId`s — `getMessageAttempts`, `searchAttempts` — are therefore **not
-implemented in any slice below**, and no other slice may grow scope to accommodate them.
-
-They stay in the published contract (removing them would be a breaking contract change, §1 of
-the HLD). The gap is deliberate and must be **visible rather than silent**: the Specmatic
-conformance run keeps an explicit allowlist of not-yet-implemented `operationId`s, which
-shrinks as slices land. An unimplemented operation that is *not* on that list fails the build.
+**User decision, 2026-08-05: removed entirely rather than kept as dead API surface.** The two
+`operationId`s and their schemas (`AttemptRecord`, `AttemptPage`, `AttemptStatus`, the
+`attempt-archive-disabled` problem) are gone from the contract and the ghost port is gone from
+`tandem-core` — this is no longer a deferred contract gap needing a conformance allowlist. The
+design survives in full at [HLD-attempt-archive.md](HLD-attempt-archive.md), which is now the
+sole record of it; restoring the two operations would be an additive `/v1` change.
 
 ---
 
@@ -59,7 +60,7 @@ shrinks as slices land. An unimplemented operation that is *not* on that list fa
 | 2 | **Replay + discard** — `replayMessage`, `replayBulk`, `discardMessage`. The transition that unblocks an aggregate; closes the product's biggest hole. Fold in `JdbcReplayService`'s 4 uncovered `ReplayCriteria` branches. | **Done** |
 | 3 | **Relay control + observability** — `getRelayStatus`, `pauseRelay`, `resumeRelay`, `getRelayBuckets`, `getRelayBucket`, `releaseBucket`, `getRelayWorkers`. Reuses `tandem_meta`/`tandem_bucket_lease`/`tandem_relay_member`, no new table; the relay honours pause on its own maintenance cadence. | **Done** |
 | 4 | Runtime metrics knobs (Q30): change `metricsInterval` during an incident; on-demand lag reading. | Later |
-| — | Attempt endpoints | **Deferred (§1.1)** |
+| — | Attempt endpoints | **Removed from the contract (§1.1)** |
 
 Slice order is by operator value and by risk: reads cannot corrupt anything, so they land
 first and prove the module's plumbing (autoconfiguration, base path, problem+json, contract
@@ -225,8 +226,7 @@ contract-test tooling are `compileOnly`/test-only and are not redistributed).
   and in combination; a search matching nothing.
 - **Integration** — `TandemTestContainer` (real PostgreSQL), each endpoint test doubling as a
   conformance test via swagger-request-validator against the OpenAPI.
-- **Contract** — Specmatic for generative conformance and the spec backward-compatibility gate,
-  with the §1.1 allowlist for the deferred attempt operations.
+- **Contract** — Specmatic for generative conformance and the spec backward-compatibility gate.
 - **Security of the response body** — assert the list view does not carry `payload`, and that no
   log line or `toString()` on the new types prints payload or header *values* (AGENTS logging §5).
 - **The model boundaries hold** — a test that fails if a core type is serialized onto the wire.
@@ -293,8 +293,8 @@ a boundary that does not swap, would be exactly the complexity Pareto (§1.1) re
 - Docs consistent — HLD-admin-api, README, CONTRIBUTING, LLD-base, THIRD-PARTY-NOTICES.
 - The three models stayed independent (§3.9): no core type on the wire, no payload requirement
   leaking into the read path.
-- No out-of-scope decision silently invented: any need for a schema change or an attempt-archive
-  touch surfaced rather than absorbed.
+- No out-of-scope decision silently invented: any need for a schema change surfaced rather
+  than absorbed.
 
 ---
 

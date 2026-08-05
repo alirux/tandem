@@ -2,13 +2,12 @@
 
 **Version:** 1.0  
 **Status:** Draft  
-**Companion to:** HLD §7.3 (Admin API)  
+**Companion to:** HLD §7.2 (Admin API)  
 **Contract:** [admin-api.openapi.yaml](admin-api.openapi.yaml)
 
-A REST operations layer over the outbox (the *sends*) and the send-attempt archive (the
-*trace of attempts*), plus operational control of the relay. Built **API-first**: the
-OpenAPI document is the source of truth and is defined and reviewed *before* the
-implementation.
+A REST operations layer over the outbox (the *sends*), plus operational control of the
+relay. Built **API-first**: the OpenAPI document is the source of truth and is defined and
+reviewed *before* the implementation.
 
 ---
 
@@ -60,18 +59,14 @@ and governance rules (naming, descriptions, examples) that Specmatic does not en
 |---|---|
 | **Outbox — read** | health summary (counts per status, lag count/age); search messages (by status / aggregate / type / time); get one message with full payload + headers |
 | **Outbox — act** | replay one message; bulk replay by criteria (with `dryRun` preview); discard a FAILED message (explicit ordering-break acknowledgement required) |
-| **Attempts** | attempt timeline of one message; search the attempt archive (by aggregate / status / `traceId` / `correlationId` / time) |
 | **Relay** | status (state, bucket coverage, worker count); pause / resume (whole relay or a single bucket); **per-bucket ownership + lag**, listed or one at a time (spot uncovered/hot buckets); **active workers**; **force-release a bucket** for reassignment (zombie owner recovery) |
 
-Replay builds on the per-aggregate `ReplayService` (HLD §8); the attempt endpoints read the
-optional attempt archive (HLD §7.1) and return empty / `503` when it is disabled.
+Replay builds on the per-aggregate `ReplayService` (HLD §8).
 
-**The attempt archive itself is not implemented** — `AttemptRecorder` is still a port with a
-no-op default and no adapter, so the two attempt operations are **deferred and excluded from
-the implementation slices** until explicitly requested. They remain in the contract (removing
-a published operation would be breaking, §1), and the gap is tracked as an explicit
-allowlist in the conformance run rather than left silent. See
-[IMPLEMENTATION-PLAN-admin-api.md](IMPLEMENTATION-PLAN-admin-api.md) §1.1.
+The Admin API exposes no attempt-level forensic history (a timeline of every delivery attempt
+per message). It is **designed but not built**, and its two operations were removed from this
+contract rather than published unimplemented — [HLD-attempt-archive.md](HLD-attempt-archive.md)
+§8 holds the endpoint and schema definitions, so restoring them is an additive `/v1` change.
 
 ---
 
@@ -114,8 +109,7 @@ allowlist in the conformance run rather than left silent. See
   identifier first; if docs are published later, the same URLs resolve, with **no contract change**
   (the reason a URL is chosen now over `about:blank`/URN). Current slugs: `unauthorized`,
   `not-found`, `internal-error`, `invalid-parameter`, `message-not-replayable`, `ordering-break-not-acknowledged`,
-  `replay-no-selector`, `message-not-discardable`, `relay-coordination-unsupported`,
-  `attempt-archive-disabled`.
+  `replay-no-selector`, `message-not-discardable`, `relay-coordination-unsupported`.
 
 ---
 
@@ -189,7 +183,7 @@ the client service at runtime except access to its outbox database. It supports 
 
 | Operation group | How it acts | Standalone-safe? |
 |---|---|---|
-| Reads (summary, search, detail, attempts) | DB queries | ✅ DB-only |
+| Reads (summary, search, detail) | DB queries | ✅ DB-only |
 | Replay (single / bulk) | `UPDATE` rows back to `PENDING`; the client's relay picks them up on its next poll | ✅ DB-only |
 | Discard | `UPDATE` the FAILED row to `DISCARDED`, which the head-of-chain check skips (HLD §5.3) | ✅ DB-only |
 | Bucket ownership / lag / workers (read) | Query the `tandem_bucket_lease` table + outbox lag per bucket | ✅ DB-only |
@@ -248,9 +242,9 @@ behaves identically embedded or standalone.
 - **No runtime service dependency** on the client — the admin service never calls the client,
   and the client never calls the admin service.
 - **There is a schema-level contract.** The admin service operates on the same
-  `outbox` / `tandem_outbox_attempt` / relay-control tables, so it must be **schema-compatible** with
-  the client's Tandem version. This is a shared *DB contract*, not a runtime coupling — treat
-  schema changes as a versioned contract between the two.
+  `outbox` / relay-control tables, so it must be **schema-compatible** with the client's
+  Tandem version. This is a shared *DB contract*, not a runtime coupling — treat schema
+  changes as a versioned contract between the two.
 - **It has direct DB write access** (replay/discard mutate the outbox), so the standalone
   service is a privileged surface: isolate it (internal network) and secure it (§3). Security
   remains the host's responsibility.
@@ -303,8 +297,8 @@ contract-*driven*, with the OpenAPI authoritative, so it is consistent with this
 ### 6.1 Resolved
 
 - **Pagination — cursor, not page/offset.** The contract keeps `cursor`/`nextCursor`
-  (`afterId`-based). The outbox and attempt archive are written continuously by the client
-  and the relay while an operator pages through them; `OFFSET N` both degrades linearly with
+  (`afterId`-based). The outbox is written continuously by the client and the relay while an
+  operator pages through it; `OFFSET N` both degrades linearly with
   `N` on a large table and can skip or duplicate rows as the underlying set shifts between
   page fetches. `WHERE id > :cursor ORDER BY id LIMIT :n` stays O(1) per page regardless of
   depth and is stable under concurrent writes. The tradeoff accepted: no jump-to-arbitrary-page
@@ -335,7 +329,7 @@ contract-*driven*, with the OpenAPI authoritative, so it is consistent with this
   Specmatic), which catch spec drift at test time regardless of how the implementation was
   authored. Generated code would fight this project's specific conventions — the javadoc
   rules (AGENTS.md), the ban on inline comments, and especially the logging rule that every
-  `toString()` reachable from a log statement (`OutboxMessage`, `AttemptRecord`, …) must never
+  `toString()` reachable from a log statement (`OutboxMessage`, `OutboxRecord`, …) must never
   print `payload`/`headers` values, each backed by a dedicated unit test. Getting a generator
   to honour that would need custom templates that become their own artifact to maintain, for a
   problem (drift) the CI conformance gate already solves. No other Tandem module uses codegen;

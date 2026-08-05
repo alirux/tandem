@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: >
     Operational REST API for the Tandem transactional-outbox library. Exposes read access
-    to outbox state and the send-attempt archive, plus operational actions (replay, discard,
-    relay pause/resume) useful to operators.
+    to outbox state, plus operational actions (replay, discard, relay pause/resume) useful
+    to operators.
 
 
     This contract is the source of truth (API-first): the implementation must conform to
@@ -43,8 +43,6 @@ security:
 tags:
   - name: Outbox
     description: Inspect and act on outbox messages (the sends)
-  - name: Attempts
-    description: Inspect the send-attempt archive (the trace of attempts)
   - name: Relay
     description: Inspect and control the relay
 
@@ -288,107 +286,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-
-  /outbox/messages/{id}/attempts:
-    get:
-      tags:
-        - Attempts
-      summary: Attempt history (timeline) of one message
-      description: Requires the attempt archive to be enabled; otherwise returns an empty list.
-      operationId: getMessageAttempts
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        '200':
-          description: Attempts in chronological order
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/AttemptRecord'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /outbox/attempts:
-    get:
-      tags:
-        - Attempts
-      summary: Search the attempt archive
-      description: Requires the attempt archive to be enabled.
-      operationId: searchAttempts
-      parameters:
-        - name: aggregateId
-          in: query
-          schema:
-            type: string
-        - name: aggregateType
-          in: query
-          schema:
-            type: string
-        - name: status
-          in: query
-          schema:
-            $ref: '#/components/schemas/AttemptStatus'
-        - name: traceId
-          in: query
-          schema:
-            type: string
-        - name: correlationId
-          in: query
-          schema:
-            type: string
-        - name: createdFrom
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: createdTo
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 500
-        - name: cursor
-          in: query
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Page of attempts
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AttemptPage'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-        '503':
-          description: Attempt archive is disabled
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-              example:
-                type: https://tandem.codingful.com/problems/attempt-archive-disabled
-                title: The attempt archive is disabled
-                status: 503
 
   /relay/status:
     get:
@@ -683,12 +580,6 @@ components:
         - FAILED
         - DISCARDED
 
-    AttemptStatus:
-      type: string
-      enum:
-        - SUCCESS
-        - FAILED
-
     OutboxEntry:
       type: object
       description: >
@@ -806,87 +697,6 @@ components:
         lagAgeSeconds:
           type: number
           description: Age of the oldest PENDING row, in seconds
-
-    AttemptRecord:
-      type: object
-      required:
-        - id
-        - outboxId
-        - aggregateId
-        - aggregateType
-        - attemptNumber
-        - status
-        - startedAt
-        - finishedAt
-        - createdAt
-      properties:
-        id:
-          type: integer
-          format: int64
-        outboxId:
-          type: integer
-          format: int64
-        aggregateId:
-          type: string
-        aggregateType:
-          type: string
-        attemptNumber:
-          type: integer
-        status:
-          $ref: '#/components/schemas/AttemptStatus'
-        startedAt:
-          type: string
-          format: date-time
-        finishedAt:
-          type: string
-          format: date-time
-        latencyMs:
-          type: integer
-          nullable: true
-        workerId:
-          type: string
-          nullable: true
-        topic:
-          type: string
-          nullable: true
-        partition:
-          type: integer
-          nullable: true
-        offset:
-          type: integer
-          format: int64
-          nullable: true
-        errorClass:
-          type: string
-          nullable: true
-        errorMessage:
-          type: string
-          nullable: true
-        errorDetail:
-          type: string
-          nullable: true
-        traceId:
-          type: string
-          nullable: true
-        correlationId:
-          type: string
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-
-    AttemptPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AttemptRecord'
-        nextCursor:
-          type: string
-          nullable: true
 
     ReplayRequest:
       type: object

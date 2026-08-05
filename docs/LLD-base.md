@@ -39,8 +39,8 @@ type-safe, best IDE support, and consistent with the `build.gradle.kts` assumed 
 | `tandem-kafka-streams` | `tandem-kafka-streams` | Optional — causal-ordering adapter (§9 HLD) |
 | `tandem-flink` | `tandem-flink` | Optional — causal-ordering adapter (§9 HLD) |
 | `tandem-micrometer` | `tandem-micrometer` | Optional — relay-side Micrometer adapter for the `TandemMetrics` port (§7 HLD) |
-| `tandem-tracing-otel` | `tandem-tracing-otel` | Optional — OpenTelemetry trace-capture adapter (§7.2 HLD) |
-| `tandem-admin` | `tandem-admin` | Optional — REST admin API, API-first (§7.3 HLD, admin-api.openapi.yaml) |
+| `tandem-tracing-otel` | `tandem-tracing-otel` | Optional — OpenTelemetry trace-capture adapter (§7.1 HLD) |
+| `tandem-admin` | `tandem-admin` | Optional — REST admin API, API-first (§7.2 HLD, admin-api.openapi.yaml) |
 | `tandem-benchmark` | *(not published)* | Internal — load/performance harness (see HLD-load-testing.md) |
 | `tandem-sample` | *(not published)* | Runnable end-to-end tutorial (plain Java, no Spring) |
 | `tandem-sample-spring` | *(not published)* | Runnable Spring Boot tutorial — the write-side tiers plus the autoconfigured relay |
@@ -64,7 +64,7 @@ from the client's own tables:
 | Object | Name |
 |---|---|
 | Outbox table | `tandem_outbox` |
-| Attempt archive (opt-in, §7.1) | `tandem_outbox_attempt` |
+| Attempt archive (designed, not built — HLD-attempt-archive §3) | `tandem_outbox_attempt` |
 | Lamport clock store (opt-in, §9.3) | `tandem_aggregate_clock` |
 | Bucket ownership (standalone, §4.3) | `tandem_bucket_lease` |
 | Relay control flag (§4.1 admin) | `tandem_relay_control` |

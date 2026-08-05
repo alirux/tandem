@@ -14,7 +14,7 @@ resolved (or consciously deferred) to write correct per-module LLDs.
 
 - [x] **Q1 (P1)** — **Port contracts.** ✅ Resolved in [LLD-core.md](LLD-core.md) §2: signatures for
   `OutboxRepository`, `OutboxStore`, `OutboxDispatcher`, `PayloadSerializer`, `TopicRouter`,
-  `CausalContext`, `AttemptRecorder`, `TracePropagator`, `TandemMetrics`, `ReplayService`,
+  `CausalContext`, `TracePropagator`, `TandemMetrics`, `ReplayService`,
   `TandemAggregate`. (`OutboxEventMapper` → tandem-spring-producer; `AdminService` → tandem-admin.) *(tandem-core)*
 - [x] **Q2 (P1)** — **`OutboxMessage` model.** ✅ Resolved: `AggregateId` = **typed value object**;
   **`OutboxMessage`** = write-side value (immutable + builder), **`OutboxRecord`** = stored row
@@ -36,14 +36,14 @@ resolved (or consciously deferred) to write correct per-module LLDs.
 - [~] **Q6 (P2)** — **Consolidated configuration reference.** *Basic-round subset done:* the defaults
   the round needs are tabulated in [LLD-jdbc.md](LLD-jdbc.md) §6. *Still open (full):* one table of every
   `TandemProperties` key (name, type, default, scope) incl. feature flags
-  (`tandem.attempt-archive.enabled`, `tandem.admin.enabled`, `tandem.tracing.enabled`). The core
+  (`tandem.admin.enabled`, `tandem.tracing.enabled`). The core
   `tandem.*` contract (outbox/relay/kafka) is specified in [LLD-spring-config.md](LLD-spring-config.md) §2;
   the feature-flag keys land with their own modules. *(tandem-spring-producer / tandem-spring-relay)*
 - [~] **Q7 (P2)** — **Schema migration strategy.** *Basic-round decided:* the baseline DDL
   (`tandem_outbox` + indexes; `tandem_bucket_lease` for standalone) ships as a **hand-written,
   versioned SQL script per DB** that the operator applies (LLD-jdbc §6, HLD §5.1); a migration tool
   (Liquibase/Flyway) is **deferred**. *Still open (full):* conditional optional columns/tables
-  (`type`, `lamport`, `tandem_outbox_attempt`, relay-control); versioned schema contract for standalone
+  (`type`, `lamport`, relay-control); versioned schema contract for standalone
   relay/admin. **Must satisfy backward + forward compatibility (§1.4)** — additive scripts only. *(all)*
 
 ## B. tandem-jdbc (relay + write-side persistence)

@@ -50,7 +50,7 @@ Tandem-specific extensions, and where the dependency lives.
 | `dataschema` | optional | stored `dataschema` header / config (optional) | URI to the payload schema; for schema-registry users (§7) |
 | `data` | — | `payload` | the serialized event body |
 | `partitionkey` | extension | `aggregate_id` | = Kafka record key; preserves ordering |
-| `traceparent` / `tracestate` | extension (Distributed Tracing) | from `headers` (§7.2) | |
+| `traceparent` / `tracestate` | extension (Distributed Tracing) | from `headers` (§7.1) | |
 | `seq`, `logicalclock`, `causationid` | extension (Tandem) | outbox columns / `headers` (the `logicalclock` extension carries the `lamport` value) | optional, present only when the relevant feature is on; binary-mode headers `ce_seq` / `ce_logicalclock` / `ce_causationid` |
 
 The **Kafka record key remains `aggregate_id`** (= `partitionkey`), so the full ordering

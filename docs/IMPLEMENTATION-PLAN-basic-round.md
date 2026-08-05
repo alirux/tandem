@@ -71,7 +71,7 @@ consistent (AGENTS.md), and the module-specific invariant below holds.
   `ReplayCriteria`/`ReplayResult`.
 - Ports: `OutboxRepository`, `OutboxStore`, `OutboxDispatcher`, `PayloadSerializer`, `TopicRouter`,
   `ReplayService`, `TandemAggregate`, and the optional ports as **no-op defaults**
-  (`TandemMetrics`, `AttemptRecorder`, `TracePropagator`, `CausalContext`).
+  (`TandemMetrics`, `TracePropagator`, `CausalContext`).
 - Pure logic: `BucketHash.bucketFor` (FNV-1a 64-bit + `Math.floorMod`), `LamportClock.merge`,
   header-name constants. Exception hierarchy (LLD-core §3).
 - **Invariant: zero external runtime dependencies** — verify the dependency graph has nothing but the JDK.

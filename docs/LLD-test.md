@@ -60,5 +60,5 @@ the topic in per-aggregate order.
 ## 5. Scope (minimal, for the basic round)
 
 In: the four helpers above — enough to unit-test write-side + relay loop and integration-test the
-full path. Out (later): MySQL container variants, causal-ordering/attempt-archive/admin test fixtures,
+full path. Out (later): MySQL container variants, causal-ordering/admin test fixtures,
 property-based/fuzz harnesses.

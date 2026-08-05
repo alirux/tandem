@@ -10,7 +10,6 @@
  * publish port ({@link com.codingful.tandem.core.port.OutboxDispatcher}) by {@code tandem-kafka}.
  *
  * <p>The optional ports ({@link com.codingful.tandem.core.port.TandemMetrics},
- * {@link com.codingful.tandem.core.port.AttemptRecorder},
  * {@link com.codingful.tandem.core.port.TracePropagator},
  * {@link com.codingful.tandem.core.port.CausalContext}) ship a no-op default and an {@code isEnabled()}
  * guard, so the off-path costs nothing until a real adapter is wired.

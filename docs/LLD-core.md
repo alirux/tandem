@@ -112,8 +112,7 @@ Ports are interfaces **defined by the core** and implemented by adapters (HLD §
 | `PayloadSerializer` | client / `tandem-spring-producer` (JSON) | Object → bytes |
 | `TopicRouter` | `tandem-kafka` (default) | `aggregateType` → topic |
 | `CausalContext` | `tandem-spring-producer` (consumer side) | Inbound Lamport timestamp |
-| `AttemptRecorder` | core (no-op) / `tandem-jdbc` | Attempt archive (§7.1) |
-| `TracePropagator` | core (no-op) / `tandem-spring-producer`, `tandem-tracing-otel` | Trace capture (§7.2) |
+| `TracePropagator` | core (no-op) / `tandem-spring-producer`, `tandem-tracing-otel` | Trace capture (§7.1) |
 | `TandemMetrics` | core (no-op) / `tandem-micrometer` | Metrics (§7) |
 | `ReplayService` | `tandem-jdbc` | Replay (§8) |
 | `TandemAggregate` | client's aggregate | Expose pending messages (annotation tier) |
@@ -208,12 +207,7 @@ public interface TandemMetrics {                       // §7
     void recordConfigInvalid(String check); // startup config invariant violated (e.g. rowLease ≤ delivery.timeout.ms); LLD-jdbc §3.5
 }
 
-public interface AttemptRecorder {                     // §7.1
-    default boolean isEnabled() { return false; }
-    void record(AttemptOutcome outcome);
-}
-
-public interface TracePropagator {                     // §7.2
+public interface TracePropagator {                     // §7.1
     default boolean isEnabled() { return false; }
     Map<String,String> capture();   // {} when disabled
 }
@@ -223,10 +217,8 @@ public interface CausalContext {                       // §9
 }
 ```
 
-`AttemptOutcome` is a small record (outboxId, attemptNumber, status, started/finished, latency,
-worker, topic/partition/offset, errorClass/message/detail, traceId, correlationId) — full shape
-in HLD-attempt-archive. The **no-op defaults** make every capability zero-cost when off; callers
-also guard on `isEnabled()` before building any payload (HLD §7.1/§7.2).
+The **no-op defaults** make every capability zero-cost when off; callers also guard on
+`isEnabled()` before building any payload (HLD §7.1).
 
 ### 2.6 Replay & aggregate hook
 

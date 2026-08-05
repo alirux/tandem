@@ -535,7 +535,7 @@ only implementation).
 **No adapter = no cost.** With no `tandem-micrometer` adapter wired, the `TandemMetrics` port is
 the no-op default (HLD §7), so each metric's **computation is guarded on `isEnabled()`** — the lag,
 failed-count, blocked-count, and uncovered-bucket readings go further and are **never scheduled at
-all**, so their queries never run — like the attempt-archive guard (HLD §7.1). The `config.invalid` fail-fast metric
+all**, so their queries never run. The `config.invalid` fail-fast metric
 (§3.5) is the one exception — it is recorded once at startup regardless, before aborting.
 
 ---

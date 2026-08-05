@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Draft  
-**Companion to:** HLD §7.2 (Trace & Correlation Propagation)
+**Companion to:** HLD §7.1 (Trace & Correlation Propagation)
 
 Propagate distributed-tracing and correlation identifiers across the asynchronous outbox
 boundary — domain transaction → outbox → relay → Kafka → consumer — so a consumed event
@@ -110,9 +110,8 @@ consumer continues the trace with zero Tandem-specific knowledge.
   dependency-free downstream.
 - **Rich (optional).** The relay additionally emits a short **`tandem.relay.publish`** span
   linked to the captured context, timestamped at the actual send — so the trace shows the
-  outbox dwell + relay latency + retries as a real span, and supplies the `trace_id` to the
-  attempt archive (§7.1). Requires a tracing adapter on the relay side; off unless asked
-  for.
+  outbox dwell + relay latency + retries as a real span. Requires a tracing adapter on the
+  relay side; off unless asked for.
 
 Four rules constrain rich mode. Each one, broken, produces traces that *look* plausible and
 are wrong.
@@ -180,8 +179,8 @@ least as widely readable as a log line, so it gets no exemption.
 | Capture cost | **None** — guarded: `capture()` is not called and no map is built | One context capture + a header merge per insert |
 | Dependencies | None — `NoOpTracePropagator` in core | Tracing adapter only where enabled |
 
-As with the attempt archive, the insert path **guards** the capture call so that when
-disabled there is no context lookup and no allocation — only a boolean check.
+The insert path **guards** the capture call so that when disabled there is no context lookup
+and no allocation — only a boolean check.
 
 ---
 
@@ -195,17 +194,7 @@ into MDC, so application logs on the consumer carry the originating ids.
 
 ---
 
-## 9. Relation to the attempt archive (§7.1)
-
-The attempt archive is the primary in-library *consumer* of these ids: its `trace_id` and
-`correlation_id` columns are populated from the captured headers. The two features are
-designed together — propagation puts the ids in `headers`; the archive reads them out for
-forensics. Each works without the other (the archive simply leaves the columns null if
-propagation is off).
-
----
-
-## 10. Open decisions
+## 9. Open decisions
 
 **Sampling is frozen at insert time, for the life of the row.** The sampling decision travels in
 the `traceparent`'s trace-flags, so capturing the header also captures the verdict. A row written

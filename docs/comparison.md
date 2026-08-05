@@ -34,7 +34,7 @@ The contenders:
 | Monitoring | Connector metrics | Minimal | Spring Actuator | DIY | **Micrometer native** |
 | Targeted replay (per aggregate) | No (offset rewind) | Manual | No | DIY | **Yes, first-class** |
 | Operational admin API | Connect REST (connector-level) | No | No | DIY | **Opt-in REST (API-first)** |
-| Forensic attempt history | Logs / DLQ | No | No | DIY | **Opt-in archive** |
+| Forensic attempt history | Logs / DLQ | No | No | DIY | Designed, not built |
 | Trace / correlation propagation | Headers (CDC) | Partial | No | DIY | **Opt-in (W3C `traceparent`)** |
 | Message envelope | CloudEvents (converter) | Custom | Spring event | DIY | **CloudEvents by default** |
 | Extra infrastructure | Kafka Connect + CDC | CDC/polling service | None | None | **None** |
@@ -115,8 +115,8 @@ depth + minimalism.** It keeps the per-aggregate ordering idea but:
 - **Minimal footprint** — `tandem-core` has zero dependencies and the client imports almost
   nothing, without Eventuate's heavier dependency surface and framework conventions.
 - **Operations as a first-class deliverable** — Micrometer-native monitoring, first-class
-  per-aggregate replay, and opt-in admin API + forensic attempt archive, where Eventuate's
-  monitoring is modest and replay is build-your-own.
+  per-aggregate replay, and an opt-in admin API, where Eventuate's monitoring is modest and
+  replay is build-your-own.
 - **No mandatory relay service** — in-process sharded polling by default, or standalone by
   choice; and a modern **CloudEvents** envelope by default.
 
@@ -208,10 +208,10 @@ to operate):
   out of the box.
 - **Optional cross-aggregate causal ordering** — the Lamport-clock capability (HLD §9)
   that none of the alternatives provide.
-- **Operational & forensic suite, all opt-in** — an API-first REST admin API (HLD §7.3), a
-  per-attempt forensic archive (§7.1), and W3C trace/correlation propagation (§7.2). Each is
-  off by default (Pareto), so they add nothing to the common case but are there when ops
-  needs them — a depth none of the alternatives offer as first-class, outbox-specific tools.
+- **Operational suite, all opt-in** — an API-first REST admin API (HLD §7.2) and W3C
+  trace/correlation propagation (§7.1). Each is off by default (Pareto), so they add nothing
+  to the common case but are there when ops needs them — a depth none of the alternatives
+  offer as first-class, outbox-specific tools.
 - **Framework-agnostic** — `tandem-core` has zero runtime dependencies; Spring is
   optional, unlike Spring Modulith.
 

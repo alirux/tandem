@@ -46,8 +46,8 @@ Where a component has a clear functional core with at least one port and one ada
 | Hexagonal role | Tandem |
 |---|---|
 | Functional core | `tandem-core` — models, contracts, pure logic (Lamport merge, status state machine); zero external runtime deps |
-| Ports (defined by the core) | `OutboxRepository` (persistence), `OutboxDispatcher` (publish), `PayloadSerializer`, `TopicRouter`, `CausalContext`, `AttemptRecorder` (default no-op), `TracePropagator` (default no-op), `TandemMetrics` (default no-op) |
-| Driven (outbound) adapters | `tandem-jdbc` (JDBC persistence, `JdbcAttemptArchive`), `tandem-kafka` (Kafka publish), `tandem-test` `InMemoryOutbox` (in-memory persistence) |
+| Ports (defined by the core) | `OutboxRepository` (persistence), `OutboxDispatcher` (publish), `PayloadSerializer`, `TopicRouter`, `CausalContext`, `TracePropagator` (default no-op), `TandemMetrics` (default no-op) |
+| Driven (outbound) adapters | `tandem-jdbc` (JDBC persistence), `tandem-kafka` (Kafka publish), `tandem-test` `InMemoryOutbox` (in-memory persistence) |
 | Driving (inbound) adapters | `tandem-spring-producer` usage tiers (template, annotation, Spring events); `tandem-admin` REST layer over `AdminService` |
 | Observability / consumer-side adapters | `tandem-micrometer` (metrics), `tandem-tracing-otel` (trace capture), `tandem-kafka-streams`, `tandem-flink` |
 
@@ -62,7 +62,7 @@ The part of Tandem the **client application must import** — the **write-side**
 
 - `tandem-core` already has **zero runtime dependencies** and stays that way.
 - The write-side built on it (core + the JDBC insert in `tandem-jdbc`) must not drag in heavy transitive libraries: **no Kafka client, no CloudEvents SDK, no tracing library, no mandatory JSON binding, and no Spring unless the user opts into a Spring tier.** JDBC itself is the JDK's `java.sql` (not an external dependency); the client supplies the `DataSource`.
-- Everything that *requires* an external dependency — the Kafka client, the CloudEvents SDK (§4.8), tracing adapters (§7.2), stream-processing adapters (§9) — lives on the **relay / optional side**, never on the client path.
+- Everything that *requires* an external dependency — the Kafka client, the CloudEvents SDK (§4.8), tracing adapters (§7.1), stream-processing adapters (§9) — lives on the **relay / optional side**, never on the client path.
 - Where the write-side genuinely needs a library (e.g. JSON serialization of the payload), prefer the **client's already-present one** (a `provided`/optional dependency) or a **pluggable SPI with no forced default**, rather than bundling a heavy transitive tree.
 
 **Why:** the client must not inherit Tandem's delivery-side dependencies, which would risk version conflicts with its own libraries (dependency hell) and bloat its artifact. This reinforces the split deployment topology (§3.2) and the zero-dependency-core rule, and is a hard constraint on every write-side LLD.
@@ -255,7 +255,7 @@ Because the database is Tandem's coordination point, only one thing *must* run i
 |---|---|---|
 | Write-side (outbox INSERT) | **Client only** (in the domain transaction) | DB; core + JDBC; **no Kafka** |
 | Relay (poll, publish, mark DONE, lease, retry, poison, cleanup) | Embedded in the client **or** standalone | DB + Kafka |
-| Admin API (§7.3) | Embedded **or** standalone | DB (relay control mediated via DB) |
+| Admin API (§7.2) | Embedded **or** standalone | DB (relay control mediated via DB) |
 
 **Two orthogonal axes.** A relay deployment is described by *two independent* choices — **where** the relay process runs and **how** multiple relay instances coordinate bucket ownership. They compose freely; do not conflate them.
 
@@ -265,7 +265,7 @@ Because the database is Tandem's coordination point, only one thing *must* run i
 - **Split (opt-in — robustness / isolation).** The relay runs as its own deployable, pointed at the client's outbox DB and Kafka. Benefits:
   - **Dependency isolation** — the client depends only on the write-side (`tandem-spring-producer` → core + JDBC), with **no Kafka client** or its transitive tree, avoiding version conflicts with the app's own libraries.
   - **Physical separation / robustness** — relay and client have independent lifecycles, scaling, and failure domains: the client scales for request load, the relay for outbox throughput; a relay crash or GC pause does not touch request handling.
-  - **No runtime coupling** — relay and client communicate only through the outbox DB. The sole shared contract is the DB *schema* (versioned), exactly as for the Admin API (§7.3).
+  - **No runtime coupling** — relay and client communicate only through the outbox DB. The sole shared contract is the DB *schema* (versioned), exactly as for the Admin API (§7.2).
 
 **Axis 2 — coordination mode (how concurrent relay instances share buckets):**
 
@@ -648,7 +648,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
   own is the one where the whole relay is gone, so an operator must also alert on the *absence* of a
   fresh reading (a staleness / `absent()` rule), not only on a high value. Under `LEASE` a surviving
   peer keeps reporting and `bucket.uncovered` covers the partial case; with a single relay there is
-  no such witness. A lag reading computed **outside** the relay — the Admin API (§7.3), which queries
+  no such witness. A lag reading computed **outside** the relay — the Admin API (§7.2), which queries
   the same table — is the natural complement, and the reason not to treat these gauges as sufficient.
 - **A burst shorter than `metricsInterval` is invisible by design.** The reading is periodic, not
   event-driven, so a backlog that builds and drains between two readings never appears. The gauges
@@ -706,32 +706,7 @@ supposed to exist, so "no relay running" and "no relay ever configured" are indi
 data alone, and the only witness is the process that is missing. An operator running `SINGLE` must
 therefore rely on application-level liveness for that case.
 
-### 7.1 Attempt Archive (optional, off by default)
-
-Metrics answer *"is the system healthy?"*; they do not let an operator reconstruct *what
-happened on each delivery attempt of one event*. For that, Tandem offers an optional,
-append-only **attempt archive**: one immutable row per publish attempt capturing temporal
-data, outcome, full error detail, attempt number, worker, destination coordinates, and
-`trace_id` / `correlation_id`.
-
-Design highlights (full design: [HLD-attempt-archive.md](HLD-attempt-archive.md)):
-
-- **Off by default, zero cost when off.** No `tandem_outbox_attempt` table, no configuration, no
-  module, and — via a guard that skips record construction entirely when disabled — no
-  write-path overhead. The base setup remains just the `outbox` table.
-- **Hexagonal (§1.2).** Port `AttemptRecorder` in `tandem-core`; default
-  `NoOpAttemptRecorder`; opt-in `JdbcAttemptArchive` adapter in `tandem-jdbc`, enabled by a
-  single flag (`tandem.attempt-archive.enabled`).
-- **Consistent, cheap when on.** The archive `INSERT` rides the **same status-update transaction
-  the relay already runs** — no new transaction. On **failure** that is the per-record retry/FAILED
-  update (one archive row). On **success** the relay marks DONE in batches across aggregates (§6), so
-  the archive rows for that batch are inserted **multi-row in the same `markDoneBatch` transaction**;
-  each record's ack data (topic/partition/offset/latency) is captured in its send completion handler
-  and flushed alongside the DONE ids.
-- **Own retention.** The archive grows N× faster than the outbox, so it carries its own
-  configurable retention / time-partitioning (relevant only when enabled).
-
-### 7.2 Trace & Correlation Propagation (optional, off by default)
+### 7.1 Trace & Correlation Propagation (optional, off by default)
 
 Tandem can propagate distributed-tracing and correlation identifiers across the
 asynchronous outbox boundary, so a consumed event traces back to the business operation
@@ -759,27 +734,25 @@ Design highlights (full design: [HLD-tracing.md](HLD-tracing.md)):
   batch is a fan-in of unrelated traces, so no single parent for it is correct — and never for a
   poll that claimed nothing. Span attributes carry the same structural identifiers as logs, never
   payloads (HLD-tracing.md §6.1–§6.4).
-- **Feeds the attempt archive (§7.1)**, whose `trace_id` / `correlation_id` columns are
-  populated from these headers. `correlation_id` is distinct from the `causation_id` of §9.
+- `correlation_id` is distinct from the `causation_id` of §9.
 
-### 7.3 Admin API (optional, off by default)
+### 7.2 Admin API (optional, off by default)
 
-An optional REST operations layer over the outbox (the *sends*) and the attempt archive
-(the *trace of attempts*), plus relay control. Built **API-first**: the OpenAPI contract
-([admin-api.openapi.yaml](admin-api.openapi.yaml)) is the source of truth, defined and
-reviewed before implementation; full design in [HLD-admin-api.md](HLD-admin-api.md).
+An optional REST operations layer over the outbox (the *sends*), plus relay control. Built
+**API-first**: the OpenAPI contract ([admin-api.openapi.yaml](admin-api.openapi.yaml)) is the
+source of truth, defined and reviewed before implementation; full design in
+[HLD-admin-api.md](HLD-admin-api.md).
 
 - **Operations.** Outbox: health summary, message search, single-message detail, single and
   bulk replay (with `dryRun`), discard (with explicit ordering-break acknowledgement).
-  Attempts: per-message timeline and archive search (by aggregate / status / `traceId` /
-  `correlationId` / time). Relay: status, pause/resume (whole or per shard).
+  Relay: status, pause/resume (whole or per shard).
 - **Off by default + security is the host's job.** Not exposed unless `tandem.admin.enabled`
   is set; Tandem ships the endpoints, not the authentication — the OpenAPI declares the
   expected `bearerAuth` / `apiKeyAuth` schemes but wiring real auth is the application's
   responsibility.
 - **Hexagonal (§1.2).** Operations are framework-agnostic use cases (`AdminService`),
-  delegating to existing `OutboxRepository` / `ReplayService` / the attempt-archive query;
-  REST is a driving adapter in the optional `tandem-admin` module (depends only on
+  delegating to existing `OutboxRepository` / `ReplayService`; REST is a driving adapter in
+  the optional `tandem-admin` module (depends only on
   `tandem-core` + `tandem-jdbc`, never on the client's domain). The future Admin Web UI
   (out of scope) consumes this same contract.
 - **Deployable embedded or fully standalone.** Because the DB is Tandem's coordination point,
@@ -1007,13 +980,11 @@ Tandem is positioned in the gap between a hand-rolled outbox (correct, but you b
 | ~~Spring-events tier event mapping~~ | **Resolved (Q22):** both — a published `OutboxMessage` is inserted directly, otherwise a registered `OutboxEventMapper<T>` SPI maps it; the synchronous listener is scoped to those types and fails fast without an active transaction (LLD-spring-producer §5) | |
 | ~~Lamport clock store~~ | **Resolved:** Tandem-managed `tandem_aggregate_clock` table (clean boundary — Tandem never writes domain tables); atomic upsert serializes the per-aggregate advance (§9.3) | |
 | ~~Spring Boot dual-version packaging~~ | **Resolved:** a **single artifact per module** on the common 6.x/7.x API, Spring `compileOnly`, validated by an in-build Boot 3.x/4.x test matrix; `-boot3`/`-boot4` split kept only as a fallback if a real incompatibility surfaces (§10.1, LLD-spring-config §1.1/§1.2) | |
-| Attempt archive write timing | Synchronous in the status-update tx (consistent; one extra INSERT — preferred) vs. async/batched writer | Only relevant when the attempt archive is enabled (§7.1) |
-| Attempt archive — which attempts | Record every attempt incl. the successful one (full timeline) vs. failures + final success only (smaller) | Trade forensic completeness vs. archive size |
-| Trace propagation enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is on the classpath | Only relevant when trace/correlation propagation is used (§7.2) |
+| Trace propagation enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is on the classpath | Only relevant when trace/correlation propagation is used (§7.1) |
 | Correlation-id source | MDC key (default) vs. explicit `TandemContext` API vs. both | |
-| Admin API spec ↔ code binding | Generate server stubs from the OpenAPI at build time vs. hand-write + validate against the spec in CI | API-first either way (§7.3) |
+| Admin API spec ↔ code binding | Generate server stubs from the OpenAPI at build time vs. hand-write + validate against the spec in CI | API-first either way (§7.2) |
 | Admin API discard semantics | Hard skip (ordering break, acknowledged) vs. discard + tombstone/compensation | Only relevant when the Admin API is enabled |
 | ~~Producer/relay packaging (split topology)~~ | **Resolved:** split by role into `tandem-spring-producer` / `tandem-spring-relay`, no all-in-one aggregator — structural (the producer cannot pull Kafka transitively) rather than convention-based (a single module with an optional Kafka dep + conditional relay autoconfig would rest the invariant on every conditional staying correct) (§3.2, LLD-spring-config §1) | |
 | ~~CloudEvents `id` / `source` / event versioning~~ | **Resolved:** `id` = outbox `id`; `source` = a single configured URI (`tandem.kafka.source`); event **version lives in the `type`** (`.v{n}`), topic stays version-agnostic; optional `dataschema` from header/config (HLD-cloudevents §7–§8, LLD-kafka §3/§6) | Content mode (binary), raw escape hatch, and `type` column also decided (§4.8) |
-| CloudEvents trace header naming | Bare `traceparent` / `tracestate` vs. `ce_`-prefixed — **deferred** until tracing (`tandem-tracing-otel`) lands; tracing is off in the basic round | Only affects the (optional) trace extension (§7.2, HLD-cloudevents §8) |
+| CloudEvents trace header naming | Bare `traceparent` / `tracestate` vs. `ce_`-prefixed — **deferred** until tracing (`tandem-tracing-otel`) lands; tracing is off in the basic round | Only affects the (optional) trace extension (§7.1, HLD-cloudevents §8) |
 | ~~Write-side payload serializer dependency~~ | **Resolved (Q22):** an optional Jackson `PayloadSerializer`, auto-configured only when Jackson is on the classpath (`@ConditionalOnClass`) and never forced; the `byte[]` path always works dependency-free, and an object payload without a serializer fails fast (LLD-spring-producer §2) | |

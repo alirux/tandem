@@ -66,7 +66,7 @@ assertion cannot do. Run it when you change what the gauges report or how often 
 | `tandem-spring-producer` | Spring Boot autoconfiguration for the write side, plus its usage tiers. Never pulls Kafka. |
 | `tandem-spring-relay` | Spring Boot autoconfiguration for the relay, started with the application. |
 | `tandem-micrometer` | `TandemMetrics` backed by a Micrometer `MeterRegistry`, autoconfigured by `tandem-spring-relay`. |
-| `tandem-admin` | Optional REST Admin API over the outbox and the relay (API-first, off by default). Reads, replay/discard, and relay control (status, pause/resume, per-bucket/per-worker observability, force-release) are all implemented; only the attempt-archive endpoints remain, deferred with the archive itself — see [IMPLEMENTATION-PLAN-admin-api.md](docs/IMPLEMENTATION-PLAN-admin-api.md). |
+| `tandem-admin` | Optional REST Admin API over the outbox and the relay (API-first, off by default). Reads, replay/discard, and relay control (status, pause/resume, per-bucket/per-worker observability, force-release) are all implemented — the contract is fully implemented; see [IMPLEMENTATION-PLAN-admin-api.md](docs/IMPLEMENTATION-PLAN-admin-api.md). |
 | `tandem-sample` | Example application (plain Java), not published. |
 | `tandem-sample-spring` | Example Spring Boot application, not published. Also hosts the end-to-end Spring smoke test. |
 | `tandem-benchmark` | Load-testing harness, not published. |

@@ -337,8 +337,8 @@ gap the first real runs found — the reason `blocked.count` exists.
 | [HLD.md](docs/HLD.md) | High-Level Design — architecture, decisions, data model, flow |
 | [LLD-base.md](docs/LLD-base.md) | Shared build/package conventions |
 | [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
-| [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive |
 | [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
+| [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive — designed, not implemented |
 | [tracing-concepts.md](docs/tracing-concepts.md) | Distributed tracing vocabulary — span, trace, `traceparent`, span link (reference, not Tandem-specific) |
 | [LLD-micrometer.md](docs/LLD-micrometer.md) | Micrometer metrics adapter — meter mapping, gauge registration mechanics, Spring autoconfiguration |
 | [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
@@ -468,19 +468,20 @@ Not yet shipped, in no particular order:
 
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
-- **The Admin API's attempt archive endpoints** — `getMessageAttempts`/`searchAttempts` are in the
-  committed contract but not implemented; they depend on the forensic per-attempt archive below,
-  itself not yet built.
-- **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, a
-  forensic per-attempt archive, and W3C trace/correlation propagation. Each has a design document
-  ([causal-ordering.md](docs/causal-ordering.md), [HLD-attempt-archive.md](docs/HLD-attempt-archive.md),
-  [HLD-tracing.md](docs/HLD-tracing.md)) and a port already published in `tandem-core`
-  (`AttemptRecorder`, `TracePropagator`, `CausalContext`, plus the `AttemptStatus` and
-  `AttemptOutcome` types) that resolves to a no-op today — visible in IDE autocomplete, but nothing
-  references them yet. Treat them as reserved API: off by default *by design*, so adopting one will
-  stay a zero-cost, per-capability opt-in.
+- **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, and W3C
+  trace/correlation propagation. Each has a design document
+  ([causal-ordering.md](docs/causal-ordering.md), [HLD-tracing.md](docs/HLD-tracing.md)) and a
+  port already published in `tandem-core` (`TracePropagator`, `CausalContext`) that resolves to a
+  no-op today — visible in IDE autocomplete, but nothing references them yet. Treat them as
+  reserved API: off by default *by design*, so adopting one will stay a zero-cost,
+  per-capability opt-in.
 - **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
   supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
   obstacle — but until it lands, PostgreSQL is the only supported database.
+- **Attempt-level forensic history** — a timeline of every delivery attempt per message
+  (when it ran, how long it took, which worker, which error), for forensic debugging. Fully
+  designed in [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) but **not built**: no port,
+  no table, and no Admin API endpoints ship today. It would be opt-in and off by default like
+  the capabilities above, and adding it back to the API contract stays an additive change.
 
 The full per-module status is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
