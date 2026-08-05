@@ -316,6 +316,24 @@ against an actually-owned bucket:
 ./tandem-sample-spring/run-lease.sh
 ```
 
+Prefer a CLI over hand-built `curl` calls? [`tandem-cli`](tandem-cli/) wraps the same Admin API
+endpoints in discoverable verbs and typed flags. Build it from source and point it at the sample
+(`--base-url` takes the same `.../tandem/admin/v1` prefix the `curl` commands above use):
+
+```bash
+cd tandem-cli && make build && cd ..
+./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 outbox summary
+./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 relay status
+```
+
+Add `--watch` to `outbox summary` for a live, redrawing-in-place dashboard — bar charts for
+`PENDING`/`IN_FLIGHT`/`FAILED`, refreshed on an interval, colored so a growing red `FAILED` bar
+catches the eye without reading the number:
+
+<p align="center"><img src="docs/tandem-cli-status-watch.png" alt="tandem-cli outbox summary --watch — a live terminal dashboard with color-coded bar charts for pending, in-flight, and failed message counts" width="700" /></p>
+
+See [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md) for the full command reference.
+
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
 `metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through eight
 scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
