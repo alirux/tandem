@@ -1,0 +1,5 @@
+{
+  "counts": {"PENDING": 3, "IN_FLIGHT": 0, "DONE": 100, "FAILED": 1, "DISCARDED": 0},
+  "lagCount": 3,
+  "lagAgeSeconds": 12.5
+}

@@ -1,0 +1,4 @@
+[
+  {"bucket": 0, "covered": true, "paused": false, "pendingCount": 3, "owner": "worker-1", "leaseUntil": "2026-08-05T00:05:00Z", "lagAgeSeconds": 1.2},
+  {"bucket": 1, "covered": false, "paused": false, "pendingCount": 0}
+]

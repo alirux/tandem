@@ -321,3 +321,24 @@ commit messages). Wrap at ~80 columns. Any link must be an **absolute URL** —
 release notes render outside the repository, so a relative path does not resolve.
 Do not create or push a tag without the user asking in that turn; pushing one
 publishes the release and stages the Maven Central deployment.
+
+### `tandem-cli` releases — a separate scheme, not a variant of the above
+
+`tandem-cli` (Go, `tandem-cli/`) is versioned and released **independently of the
+library**: tags follow `cli-v<semver>` (e.g. `cli-v0.1.0`), never `v<semver>` — pushing
+one runs `.github/workflows/cli-release.yml` (`goreleaser`, cross-compiled binaries
+attached to a GitHub Release), not the Maven Central workflow above. `cli-v*` does not
+match the library workflow's `v*` trigger and `v*` does not match `cli-v*`, so the two
+release paths never fire on each other's tags — no coordination needed between them.
+
+**Why separate:** the CLI's compatibility contract is the Admin API's major version
+(`/v1`), not the library's version — a library release that leaves the OpenAPI contract
+untouched cannot break the CLI, and the CLI can gain flags or fix bugs with zero library
+change. A shared version number would assert a coupling that does not exist
+(LLD-cli.md §9.1).
+
+Same annotated-tag-as-release-notes convention applies (first line = title, body =
+notes), and the same "ask before tagging" rule. Before tagging a `cli-v*` release, the
+breaking-change check is scoped to the CLI's own contract (LLD-cli.md §9.1): command/
+subcommand/flag names and semantics, and exit codes — **not** `--output json` payloads
+or `human`-mode rendering, which are explicitly outside the CLI's own semver promise.

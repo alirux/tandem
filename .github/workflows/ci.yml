@@ -44,3 +44,41 @@ jobs:
         # dependency graph only needs to track the default branch anyway.
         if: github.event_name == 'push'
         uses: gradle/actions/dependency-submission@v5
+
+  tandem-cli:
+    # tandem-cli is a separate Go module (tandem-cli/go.mod) entirely outside the Gradle
+    # build (LLD-cli.md §2) - its own job, its own toolchain, never gated on the build above.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tandem-cli
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tandem-cli/go.mod
+
+      - name: Regenerate the Admin API client and fail on drift
+        # The committed internal/client/generated.go must match what the current
+        # docs/admin-api.openapi.yaml produces (LLD-cli.md §8) - the Go-toolchain
+        # equivalent of Specmatic's conformance check for tandem-admin.
+        run: |
+          make generate
+          git diff --exit-code -- internal/client/generated.go
+
+      - name: Regenerate the CLI reference docs and fail on drift
+        # The committed docs/cli/*.md must match what the live cobra command tree
+        # produces (LLD-cli.md §8) - same drift-gate pattern as the generated client
+        # above, so the user manual can never silently fall behind an actual flag/
+        # command/description change.
+        run: |
+          make docs
+          git diff --exit-code -- docs/cli
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test

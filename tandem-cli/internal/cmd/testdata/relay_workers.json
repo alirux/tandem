@@ -1,0 +1,4 @@
+[
+  {"workerId": "worker-1", "bucketCount": 128, "lastHeartbeat": "2026-08-05T00:00:00Z"},
+  {"workerId": "worker-2", "bucketCount": 128, "lastHeartbeat": "2026-08-05T00:00:01Z"}
+]

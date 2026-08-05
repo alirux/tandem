@@ -1,0 +1,6 @@
+{
+  "items": [
+    {"id": 1, "aggregateId": "order-1", "aggregateType": "Order", "seq": 1, "status": "DONE", "attempts": 1, "createdAt": "2026-08-05T00:00:00Z"}
+  ],
+  "nextCursor": null
+}

@@ -1,0 +1,1 @@
+{"type": "https://tandem.codingful.com/problems/relay-coordination-unsupported", "title": "Not available under this relay coordination mode", "status": 409, "detail": "Per-bucket relay control requires LEASE coordination; this relay runs SINGLE"}

@@ -75,6 +75,10 @@ If the relay crashes after publishing but before marking the row done, it republ
   contract is the source of truth. Every write operation is audit-logged, including the caller's
   identity when the host application authenticates requests. Contract:
   [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
+  [`tandem-cli`](tandem-cli/) is a Go command-line frontend over the same contract — discoverable
+  verbs and typed flags instead of hand-built `curl` calls, never a second control path. Separate
+  Go module and release cadence from the library; command reference generated at
+  [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md), design in [LLD-cli.md](docs/LLD-cli.md).
 - **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
   implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
   INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
@@ -346,6 +350,7 @@ gap the first real runs found — the reason `blocked.count` exists.
 | [LLD-spring-producer.md](docs/LLD-spring-producer.md) | Spring write-side ergonomics — the Template, `@TransactionalOutbox`, and Spring-events tiers, plus optional payload serialization |
 | [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
+| [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [causal-ordering.md](docs/causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |

@@ -49,18 +49,89 @@ entries below `slf4j-api` reach only consumers of `tandem-test`; each Testcontai
 module additionally pulls `org.testcontainers:testcontainers` and its own transitive
 dependencies, which are not enumerated here.
 
+## `tandem-cli` (Go binary)
+
+`tandem-cli` is not a JVM module — it is a separately versioned Go binary
+(`tandem-cli/`, its own `go.mod`, LLD-cli.md §2/§9.1), so the "reaches a consumer's
+classpath" framing above does not apply to it. The equivalent inheritance event is
+**static linking**: every dependency below is compiled directly into the distributed
+`tandem-cli` binary (Go has no dynamic linking for these), so all of them, not just
+direct requires, reach whoever downloads a release. The list is the actual build-info
+dependency set of a compiled binary (`go version -m`), not `go.mod`'s full module graph,
+which also lists modules only `go generate`'s code-generator tool needs and that never
+compile into `tandem-cli` itself.
+
+| Library                                   | Version | License      |
+|--------------------------------------------|---------|--------------|
+| github.com/spf13/cobra                     | 1.10.2  | Apache-2.0   |
+| github.com/spf13/pflag                     | 1.0.9   | BSD-3-Clause |
+| github.com/inconshreveable/mousetrap       | 1.1.0   | Apache-2.0   |
+| github.com/oapi-codegen/runtime            | 1.6.0   | Apache-2.0   |
+| github.com/google/uuid                     | 1.6.0   | BSD-3-Clause |
+| github.com/apapsch/go-jsonmerge/v2         | 2.0.0   | MIT          |
+
+`mousetrap` links in only on Windows builds (it is cobra's own conditional dependency
+for detecting a console-less launch there); the other five link in on every platform
+`goreleaser` cross-compiles for (darwin/linux/windows × amd64/arm64, LLD-cli.md §9).
+`oapi-codegen` itself (the code generator) does **not** appear here: it runs at
+`go generate` time only, from a separate tools module (`tandem-cli/tools/`) kept apart
+specifically so its own, larger dependency tree — and its higher minimum Go version —
+never reaches the shipped binary or this table.
+
 ## License texts
 
 ### Apache License 2.0
 
-Applies to: `kafka-clients`, `cloudevents-kafka`, `cloudevents-core`.
+Applies to: `kafka-clients`, `cloudevents-kafka`, `cloudevents-core` — and, in
+`tandem-cli`'s statically-linked binary, `cobra`, `mousetrap`, `oapi-codegen/runtime`.
 
 The full text of the Apache License, Version 2.0 is available in [LICENSE](LICENSE)
 and at https://www.apache.org/licenses/LICENSE-2.0.
 
+### BSD 3-Clause License
+
+Applies to, in `tandem-cli`'s statically-linked binary: `pflag`, `google/uuid`.
+
+```
+Copyright (c) 2012 Alex Ogier. All rights reserved.
+Copyright (c) 2012 The Go Authors. All rights reserved.
+Copyright (c) 2009,2014 Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+Each project's copyright line above is its own; the terms are identical BSD-3-Clause
+boilerplate in both.
+
 ### MIT License
 
-Applies to: `slf4j-api`.
+Applies to: `slf4j-api` and, in `tandem-cli`'s statically-linked binary,
+`go-jsonmerge/v2` (© 2016-2019 Artur Kraev — the same MIT terms below, different
+copyright holder).
 
 ```
 Copyright (c) 2004-2023 QOS.ch Sarl (Switzerland)

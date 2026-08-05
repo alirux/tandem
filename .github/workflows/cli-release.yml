@@ -1,0 +1,46 @@
+name: CLI Release
+
+# tandem-cli is versioned and released independently of the library (LLD-cli.md §9.1):
+# its own tag prefix, its own workflow, its own goreleaser config. cli-v* never matches
+# release.yml's v* trigger and vice versa, so the two release paths never fire on each
+# other's tags.
+on:
+  push:
+    tags:
+      - 'cli-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tandem-cli
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # annotated tag objects, so the tag message is readable below
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tandem-cli/go.mod
+
+      # The annotated tag's message becomes the release notes, same convention as the
+      # library's own release.yml (AGENTS.md §Releases): first line is the title,
+      # everything below it the body.
+      - name: Extract tag message
+        id: tag_message
+        run: |
+          git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" > RELEASE_BODY.md
+          echo "title=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          workdir: tandem-cli
+          version: '~> v2'
+          args: release --clean --release-notes=RELEASE_BODY.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

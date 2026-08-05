@@ -1,0 +1,58 @@
+# goreleaser config for tandem-cli, run by ../.github/workflows/cli-release.yml on a
+# cli-v* tag (LLD-cli.md §9/§9.1) - independent of the library's own release.yml, which
+# triggers on v* and never fires for this tag shape.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: tandem-cli
+    dir: .
+    main: ./cmd/tandem-cli
+    binary: tandem-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # darwin: arm64 only (Apple Silicon); linux/windows: amd64 only - the ops boxes
+      # this CLI actually runs from, not every combination goos x goarch permits.
+      - goos: darwin
+        goarch: amd64
+      - goos: linux
+        goarch: arm64
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/alirux/tandem/tandem-cli/internal/cmd.Version={{ .Version }}
+
+archives:
+  - id: tandem-cli
+    ids: [tandem-cli]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      tandem-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true # the annotated tag's own message is the release notes, per AGENTS.md §Releases
+
+release:
+  github:
+    owner: alirux
+    name: tandem
+  # tandem-cli is versioned and released independently of the library (cli-v<semver>,
+  # LLD-cli.md §9.1) - never mark the library's own v<semver> release as latest from here.
+  prerelease: auto

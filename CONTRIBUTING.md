@@ -19,6 +19,8 @@ non-default cases).
 - **Docker**, running and reachable — most integration/e2e tests use
   [Testcontainers](https://testcontainers.com) to spin up real PostgreSQL and Kafka instances.
   There are no mocks standing in for the database or the broker in this project.
+- **Go 1.24+**, only for [`tandem-cli`](tandem-cli/) — a separate toolchain and build, not part
+  of `./gradlew check` (see below).
 
 ## Building and testing
 
@@ -54,6 +56,27 @@ assertion cannot do. Run it when you change what the gauges report or how often 
 ./gradlew :tandem-benchmark:lagGaugeDemo
 ```
 
+`tandem-cli` is entirely outside the Gradle build (its own `go.mod`, LLD-cli.md §2) — `./gradlew
+check` never touches it. Build and test it from `tandem-cli/`:
+
+```bash
+cd tandem-cli
+make generate   # regenerate internal/client/generated.go after an OpenAPI contract change
+make docs       # regenerate docs/cli/*.md after a command/flag/description change
+make build
+make test       # go test ./... -race
+make lint       # go vet + gofmt -l
+```
+
+To try `bin/tandem-cli` by hand without a real `tandem-admin` instance, `scratch_fake_admin.py`
+(stdlib-only, no dependencies) fakes just enough of the Admin API contract to exercise every
+command:
+
+```bash
+python3 tandem-cli/scratch_fake_admin.py 8080
+./tandem-cli/bin/tandem-cli --base-url http://127.0.0.1:8080 relay status
+```
+
 ## Project layout
 
 | Module | Purpose |
@@ -71,6 +94,7 @@ assertion cannot do. Run it when you change what the gauges report or how often 
 | `tandem-sample-spring` | Example Spring Boot application, not published. Also hosts the end-to-end Spring smoke test. |
 | `tandem-benchmark` | Load-testing harness, not published. |
 | `tandem-coverage` | Aggregates JaCoCo coverage across modules for CI. |
+| [`tandem-cli`](tandem-cli/) | **Go**, not a Gradle module — a command-line frontend over the Admin API. Its own `go.mod`, own tests (`go test ./...`), own release cadence (`cli-v<semver>`, not the library's `v<semver>`); see [LLD-cli.md](docs/LLD-cli.md). |
 
 The Spring modules are compiled against Spring Boot 3.x with Spring `compileOnly`, and one artifact
 serves both Boot 3.x and 4.x; `./gradlew check` runs their tests against both lines. If you change them,
