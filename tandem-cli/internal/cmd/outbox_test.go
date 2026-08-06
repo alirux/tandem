@@ -40,6 +40,26 @@ func TestOutboxSummary_jsonIsRawPassthrough(t *testing.T) {
 	}
 }
 
+func TestOutboxSummary_apiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/summary": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "summary")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxSummary_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/summary": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "summary")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
 func TestOutboxSearch_humanRendersATableAndCursorHint(t *testing.T) {
 	server := newFixtureServer(t, map[string]route{
 		"GET /outbox/messages": {200, "outbox_search_page.json"},
@@ -69,6 +89,72 @@ func TestOutboxSearch_noCursorHintWhenNextCursorIsNull(t *testing.T) {
 	}
 }
 
+func TestOutboxSearch_apiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/messages": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "search")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxSearch_createdFromAndCreatedToAreForwardedAsRFC3339(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+
+	_, _, code := execute(t, server.URL, "outbox", "search",
+		"--created-from", "2026-08-01T00:00:00Z", "--created-to", "2026-08-05T00:00:00Z")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(gotQuery, "createdFrom=2026-08-01") {
+		t.Errorf("query = %q, missing createdFrom", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "createdTo=2026-08-05") {
+		t.Errorf("query = %q, missing createdTo", gotQuery)
+	}
+}
+
+func TestOutboxSearch_invalidCreatedFromIsAUsageErrorBeforeAnyHTTPCall(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(500)
+	}))
+	defer server.Close()
+
+	_, stderr, code := execute(t, server.URL, "outbox", "search", "--created-from", "not-a-date")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2 (UsageError); stderr=%q", code, stderr)
+	}
+	if requests != 0 {
+		t.Errorf("server received %d requests, want 0 - a usage error must not reach the network", requests)
+	}
+}
+
+func TestOutboxSearch_invalidCreatedToIsAUsageErrorBeforeAnyHTTPCall(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(500)
+	}))
+	defer server.Close()
+
+	_, stderr, code := execute(t, server.URL, "outbox", "search", "--created-to", "not-a-date")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2 (UsageError); stderr=%q", code, stderr)
+	}
+	if requests != 0 {
+		t.Errorf("server received %d requests, want 0 - a usage error must not reach the network", requests)
+	}
+}
+
 func TestOutboxGet_humanRendersPayloadAndHeaders(t *testing.T) {
 	server := newFixtureServer(t, map[string]route{
 		"GET /outbox/messages/1": {200, "outbox_entry.json"},
@@ -79,6 +165,36 @@ func TestOutboxGet_humanRendersPayloadAndHeaders(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"amount":42`) {
 		t.Errorf("stdout = %q, missing the payload", stdout)
+	}
+}
+
+func TestOutboxGet_rendersTypeLastErrorDiscardReasonAndLockedByWhenPresent(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/messages/2": {200, "outbox_entry_full.json"},
+	})
+	stdout, _, code := execute(t, server.URL, "outbox", "get", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stdout=%q", code, stdout)
+	}
+	for _, want := range []string{
+		"type:", "OrderPlaced",
+		"lastError:", "connection refused",
+		"discardReason:", "poison message",
+		"lockedBy:", "worker-3",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestOutboxGet_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/messages/1": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "get", "1")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
 	}
 }
 
@@ -109,6 +225,53 @@ func TestOutboxReplay_humanRendersTheUpdatedMessage(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "order-1") {
 		t.Errorf("stdout = %q, missing the replayed message", stdout)
+	}
+}
+
+func TestOutboxReplay_apiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/messages/1/replay": {404, "problem_not_found.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay", "1")
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4 (NotFound); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxReplay_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/messages/1/replay": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay", "1")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxDiscard_invalidIDIsAUsageErrorBeforeAnyHTTPCall(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(500)
+	}))
+	defer server.Close()
+
+	_, _, code := execute(t, server.URL, "outbox", "discard", "not-a-number", "--yes", "--reason", "x")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2 (UsageError)", code)
+	}
+	if requests != 0 {
+		t.Errorf("server received %d requests, want 0 - a usage error must not reach the network", requests)
+	}
+}
+
+func TestOutboxDiscard_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/messages/1/discard": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "discard", "1", "--yes", "--reason", "x")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
 	}
 }
 
@@ -193,6 +356,80 @@ func TestOutboxReplayBulk_dryRunNeedsNoConfirmation(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Errorf("server received %d requests, want exactly 1 (the dry run itself)", requests)
+	}
+}
+
+func TestOutboxReplayBulk_dryRunApiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/replay": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay-bulk", "--aggregate-type", "Order", "--dry-run")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxReplayBulk_dryRunMalformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/replay": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay-bulk", "--aggregate-type", "Order", "--dry-run")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxReplayBulk_withYesApiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/replay": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay-bulk", "--aggregate-type", "Order", "--yes")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxReplayBulk_withYesMalformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /outbox/replay": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "outbox", "replay-bulk", "--aggregate-type", "Order", "--yes")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestOutboxReplayBulk_everySelectorFlagIsForwardedInTheRequestBody(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"matched":2,"replayed":2,"dryRun":false}`))
+	}))
+	defer server.Close()
+
+	_, _, code := execute(t, server.URL, "outbox", "replay-bulk", "--yes",
+		"--aggregate-id", "order-1", "--aggregate-type", "Order",
+		"--from-id", "10", "--to-id", "20",
+		"--status", "DONE", "--status", "FAILED")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if body["aggregateId"] != "order-1" {
+		t.Errorf("aggregateId = %v, want order-1", body["aggregateId"])
+	}
+	if body["aggregateType"] != "Order" {
+		t.Errorf("aggregateType = %v, want Order", body["aggregateType"])
+	}
+	if body["fromId"] != float64(10) {
+		t.Errorf("fromId = %v, want 10", body["fromId"])
+	}
+	if body["toId"] != float64(20) {
+		t.Errorf("toId = %v, want 20", body["toId"])
+	}
+	statuses, _ := body["statuses"].([]any)
+	if len(statuses) != 2 || statuses[0] != "DONE" || statuses[1] != "FAILED" {
+		t.Errorf("statuses = %v, want [DONE FAILED]", body["statuses"])
 	}
 }
 

@@ -118,6 +118,19 @@ func TestResolve_invalidHeaderFormatIsAUsageError(t *testing.T) {
 	}
 }
 
+func TestResolve_emptyHeaderNameAfterTrimIsAUsageError(t *testing.T) {
+	_, err := Resolve(Options{
+		BaseURL: "https://admin.example",
+		Headers: []string{"   : value"},
+	}, nil)
+	if err == nil {
+		t.Fatal("Resolve(blank --header name) = nil error, want a usage error")
+	}
+	if err.Code != 2 {
+		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	}
+}
+
 func TestResolve_caCertFileNotFoundIsAUsageError(t *testing.T) {
 	_, err := Resolve(Options{
 		BaseURL: "https://admin.example",

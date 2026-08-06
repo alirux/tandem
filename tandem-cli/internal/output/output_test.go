@@ -2,9 +2,26 @@ package output
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// errWriter fails every Write after allowed successful writes - used to exercise the
+// write-error propagation path every rendering function here has, without needing a real
+// broken pipe.
+type errWriter struct {
+	allowed int
+	written int
+}
+
+func (w *errWriter) Write(p []byte) (int, error) {
+	if w.written >= w.allowed {
+		return 0, errors.New("broken pipe")
+	}
+	w.written++
+	return len(p), nil
+}
 
 func TestParseMode_emptyStringIsHuman(t *testing.T) {
 	mode, err := ParseMode("")
@@ -52,6 +69,22 @@ func TestRaw_appendsATrailingNewlineWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRaw_returnsErrorWhenTheWriteFails(t *testing.T) {
+	w := &errWriter{allowed: 0}
+	if err := Raw(w, []byte("{\"a\":1}\n")); err == nil {
+		t.Fatal("Raw() error = nil, want the underlying write error")
+	}
+}
+
+func TestRaw_returnsErrorWhenAppendingTheTrailingNewlineFails(t *testing.T) {
+	// allowed:1 lets the body itself through but fails the second write - the
+	// newline Raw appends because the body did not already end with one.
+	w := &errWriter{allowed: 1}
+	if err := Raw(w, []byte("{\"a\":1}")); err == nil {
+		t.Fatal("Raw() error = nil, want the trailing-newline write error")
+	}
+}
+
 func TestKeyValue_rendersEachPairAsALine(t *testing.T) {
 	var buf bytes.Buffer
 	err := KeyValue(&buf, [][2]string{
@@ -67,6 +100,14 @@ func TestKeyValue_rendersEachPairAsALine(t *testing.T) {
 	}
 	if !strings.Contains(got, "bucketCount:") || !strings.Contains(got, "256") {
 		t.Errorf("output = %q, missing the bucketCount pair", got)
+	}
+}
+
+func TestKeyValue_returnsErrorWhenTheWriteFails(t *testing.T) {
+	w := &errWriter{allowed: 0}
+	err := KeyValue(w, [][2]string{{"state", "RUNNING"}})
+	if err == nil {
+		t.Fatal("KeyValue() error = nil, want the underlying write error")
 	}
 }
 
@@ -94,6 +135,34 @@ func TestTable_rendersHeaderAndEveryRow(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "2") || !strings.Contains(lines[2], "FAILED") {
 		t.Errorf("row 2 = %q", lines[2])
+	}
+}
+
+func TestTable_returnsErrorWhenTheFirstHeaderCellWriteFails(t *testing.T) {
+	w := &errWriter{allowed: 0}
+	err := Table(w, []string{"ID", "STATUS"}, nil)
+	if err == nil {
+		t.Fatal("Table() error = nil, want the underlying write error")
+	}
+}
+
+func TestTable_returnsErrorWhenTheColumnPaddingWriteFails(t *testing.T) {
+	// allowed:1 lets the first header cell through but fails the padding write
+	// between it and the next column.
+	w := &errWriter{allowed: 1}
+	err := Table(w, []string{"ID", "STATUS"}, nil)
+	if err == nil {
+		t.Fatal("Table() error = nil, want the column-padding write error")
+	}
+}
+
+func TestTable_returnsErrorWhenARowWriteFails(t *testing.T) {
+	// A single-column header fully succeeds in 2 writes (the cell, then its newline);
+	// the first row's cell write is the 3rd and is where this budget runs out.
+	w := &errWriter{allowed: 2}
+	err := Table(w, []string{"ID"}, [][]string{{"1"}, {"2"}})
+	if err == nil {
+		t.Fatal("Table() error = nil, want the row write error")
 	}
 }
 

@@ -6,6 +6,66 @@ import (
 	"testing"
 )
 
+func TestSetupApp_invalidOutputFlagIsAUsageError(t *testing.T) {
+	_, _, code := executeNoServer(t, "--base-url", "http://unused.invalid", "--output", "xml", "outbox", "summary")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2 (UsageError)", code)
+	}
+}
+
+func TestSetupApp_insecureWarnsOnStderrThroughARealInvocation(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/summary": {200, "outbox_summary.json"},
+	})
+
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"--base-url", server.URL, "--insecure", "outbox", "summary"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(errOut.String(), "--insecure") {
+		t.Errorf("stderr = %q, want the --insecure warning", errOut.String())
+	}
+}
+
+func TestPrepareForDocGeneration_disablesTheAutoGenTagOnTheWholeTree(t *testing.T) {
+	root := NewRootCmd()
+	PrepareForDocGeneration(root)
+
+	if !root.DisableAutoGenTag {
+		t.Error("root.DisableAutoGenTag = false, want true")
+	}
+	for _, c := range root.Commands() {
+		if !c.DisableAutoGenTag {
+			t.Errorf("command %q: DisableAutoGenTag = false, want true", c.Name())
+		}
+	}
+}
+
+func TestPrepareForDocGeneration_includesHelpAndCompletionInTheTree(t *testing.T) {
+	root := NewRootCmd()
+	PrepareForDocGeneration(root)
+
+	var hasHelp, hasCompletion bool
+	for _, c := range root.Commands() {
+		switch c.Name() {
+		case "help":
+			hasHelp = true
+		case "completion":
+			hasCompletion = true
+		}
+	}
+	if !hasHelp {
+		t.Error("root.Commands() missing help - PrepareForDocGeneration must materialize it")
+	}
+	if !hasCompletion {
+		t.Error("root.Commands() missing completion - PrepareForDocGeneration must materialize it")
+	}
+}
+
 func TestHelp_completionSortsLastAfterHelpItself(t *testing.T) {
 	root := NewRootCmd()
 	var out bytes.Buffer

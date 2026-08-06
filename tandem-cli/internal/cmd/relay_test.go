@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alirux/tandem/tandem-cli/internal/client"
 	"github.com/alirux/tandem/tandem-cli/internal/output"
@@ -23,6 +24,26 @@ func TestRelayStatus_humanRendersState(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, missing %q", stdout, want)
 		}
+	}
+}
+
+func TestRelayStatus_apiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/status": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "status")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestRelayStatus_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/status": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "status")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
 	}
 }
 
@@ -147,6 +168,16 @@ func TestRelayPause_coordinationUnsupportedMapsToExitCode6(t *testing.T) {
 	}
 }
 
+func TestRelayPauseResume_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /relay/pause": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "pause")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
 func TestRelayResume_wholeRelay(t *testing.T) {
 	server := newFixtureServer(t, map[string]route{
 		"POST /relay/resume": {200, "relay_status.json"},
@@ -158,6 +189,55 @@ func TestRelayResume_wholeRelay(t *testing.T) {
 	if !strings.Contains(stdout, "RUNNING") {
 		t.Errorf("stdout = %q, missing the state", stdout)
 	}
+}
+
+func TestBucketStatusPairs_omitsOwnerLeaseUntilAndLagAgeSecondsWhenNil(t *testing.T) {
+	pairs := bucketStatusPairs(client.BucketStatus{Bucket: 1, Covered: false, Paused: false, PendingCount: 0}, false)
+	for _, key := range []string{"owner", "leaseUntil", "lagAgeSeconds"} {
+		for _, p := range pairs {
+			if p[0] == key {
+				t.Errorf("pairs contain %q = %q, want it omitted when nil", key, p[1])
+			}
+		}
+	}
+}
+
+func TestBucketStatusPairs_includesOwnerLeaseUntilAndLagAgeSecondsWhenSet(t *testing.T) {
+	owner := "worker-1"
+	leaseUntil := mustParseTime(t, "2026-08-05T00:05:00Z")
+	lag := float32(1.2)
+	pairs := bucketStatusPairs(client.BucketStatus{
+		Bucket: 0, Covered: true, Paused: false, PendingCount: 3,
+		Owner: &owner, LeaseUntil: &leaseUntil, LagAgeSeconds: &lag,
+	}, false)
+	want := map[string]string{
+		"owner":         "worker-1",
+		"leaseUntil":    "2026-08-05T00:05:00Z",
+		"lagAgeSeconds": "1.2",
+	}
+	for key, wantValue := range want {
+		found := false
+		for _, p := range pairs {
+			if p[0] == key {
+				found = true
+				if p[1] != wantValue {
+					t.Errorf("pairs[%q] = %q, want %q", key, p[1], wantValue)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("pairs missing %q", key)
+		}
+	}
+}
+
+func mustParseTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	tm, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parsing %q: %v", s, err)
+	}
+	return tm
 }
 
 func TestRelayBuckets_listRendersATable(t *testing.T) {
@@ -187,6 +267,46 @@ func TestRelayBuckets_singleBucketRendersKeyValue(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "worker-1") {
 		t.Errorf("stdout = %q, missing the owner", stdout)
+	}
+}
+
+func TestRelayBuckets_singleBucketApiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/buckets/0": {404, "problem_not_found.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "buckets", "0")
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4 (NotFound); stderr=%q", code, stderr)
+	}
+}
+
+func TestRelayBuckets_singleBucketMalformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/buckets/0": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "buckets", "0")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestRelayBuckets_listApiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/buckets": {500, "problem_internal_error.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "buckets")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
+func TestRelayBuckets_listMalformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/buckets": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "buckets")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
 	}
 }
 
@@ -238,6 +358,26 @@ func TestRelayReleaseBucket_rendersTheReleasedBucket(t *testing.T) {
 	}
 }
 
+func TestRelayReleaseBucket_apiErrorMapsToItsExitCode(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /relay/buckets/0/release": {404, "problem_not_found.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "release-bucket", "0")
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4 (NotFound); stderr=%q", code, stderr)
+	}
+}
+
+func TestRelayReleaseBucket_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"POST /relay/buckets/0/release": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "release-bucket", "0")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
+	}
+}
+
 func TestRelayReleaseBucket_invalidBucketIsAUsageError(t *testing.T) {
 	_, _, code := executeNoServer(t, "--base-url", "http://unused.invalid", "relay", "release-bucket", "not-a-number")
 	if code != 2 {
@@ -255,6 +395,16 @@ func TestRelayWorkers_rendersATableOfWorkers(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "worker-1") || !strings.Contains(stdout, "worker-2") {
 		t.Errorf("stdout = %q, missing both workers", stdout)
+	}
+}
+
+func TestRelayWorkers_malformedResponseIsAnUnexpectedError(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/workers": {200, "malformed.json"},
+	})
+	_, stderr, code := execute(t, server.URL, "relay", "workers")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (UnexpectedError); stderr=%q", code, stderr)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,6 +124,47 @@ func TestOutboxSummaryWatch_aFailedRequestIsShownInlineAndTheLoopKeepsGoing(t *t
 	occurrences := strings.Count(stdout, "Error:")
 	if occurrences < 2 {
 		t.Errorf("expected the loop to keep retrying past the failure (multiple Error: frames), got %d:\n%s", occurrences, stdout)
+	}
+}
+
+// failWriter fails every write - stands in for stdout disappearing mid-stream (the reader
+// end of a pipe closing, e.g. `tandem-cli ... | head -1`).
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestOutboxSummaryWatch_jsonStopsTheLoopWhenWritingToStdoutFails(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/summary": {200, "outbox_summary.json"},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	root := NewRootCmd()
+	root.SetContext(ctx)
+	var errOut bytes.Buffer
+	root.SetOut(failWriter{})
+	root.SetErr(&errOut)
+	root.SetArgs([]string{
+		"--base-url", server.URL, "outbox", "summary", "--watch",
+		"--interval", "20ms", "--output", "json",
+	})
+
+	if err := root.Execute(); err == nil {
+		t.Fatal("Execute() error = nil, want an UnexpectedError when stdout can't be written to")
+	}
+}
+
+func TestOutboxSummaryWatch_malformedResponseStopsTheLoopWithAnUnexpectedError(t *testing.T) {
+	// Unlike an API-level failure (a problem+json response, shown inline while the loop
+	// keeps going), a 200 response this build cannot even parse is a setup problem the
+	// loop cannot recover from - it must stop rather than spin on it forever.
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/summary": {200, "malformed.json"},
+	})
+	_, _, err := watchUntilCancelled(t, server, 200*time.Millisecond, "--interval", "20ms")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want an UnexpectedError from the unparseable response")
 	}
 }
 

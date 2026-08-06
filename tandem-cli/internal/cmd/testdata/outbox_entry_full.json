@@ -1,0 +1,13 @@
+{
+  "id": 2,
+  "aggregateId": "order-2",
+  "aggregateType": "Order",
+  "seq": 3,
+  "status": "FAILED",
+  "attempts": 5,
+  "createdAt": "2026-08-05T00:00:00Z",
+  "type": "OrderPlaced",
+  "lastError": "connection refused",
+  "discardReason": "poison message",
+  "lockedBy": "worker-3"
+}

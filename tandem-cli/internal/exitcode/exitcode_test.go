@@ -92,6 +92,23 @@ func TestCodeOf_bareErrorIsTreatedAsAUsageError(t *testing.T) {
 	}
 }
 
+func TestError_messageAloneWhenNoUnderlyingErrorIsWrapped(t *testing.T) {
+	err := New(UsageError, "missing base URL: pass --base-url or set %s", "TANDEM_ADMIN_URL")
+	want := "missing base URL: pass --base-url or set TANDEM_ADMIN_URL"
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestError_appendsTheUnderlyingErrorWhenWrapped(t *testing.T) {
+	cause := errors.New("dial tcp: connection refused")
+	err := Wrap(ConnectionFailure, cause, "connecting to %s", "https://example.invalid")
+	want := "connecting to https://example.invalid: dial tcp: connection refused"
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
 func TestWrap_preservesTheUnderlyingErrorForUnwrapping(t *testing.T) {
 	cause := errors.New("dial tcp: connection refused")
 	wrapped := Wrap(ConnectionFailure, cause, "connecting to %s", "https://example.invalid")

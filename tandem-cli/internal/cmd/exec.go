@@ -78,11 +78,18 @@ func confirm(app *App, yes bool, prompt string) *exitcode.Error {
 	fmt.Fprintf(app.Stderr, "%s [y/N] ", prompt)
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-	if line != "y" && line != "yes" {
+	if !isAffirmative(line) {
 		return exitcode.New(exitcode.ConfirmationRequired, "aborted: confirmation declined")
 	}
 	return nil
+}
+
+// isAffirmative reports whether a line read in response to confirm's y/N prompt counts as
+// yes - case-insensitive, and tolerant of the surrounding whitespace/newline
+// bufio.Reader.ReadString('\n') leaves in place.
+func isAffirmative(line string) bool {
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes"
 }
 
 // isTerminal reports whether f is attached to an interactive terminal, matching the
