@@ -15,8 +15,9 @@ import (
 func main() {
 	root := cmd.NewRootCmd()
 	err := root.ExecuteContext(context.Background())
-	if err != nil && exitcode.CodeOf(err) != exitcode.Success {
+	code := exitcode.CodeOf(err)
+	if err != nil && code != exitcode.Success {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 	}
-	os.Exit(exitcode.CodeOf(err))
+	os.Exit(int(code))
 }

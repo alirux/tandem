@@ -14,12 +14,12 @@ import (
 )
 
 func TestDo_transportErrorIsAConnectionFailure(t *testing.T) {
-	_, _, cerr := do(nil, errors.New("dial tcp: connection refused"))
-	if cerr == nil {
+	_, err := do(nil, errors.New("dial tcp: connection refused"))
+	if err == nil {
 		t.Fatal("do(nil, err) = nil, want a ConnectionFailure error")
 	}
-	if cerr.Code != exitcode.ConnectionFailure {
-		t.Errorf("Code = %d, want ConnectionFailure (%d)", cerr.Code, exitcode.ConnectionFailure)
+	if got := exitcode.CodeOf(err); got != exitcode.ConnectionFailure {
+		t.Errorf("CodeOf = %d, want ConnectionFailure (%d)", got, exitcode.ConnectionFailure)
 	}
 }
 
@@ -34,15 +34,12 @@ func TestDo_bodyReadFailureIsAnUnexpectedError(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(errReader{}),
 	}
-	_, status, cerr := do(resp, nil)
-	if cerr == nil {
+	_, err := do(resp, nil)
+	if err == nil {
 		t.Fatal("do(resp, nil) = nil, want an UnexpectedError from the broken body")
 	}
-	if cerr.Code != exitcode.UnexpectedError {
-		t.Errorf("Code = %d, want UnexpectedError (%d)", cerr.Code, exitcode.UnexpectedError)
-	}
-	if status != http.StatusOK {
-		t.Errorf("status = %d, want the response's own status (%d) even though the body failed", status, http.StatusOK)
+	if got := exitcode.CodeOf(err); got != exitcode.UnexpectedError {
+		t.Errorf("CodeOf = %d, want UnexpectedError (%d)", got, exitcode.UnexpectedError)
 	}
 }
 
@@ -54,12 +51,12 @@ func TestDo_nonProblemErrorBodyFallsBackToAnHTTPStatusMessage(t *testing.T) {
 		StatusCode: http.StatusBadGateway,
 		Body:       io.NopCloser(strings.NewReader("Bad Gateway")),
 	}
-	_, _, cerr := do(resp, nil)
-	if cerr == nil {
+	_, err := do(resp, nil)
+	if err == nil {
 		t.Fatal("do(502 non-JSON body) = nil, want an error")
 	}
-	if !strings.Contains(cerr.Error(), "HTTP 502") {
-		t.Errorf("Error() = %q, want it to contain the HTTP-status fallback message", cerr.Error())
+	if !strings.Contains(err.Error(), "HTTP 502") {
+		t.Errorf("Error() = %q, want it to contain the HTTP-status fallback message", err.Error())
 	}
 }
 

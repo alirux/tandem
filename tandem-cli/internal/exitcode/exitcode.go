@@ -4,42 +4,46 @@
 package exitcode
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 )
 
+// Code is a process exit status. A named type, so a code can never be confused with any
+// other integer a caller happens to have in hand.
+type Code int
+
 const (
 	// Success means the operation completed; 2xx from the API, or a read that found nothing.
-	Success = 0
+	Success Code = 0
 	// UnexpectedError is internal-error (500), or any response the client can't otherwise classify.
-	UnexpectedError = 1
+	UnexpectedError Code = 1
 	// UsageError is bad flags/args - cobra's own usage-error path, a missing base URL,
 	// discard without --reason, or --uncovered-only alongside a bucket argument. Never a
 	// missing credential: none is required.
-	UsageError = 2
+	UsageError Code = 2
 	// Unauthorized is unauthorized (401).
-	Unauthorized = 3
+	Unauthorized Code = 3
 	// NotFound is not-found (404).
-	NotFound = 4
+	NotFound Code = 4
 	// InvalidParameter is invalid-parameter (400).
-	InvalidParameter = 5
+	InvalidParameter Code = 5
 	// Conflict is message-not-replayable, message-not-discardable, or
 	// relay-coordination-unsupported (409).
-	Conflict = 6
+	Conflict Code = 6
 	// ConfirmationRequired is ordering-break-not-acknowledged (400), or a local --yes/TTY
 	// gate that stopped the CLI before any HTTP call.
-	ConfirmationRequired = 7
+	ConfirmationRequired Code = 7
 	// ConnectionFailure means --base-url could not be reached at all - DNS, TCP, TLS
 	// verification, or the --timeout elapsing - so there is no HTTP response to classify.
-	ConnectionFailure = 8
+	ConnectionFailure Code = 8
 )
 
 // Error carries the exit code a command should terminate with, alongside the message to
-// print on stderr. Every RunE in internal/cmd returns either nil or *Error - never a bare
-// error - so main can read the code straight off it; see CodeOf.
+// print on stderr. Recovered from any error chain by CodeOf.
 type Error struct {
-	Code    int
+	Code    Code
 	Message string
 	Err     error
 }
@@ -53,25 +57,30 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// New builds an *Error carrying code, with a formatted message and no wrapped cause.
-func New(code int, format string, args ...any) *Error {
+// New builds an error carrying code, with a formatted message and no wrapped cause.
+// Returns the error interface, never the concrete *Error: a helper handing back a typed
+// nil pointer is the classic way to produce a non-nil error that wraps nothing.
+func New(code Code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// Wrap builds an *Error carrying code around an existing error, for a failure the CLI
+// Wrap builds an error carrying code around an existing cause, for a failure the CLI
 // classifies (e.g. a connection error) rather than constructs its own message for.
-func Wrap(code int, err error, format string, args ...any) *Error {
+func Wrap(code Code, err error, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...), Err: err}
 }
 
-// CodeOf returns the process exit code for err: 0 for nil, an *Error's own Code, and
-// UsageError for anything else - every other error reaching main is one cobra raised
-// itself during flag/argument parsing, before any RunE ran.
-func CodeOf(err error) int {
+// CodeOf returns the process exit code for err: Success for nil, the Code of the first
+// *Error in the chain, and UsageError for anything else - every other error reaching main
+// is one cobra raised itself during flag/argument parsing, before any RunE ran. Matching
+// through the whole chain (errors.As, not a bare type assertion) is what keeps a code
+// intact when an *Error is later wrapped by a caller.
+func CodeOf(err error) Code {
 	if err == nil {
 		return Success
 	}
-	if e, ok := err.(*Error); ok {
+	var e *Error
+	if errors.As(err, &e) {
 		return e.Code
 	}
 	return UsageError
@@ -96,7 +105,7 @@ func Slug(problemType string) string {
 // HTTP status for the handful of statuses that mean exactly one thing in the table;
 // status 400 alone is ambiguous (InvalidParameter vs ConfirmationRequired), so an
 // unrecognized 400 lands on UnexpectedError rather than guessing which.
-func ForProblem(status int, problemType string) int {
+func ForProblem(status int, problemType string) Code {
 	switch Slug(problemType) {
 	case "unauthorized":
 		return Unauthorized

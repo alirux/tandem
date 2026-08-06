@@ -65,15 +65,15 @@ make generate   # regenerate internal/client/generated.go after an OpenAPI contr
 make docs       # regenerate docs/cli/*.md after a command/flag/description change
 make build
 make test       # go test ./... -race -coverprofile=coverage.out -covermode=atomic
-make lint       # go vet + gofmt -l
+make lint       # golangci-lint (analysis + formatting), pinned in the Makefile
 ```
 
-To try `bin/tandem-cli` by hand without a real `tandem-admin` instance, `scratch_fake_admin.py`
+To try `bin/tandem-cli` by hand without a real `tandem-admin` instance, `hack/fake-admin-api.py`
 (stdlib-only, no dependencies) fakes just enough of the Admin API contract to exercise every
 command:
 
 ```bash
-python3 tandem-cli/scratch_fake_admin.py 8080
+python3 tandem-cli/hack/fake-admin-api.py 8080
 ./tandem-cli/bin/tandem-cli --base-url http://127.0.0.1:8080 relay status
 ```
 

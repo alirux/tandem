@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/alirux/tandem/tandem-cli/internal/exitcode"
 )
 
 func TestResolve_missingBaseURLIsAUsageError(t *testing.T) {
@@ -22,8 +24,8 @@ func TestResolve_missingBaseURLIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve(no base URL) = nil error, want a usage error")
 	}
-	if err.Code != 2 {
-		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	if got := exitcode.CodeOf(err); got != exitcode.UsageError {
+		t.Errorf("CodeOf(err) = %d, want UsageError (%d)", got, exitcode.UsageError)
 	}
 }
 
@@ -113,8 +115,8 @@ func TestResolve_invalidHeaderFormatIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve(bad --header) = nil error, want a usage error")
 	}
-	if err.Code != 2 {
-		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	if got := exitcode.CodeOf(err); got != exitcode.UsageError {
+		t.Errorf("CodeOf(err) = %d, want UsageError (%d)", got, exitcode.UsageError)
 	}
 }
 
@@ -126,8 +128,8 @@ func TestResolve_emptyHeaderNameAfterTrimIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve(blank --header name) = nil error, want a usage error")
 	}
-	if err.Code != 2 {
-		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	if got := exitcode.CodeOf(err); got != exitcode.UsageError {
+		t.Errorf("CodeOf(err) = %d, want UsageError (%d)", got, exitcode.UsageError)
 	}
 }
 
@@ -139,8 +141,8 @@ func TestResolve_caCertFileNotFoundIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve(missing --ca-cert) = nil error, want a usage error")
 	}
-	if err.Code != 2 {
-		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	if got := exitcode.CodeOf(err); got != exitcode.UsageError {
+		t.Errorf("CodeOf(err) = %d, want UsageError (%d)", got, exitcode.UsageError)
 	}
 }
 
@@ -152,8 +154,8 @@ func TestResolve_caCertWithNoCertificatesIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve(garbage --ca-cert) = nil error, want a usage error")
 	}
-	if err.Code != 2 {
-		t.Errorf("err.Code = %d, want UsageError (2)", err.Code)
+	if got := exitcode.CodeOf(err); got != exitcode.UsageError {
+		t.Errorf("CodeOf(err) = %d, want UsageError (%d)", got, exitcode.UsageError)
 	}
 }
 

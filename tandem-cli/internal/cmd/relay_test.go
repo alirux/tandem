@@ -57,7 +57,7 @@ func TestRelayStatusPairs_colorsRunningGreenPausedYellowDownRed(t *testing.T) {
 		{client.DOWN, output.Red},
 	}
 	for _, c := range cases {
-		pairs := relayStatusPairs(client.RelayStatus{State: c.state}, true)
+		pairs := relayStatusPairs(appWithColor(true), client.RelayStatus{State: c.state})
 		want := [2]string{"state", output.Colorize(string(c.state), c.color, true)}
 		if pairs[0] != want {
 			t.Errorf("relayStatusPairs(%s, true)[0] = %v, want %v", c.state, pairs[0], want)
@@ -66,7 +66,7 @@ func TestRelayStatusPairs_colorsRunningGreenPausedYellowDownRed(t *testing.T) {
 }
 
 func TestRelayStatusPairs_noColorCodesWhenDisabled(t *testing.T) {
-	pairs := relayStatusPairs(client.RelayStatus{State: client.RUNNING}, false)
+	pairs := relayStatusPairs(appWithColor(false), client.RelayStatus{State: client.RUNNING})
 	if pairs[0] != [2]string{"state", "RUNNING"} {
 		t.Errorf("relayStatusPairs(RUNNING, false)[0] = %v, want the plain unmodified state", pairs[0])
 	}
@@ -75,7 +75,7 @@ func TestRelayStatusPairs_noColorCodesWhenDisabled(t *testing.T) {
 func TestRelayStatusPairs_unknownFutureStateStaysUncolored(t *testing.T) {
 	// Forward compatibility (AGENTS.md §1.4): an enum value this build predates must not
 	// crash or guess a severity for it - it just passes through as plain text.
-	pairs := relayStatusPairs(client.RelayStatus{State: "DRAINING"}, true)
+	pairs := relayStatusPairs(appWithColor(true), client.RelayStatus{State: "DRAINING"})
 	if pairs[0] != [2]string{"state", "DRAINING"} {
 		t.Errorf("relayStatusPairs(DRAINING, true)[0] = %v, want the plain unmodified state", pairs[0])
 	}
@@ -192,7 +192,9 @@ func TestRelayResume_wholeRelay(t *testing.T) {
 }
 
 func TestBucketStatusPairs_omitsOwnerLeaseUntilAndLagAgeSecondsWhenNil(t *testing.T) {
-	pairs := bucketStatusPairs(client.BucketStatus{Bucket: 1, Covered: false, Paused: false, PendingCount: 0}, false)
+	pairs := bucketStatusPairs(appWithColor(false), client.BucketStatus{
+		Bucket: 1, Covered: false, Paused: false, PendingCount: 0,
+	})
 	for _, key := range []string{"owner", "leaseUntil", "lagAgeSeconds"} {
 		for _, p := range pairs {
 			if p[0] == key {
@@ -206,10 +208,10 @@ func TestBucketStatusPairs_includesOwnerLeaseUntilAndLagAgeSecondsWhenSet(t *tes
 	owner := "worker-1"
 	leaseUntil := mustParseTime(t, "2026-08-05T00:05:00Z")
 	lag := float32(1.2)
-	pairs := bucketStatusPairs(client.BucketStatus{
+	pairs := bucketStatusPairs(appWithColor(false), client.BucketStatus{
 		Bucket: 0, Covered: true, Paused: false, PendingCount: 3,
 		Owner: &owner, LeaseUntil: &leaseUntil, LagAgeSeconds: &lag,
-	}, false)
+	})
 	want := map[string]string{
 		"owner":         "worker-1",
 		"leaseUntil":    "2026-08-05T00:05:00Z",
@@ -395,6 +397,25 @@ func TestRelayWorkers_rendersATableOfWorkers(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "worker-1") || !strings.Contains(stdout, "worker-2") {
 		t.Errorf("stdout = %q, missing both workers", stdout)
+	}
+}
+
+func TestRelayBuckets_jsonIsRawPassthrough(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /relay/buckets": {200, "relay_buckets.json"},
+	})
+	stdout, _, code := execute(t, server.URL, "relay", "buckets", "--output", "json")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	// A list response must stay a JSON array, not be reshaped into an envelope the
+	// contract does not have (LLD-cli.md §6).
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not a JSON array: %v (%q)", err, stdout)
+	}
+	if len(got) == 0 {
+		t.Errorf("stdout = %q, want the fixture's buckets passed through", stdout)
 	}
 }
 

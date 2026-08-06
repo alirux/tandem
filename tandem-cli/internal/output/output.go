@@ -129,12 +129,15 @@ func visibleWidth(s string) int {
 
 // CursorHint prints the pagination-continuation hint human mode uses when a page ends
 // with a non-null nextCursor. The API is forward-paging and cursor-only, so this is a
-// hint to re-run with --cursor, never an auto-follow (LLD-cli.md §6).
-func CursorHint(w io.Writer, nextCursor *string) {
+// hint to re-run with --cursor, never an auto-follow (LLD-cli.md §6). Reports a write
+// failure like every other renderer here: it goes to stdout, so a broken pipe must reach
+// the caller rather than be dropped.
+func CursorHint(w io.Writer, nextCursor *string) error {
 	if nextCursor == nil || *nextCursor == "" {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "next page: --cursor=%s\n", *nextCursor)
+	_, err := fmt.Fprintf(w, "next page: --cursor=%s\n", *nextCursor)
+	return err
 }
 
 // Color is an ANSI SGR foreground color code, for the --watch dashboard's per-status rows.
@@ -159,39 +162,34 @@ func Colorize(s string, color Color, enabled bool) string {
 	return string(color) + s + colorReset
 }
 
-// Bar renders a fixed-width horizontal bar: value's share of max as filled cells (█),
-// the rest empty (░). Used by --watch dashboards to show several counts on a shared
-// scale at a glance. max <= 0 (nothing to compare against yet) renders fully empty
-// rather than dividing by zero; value is clamped to [0, max] so one outlier can't
-// overflow the bar's width.
-func Bar(value, max int64, width int) string {
-	filled, empty := barCells(value, max, width)
-	return filled + empty
-}
-
-// ColorBar is Bar, with only the filled cells wrapped in color when enabled - the empty
-// cells stay their plain "░", and neither a label nor the trailing count (both the
-// caller's to add around this string) are touched. Color marks "how much of this," not
-// "this whole row is this severity."
-func ColorBar(value, max int64, width int, color Color, enabled bool) string {
-	filled, empty := barCells(value, max, width)
+// ColorBar renders a fixed-width horizontal bar: value's share of scale as filled cells
+// (█), the rest empty (░), used by --watch dashboards to show several counts on a shared
+// scale at a glance. scale <= 0 (nothing to compare against yet) renders fully empty
+// rather than dividing by zero; value is clamped to [0, scale] so one outlier can't
+// overflow the width.
+//
+// Only the filled cells are colored when enabled - the empty cells stay plain, and
+// neither a label nor the trailing count (both the caller's to add around this string)
+// are touched. Color marks "how much of this," not "this whole row is this severity."
+func ColorBar(value, scale int64, width int, color Color, enabled bool) string {
+	filled, empty := barCells(value, scale, width)
 	return Colorize(filled, color, enabled) + empty
 }
 
-func barCells(value, max int64, width int) (filled, empty string) {
+func barCells(value, scale int64, width int) (filled, empty string) {
 	if width <= 0 {
 		return "", ""
 	}
-	if max <= 0 {
+	if scale <= 0 {
 		return "", strings.Repeat("░", width)
 	}
 	if value < 0 {
 		value = 0
 	}
-	if value > max {
-		value = max
+	if value > scale {
+		value = scale
 	}
-	n := int(float64(value) / float64(max) * float64(width))
+	n := int(float64(value) / float64(scale) * float64(width))
 	if n > width {
 		n = width
 	}

@@ -1,0 +1,52 @@
+# Lint configuration for tandem-cli (the Go module; the Gradle build never sees it).
+# Run with `make lint`; CI runs the same set, so a clean local run means a clean CI run.
+version: "2"
+
+linters:
+  # The default set is errcheck + govet + ineffassign + staticcheck + unused, which is
+  # what `go vet` alone was missing: unused exported-but-dead code, unchecked errors, and
+  # staticcheck's simplifications.
+  default: standard
+  enable:
+    # An unclosed response body leaks a connection - the CLI makes one HTTP call per
+    # invocation today, but --watch loops, and that is exactly where it would show up.
+    - bodyclose
+    # Shadowing a predeclared identifier (max, min, len, ...) compiles fine and reads
+    # wrong; Go 1.21 turned several of these into builtins.
+    - predeclared
+    # A conversion that does nothing is either a leftover or a misunderstanding.
+    - unconvert
+    - misspell
+  settings:
+    # NOTE: `unused` only reports *unexported* dead code here. Its exported-is-used knob
+    # needs staticcheck's whole-program mode, which golangci-lint does not enable, so an
+    # exported-but-uncalled identifier under internal/ still slips through - verified
+    # against v2.6.2 with a deliberate dead exported function. Catching those stays a
+    # review job, not a build gate.
+    errcheck:
+      exclude-functions:
+        # `defer x.Close()` on a response body or an opened file: the read already
+        # happened, and there is no recovery from a failed close on a read path.
+        - (io.Closer).Close
+        - (*os.File).Close
+  exclusions:
+    rules:
+      # Test helpers write to httptest recorders and temp files that cannot meaningfully
+      # fail; checking those writes would be noise, not a safety net.
+      - path: _test\.go
+        linters:
+          - errcheck
+      # Generated from the OpenAPI contract - not ours to lint or to fix, and the drift
+      # gate would overwrite any change anyway.
+      - path: internal/client/generated\.go
+        linters:
+          - errcheck
+          - staticcheck
+          - unused
+          - bodyclose
+          - unconvert
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -1,10 +1,9 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"os"
-	"strconv"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,25 +29,20 @@ func newRelayCmd() *cobra.Command {
 	return relay
 }
 
-// relayStatusPairs colors the state value with the same severity palette as the outbox
-// summary dashboard (LLD-cli.md §3.1) - green for RUNNING (healthy, same meaning as
-// IN_FLIGHT: work is actively moving), yellow for PAUSED (an operator-initiated,
-// deliberate state, same meaning as PENDING: not broken, but worth a second look), red for
-// DOWN (no relay instance has heartbeated recently - same meaning as the outbox's FAILED,
-// something needs a human). DOWN takes priority over PAUSED server-side (HLD-admin-api
-// §4.1: "is anything running at all" matters more than the desired-state flag), so this
-// switch never needs to choose between them. A future additive enum value the contract
-// adds (forward compatibility, §1.4) falls through uncolored rather than guessing a
-// severity for it.
-func relayStatusPairs(s client.RelayStatus, color bool) [][2]string {
+// relayStatusPairs colors the state with the traffic-light severity palette shared with
+// the outbox dashboard (LLD-cli.md §3.1): green RUNNING, yellow PAUSED (deliberate, worth
+// a second look), red DOWN (nothing has heartbeated - needs a human). DOWN wins over
+// PAUSED server-side (HLD-admin-api §4.1), so this never has to choose between them. A
+// future additive enum value falls through uncolored rather than guessing a severity.
+func relayStatusPairs(app *App, s client.RelayStatus) [][2]string {
 	state := string(s.State)
 	switch s.State {
 	case client.RUNNING:
-		state = output.Colorize(state, output.Green, color)
+		state = output.Colorize(state, output.Green, app.IO.Color)
 	case client.PAUSED:
-		state = output.Colorize(state, output.Yellow, color)
+		state = output.Colorize(state, output.Yellow, app.IO.Color)
 	case client.DOWN:
-		state = output.Colorize(state, output.Red, color)
+		state = output.Colorize(state, output.Red, app.IO.Color)
 	}
 	return [][2]string{
 		{"state", state},
@@ -58,13 +52,6 @@ func relayStatusPairs(s client.RelayStatus, color bool) [][2]string {
 	}
 }
 
-// colorEnabled is the shared gate for every relay/outbox command that colors its output:
-// a real terminal, and NO_COLOR unset (https://no-color.org) - same as the --watch
-// dashboard, extended here to relay status/pause/resume's single-shot rendering too.
-func colorEnabled() bool {
-	return isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
-}
-
 func newRelayStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -72,31 +59,32 @@ func newRelayStatusCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app := appFrom(cmd)
-			body, _, cerr := do(app.Client.GetRelayStatus(cmd.Context()))
-			if cerr != nil {
-				return cerr
+			body, err := do(app.Client.GetRelayStatus(cmd.Context()))
+			if err != nil {
+				return err
 			}
-			if app.Output == output.JSON {
-				return writeErr(output.Raw(app.Stdout, body))
-			}
-			var s client.RelayStatus
-			if uerr := json.Unmarshal(body, &s); uerr != nil {
-				return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
-			}
-			return writeErr(output.KeyValue(app.Stdout, relayStatusPairs(s, colorEnabled())))
+			return renderObject(app, body, relayStatusPairs)
 		},
 	}
 }
 
+// bucketSelectorCall is the shape both PauseRelay and ResumeRelay have: the two commands
+// differ only in which one they call, so newPauseResumeCmd takes the call itself rather
+// than re-deriving it from the command's own name.
+type bucketSelectorCall func(ctx context.Context, body client.BucketSelector,
+	reqEditors ...client.RequestEditorFn) (*http.Response, error)
+
 func newRelayPauseCmd() *cobra.Command {
-	return newPauseResumeCmd("pause", "Pause the relay (optionally a single bucket)")
+	return newPauseResumeCmd("pause", "Pause the relay (optionally a single bucket)",
+		func(app *App) bucketSelectorCall { return app.Client.PauseRelay })
 }
 
 func newRelayResumeCmd() *cobra.Command {
-	return newPauseResumeCmd("resume", "Resume the relay (optionally a single bucket)")
+	return newPauseResumeCmd("resume", "Resume the relay (optionally a single bucket)",
+		func(app *App) bucketSelectorCall { return app.Client.ResumeRelay })
 }
 
-func newPauseResumeCmd(use, short string) *cobra.Command {
+func newPauseResumeCmd(use, short string, call func(*App) bucketSelectorCall) *cobra.Command {
 	var bucket int
 	cmd := &cobra.Command{
 		Use:   use,
@@ -108,34 +96,19 @@ func newPauseResumeCmd(use, short string) *cobra.Command {
 			if cmd.Flags().Changed("bucket") {
 				selector.Bucket = &bucket
 			}
-
-			var body []byte
-			var cerr *exitcode.Error
-			if use == "pause" {
-				body, _, cerr = do(app.Client.PauseRelay(cmd.Context(), selector))
-			} else {
-				body, _, cerr = do(app.Client.ResumeRelay(cmd.Context(), selector))
+			body, err := do(call(app)(cmd.Context(), selector))
+			if err != nil {
+				return err
 			}
-			if cerr != nil {
-				return cerr
-			}
-			if app.Output == output.JSON {
-				return writeErr(output.Raw(app.Stdout, body))
-			}
-			var s client.RelayStatus
-			if uerr := json.Unmarshal(body, &s); uerr != nil {
-				return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
-			}
-			return writeErr(output.KeyValue(app.Stdout, relayStatusPairs(s, colorEnabled())))
+			return renderObject(app, body, relayStatusPairs)
 		},
 	}
 	cmd.Flags().IntVar(&bucket, "bucket", 0, "act on a single bucket (requires LEASE coordination)")
 	return cmd
 }
 
-// coveredCell colors covered the same way relayStatusPairs colors RUNNING/PAUSED: green
-// for true (a healthy, owned bucket), red for false (nothing is draining it right now) -
-// unlike paused below, both values are worth flagging, not just the exceptional one.
+// coveredCell colors both values: unlike paused below, "not covered" (nothing is draining
+// this bucket) is as worth flagging as the healthy case is worth confirming.
 func coveredCell(covered bool, color bool) string {
 	c := output.Green
 	if !covered {
@@ -144,10 +117,8 @@ func coveredCell(covered bool, color bool) string {
 	return output.Colorize(fmt.Sprint(covered), c, color)
 }
 
-// pausedCell colors paused only when true - an operator-initiated exception worth
-// noticing (same "only highlight the exception" rule as the outbox dashboard's bars);
-// false is the boring default and stays plain, same as relayStatusPairs has no color
-// for a hypothetical non-RUNNING/PAUSED state.
+// pausedCell colors only true - an operator-initiated exception worth noticing. false is
+// the boring default and stays plain (same "highlight the exception only" rule as §3.1).
 func pausedCell(paused bool, color bool) string {
 	if !paused {
 		return fmt.Sprint(paused)
@@ -155,11 +126,11 @@ func pausedCell(paused bool, color bool) string {
 	return output.Colorize(fmt.Sprint(paused), output.Yellow, color)
 }
 
-func bucketStatusPairs(b client.BucketStatus, color bool) [][2]string {
+func bucketStatusPairs(app *App, b client.BucketStatus) [][2]string {
 	pairs := [][2]string{
 		{"bucket", fmt.Sprint(b.Bucket)},
-		{"covered", coveredCell(b.Covered, color)},
-		{"paused", pausedCell(b.Paused, color)},
+		{"covered", coveredCell(b.Covered, app.IO.Color)},
+		{"paused", pausedCell(b.Paused, app.IO.Color)},
 		{"pendingCount", fmt.Sprint(b.PendingCount)},
 	}
 	if b.Owner != nil {
@@ -172,6 +143,17 @@ func bucketStatusPairs(b client.BucketStatus, color bool) [][2]string {
 		pairs = append(pairs, [2]string{"lagAgeSeconds", fmt.Sprint(*b.LagAgeSeconds)})
 	}
 	return pairs
+}
+
+func bucketStatusRow(app *App, b client.BucketStatus) []string {
+	return []string{
+		fmt.Sprint(b.Bucket),
+		coveredCell(b.Covered, app.IO.Color),
+		pausedCell(b.Paused, app.IO.Color),
+		optional(b.Owner, func(s string) string { return s }),
+		fmt.Sprint(b.PendingCount),
+		optional(b.LagAgeSeconds, func(f float32) string { return fmt.Sprint(f) }),
+	}
 }
 
 func newRelayBucketsCmd() *cobra.Command {
@@ -188,57 +170,27 @@ func newRelayBucketsCmd() *cobra.Command {
 					return exitcode.New(exitcode.UsageError,
 						"--uncovered-only applies only when listing every bucket, not a single <bucket>")
 				}
-				bucket, ierr := parseInt("bucket", args[0])
-				if ierr != nil {
-					return ierr
+				bucket, err := parseInt[int]("bucket", args[0])
+				if err != nil {
+					return err
 				}
-				body, _, cerr := do(app.Client.GetRelayBucket(cmd.Context(), bucket))
-				if cerr != nil {
-					return cerr
+				body, err := do(app.Client.GetRelayBucket(cmd.Context(), bucket))
+				if err != nil {
+					return err
 				}
-				if app.Output == output.JSON {
-					return writeErr(output.Raw(app.Stdout, body))
-				}
-				var b client.BucketStatus
-				if uerr := json.Unmarshal(body, &b); uerr != nil {
-					return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
-				}
-				return writeErr(output.KeyValue(app.Stdout, bucketStatusPairs(b, colorEnabled())))
+				return renderObject(app, body, bucketStatusPairs)
 			}
 
 			params := &client.GetRelayBucketsParams{}
 			if uncoveredOnly {
 				params.UncoveredOnly = &uncoveredOnly
 			}
-			body, _, cerr := do(app.Client.GetRelayBuckets(cmd.Context(), params))
-			if cerr != nil {
-				return cerr
-			}
-			if app.Output == output.JSON {
-				return writeErr(output.Raw(app.Stdout, body))
-			}
-			var buckets []client.BucketStatus
-			if uerr := json.Unmarshal(body, &buckets); uerr != nil {
-				return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
+			body, err := do(app.Client.GetRelayBuckets(cmd.Context(), params))
+			if err != nil {
+				return err
 			}
 			header := []string{"BUCKET", "COVERED", "PAUSED", "OWNER", "PENDING", "LAG_AGE_SECONDS"}
-			color := colorEnabled()
-			rows := make([][]string, 0, len(buckets))
-			for _, b := range buckets {
-				owner := ""
-				if b.Owner != nil {
-					owner = *b.Owner
-				}
-				lag := ""
-				if b.LagAgeSeconds != nil {
-					lag = fmt.Sprint(*b.LagAgeSeconds)
-				}
-				rows = append(rows, []string{
-					fmt.Sprint(b.Bucket), coveredCell(b.Covered, color), pausedCell(b.Paused, color),
-					owner, fmt.Sprint(b.PendingCount), lag,
-				})
-			}
-			return writeErr(output.Table(app.Stdout, header, rows))
+			return renderList(app, body, header, bucketStatusRow)
 		},
 	}
 	cmd.Flags().BoolVar(&uncoveredOnly, "uncovered-only", false, "list only buckets with no live owner (list form only)")
@@ -251,24 +203,25 @@ func newRelayReleaseBucketCmd() *cobra.Command {
 		Short: "Force-release a bucket for reassignment (zombie owner recovery)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bucket, ierr := parseInt("bucket", args[0])
-			if ierr != nil {
-				return ierr
+			bucket, err := parseInt[int]("bucket", args[0])
+			if err != nil {
+				return err
 			}
 			app := appFrom(cmd)
-			body, _, cerr := do(app.Client.ReleaseBucket(cmd.Context(), bucket))
-			if cerr != nil {
-				return cerr
+			body, err := do(app.Client.ReleaseBucket(cmd.Context(), bucket))
+			if err != nil {
+				return err
 			}
-			if app.Output == output.JSON {
-				return writeErr(output.Raw(app.Stdout, body))
-			}
-			var b client.BucketStatus
-			if uerr := json.Unmarshal(body, &b); uerr != nil {
-				return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
-			}
-			return writeErr(output.KeyValue(app.Stdout, bucketStatusPairs(b, colorEnabled())))
+			return renderObject(app, body, bucketStatusPairs)
 		},
+	}
+}
+
+func workerRow(_ *App, w client.WorkerInfo) []string {
+	return []string{
+		w.WorkerId,
+		fmt.Sprint(w.BucketCount),
+		optional(w.LastHeartbeat, func(t time.Time) string { return t.Format(time.RFC3339) }),
 	}
 }
 
@@ -279,35 +232,12 @@ func newRelayWorkersCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app := appFrom(cmd)
-			body, _, cerr := do(app.Client.GetRelayWorkers(cmd.Context()))
-			if cerr != nil {
-				return cerr
-			}
-			if app.Output == output.JSON {
-				return writeErr(output.Raw(app.Stdout, body))
-			}
-			var workers []client.WorkerInfo
-			if uerr := json.Unmarshal(body, &workers); uerr != nil {
-				return exitcode.Wrap(exitcode.UnexpectedError, uerr, "parsing response")
+			body, err := do(app.Client.GetRelayWorkers(cmd.Context()))
+			if err != nil {
+				return err
 			}
 			header := []string{"WORKER_ID", "BUCKET_COUNT", "LAST_HEARTBEAT"}
-			rows := make([][]string, 0, len(workers))
-			for _, w := range workers {
-				heartbeat := ""
-				if w.LastHeartbeat != nil {
-					heartbeat = w.LastHeartbeat.Format(time.RFC3339)
-				}
-				rows = append(rows, []string{w.WorkerId, fmt.Sprint(w.BucketCount), heartbeat})
-			}
-			return writeErr(output.Table(app.Stdout, header, rows))
+			return renderList(app, body, header, workerRow)
 		},
 	}
-}
-
-func parseInt(name, raw string) (int, *exitcode.Error) {
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, exitcode.New(exitcode.UsageError, "invalid %s %q: must be an integer", name, raw)
-	}
-	return n, nil
 }

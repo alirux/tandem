@@ -62,7 +62,7 @@ func envOrFlag(flagVal, envVar string) string {
 // Resolve validates and assembles Options into a Resolved connection. warn receives one
 // line of text for each condition worth surfacing on stderr (currently just --insecure);
 // pass nil to suppress it, e.g. from a test.
-func Resolve(o Options, warn func(string)) (*Resolved, *exitcode.Error) {
+func Resolve(o Options, warn func(string)) (*Resolved, error) {
 	baseURL := envOrFlag(o.BaseURL, envBaseURL)
 	if baseURL == "" {
 		return nil, exitcode.New(exitcode.UsageError,

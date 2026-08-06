@@ -15,6 +15,11 @@ import (
 	"github.com/alirux/tandem/tandem-cli/internal/output"
 )
 
+// Command help follows insertion order rather than cobra's default alphabetical sort.
+// The setting is process-wide, so it belongs here rather than inside NewRootCmd, which is
+// deliberately free of side effects so tests can call it once per case.
+func init() { cobra.EnableCommandSorting = false }
+
 // Version is tandem-cli's own semver, set via -ldflags at build time (goreleaser); "dev"
 // when built without it (`go run`, `go test`, a plain `go build`).
 var Version = "dev"
@@ -80,10 +85,6 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&flags.output, "output", "human", "output format: human or json")
 	pf.BoolVar(&flags.yes, "yes", false, "confirm destructive actions without prompting")
 
-	// Unsorted, so the help listing follows insertion order below instead of cobra's
-	// default alphabetical sort - a process-wide cobra setting, but every NewRootCmd()
-	// call wants the same order, so setting it repeatedly is harmless.
-	cobra.EnableCommandSorting = false
 	root.AddCommand(newOutboxCmd(), newRelayCmd())
 
 	// The completion command is deliberately NOT created here (e.g. via
@@ -180,12 +181,13 @@ func setupApp(cmd *cobra.Command, flags *rootFlags) error {
 		return nil
 	}
 
-	outputMode, operr := output.ParseMode(flags.output)
-	if operr != nil {
-		return exitcode.New(exitcode.UsageError, "%s", operr.Error())
+	outputMode, err := output.ParseMode(flags.output)
+	if err != nil {
+		return exitcode.New(exitcode.UsageError, "%s", err.Error())
 	}
 
-	resolved, aerr := auth.Resolve(auth.Options{
+	streams := systemIOStreams(cmd)
+	resolved, err := auth.Resolve(auth.Options{
 		BaseURL:    flags.baseURL,
 		Token:      flags.token,
 		APIKey:     flags.apiKey,
@@ -194,25 +196,23 @@ func setupApp(cmd *cobra.Command, flags *rootFlags) error {
 		Insecure:   flags.insecure,
 		Timeout:    flags.timeout,
 		TimeoutSet: cmd.Flags().Changed("timeout"),
-	}, func(msg string) { fmt.Fprintln(cmd.ErrOrStderr(), msg) })
-	if aerr != nil {
-		return aerr
+	}, func(msg string) { _, _ = fmt.Fprintln(streams.Err, msg) })
+	if err != nil {
+		return err
 	}
 
-	c, cerr := client.NewClient(resolved.BaseURL,
+	c, err := client.NewClient(resolved.BaseURL,
 		client.WithHTTPClient(resolved.HTTPClient),
 		client.WithRequestEditorFn(resolved.RequestEditor))
-	if cerr != nil {
-		return exitcode.Wrap(exitcode.UnexpectedError, cerr, "building Admin API client")
+	if err != nil {
+		return exitcode.Wrap(exitcode.UnexpectedError, err, "building Admin API client")
 	}
 
-	app := &App{
+	cmd.SetContext(withApp(cmd.Context(), &App{
 		Client: c,
 		Output: outputMode,
 		Yes:    flags.yes,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	}
-	cmd.SetContext(withApp(cmd.Context(), app))
+		IO:     streams,
+	}))
 	return nil
 }

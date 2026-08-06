@@ -255,7 +255,6 @@ func TestWriteSummaryDashboard_colorsOnlyTheFilledBarCells(t *testing.T) {
 	writeSummaryDashboard(&b, summary, true)
 	rendered := b.String()
 
-	const barWidth = 30 // must match writeSummaryDashboard's own const
 	cases := []struct {
 		row   string
 		value int64

@@ -88,7 +88,9 @@ tandem-cli/
                                     //   this second main package is never cross-compiled/released
   docs/cli/*.md                     // committed; regenerated via `make docs`, drift-checked in CI -
                                     //   the user manual, one page per command (§8)
-  scratch_fake_admin.py             // stdlib-only fake Admin API for trying bin/tandem-cli by
+  .golangci.yml                     // lint config: the standard linter set plus bodyclose/
+                                    //   predeclared/unconvert/misspell; run by `make lint` (§8)
+  hack/fake-admin-api.py            // stdlib-only fake Admin API for trying bin/tandem-cli by
                                     //   hand (CONTRIBUTING.md); not part of the Go module
   tools/                            // separate module: pins oapi-codegen's own version so its
     go.mod / go.sum                //   higher Go-version floor never raises the main module's
@@ -101,12 +103,18 @@ tandem-cli/
       generate.go                  // //go:generate go run -C ../../tools oapi-codegen ...
       generated.go                  // committed; regenerated via `go generate`, drift-checked in CI
     cmd/
-      app.go                       // App (client/output-mode/--yes) threaded via cmd.Context()
-      exec.go                      // do() classifies every response into (body, *exitcode.Error);
-                                    //   confirm()/isTerminal() implement the --yes/TTY gate (§5)
+      app.go                       // App (client/output-mode/--yes) plus IOStreams (the three
+                                    //   streams and the TTY/color decisions taken off them),
+                                    //   threaded via cmd.Context()
+      exec.go                      // do() classifies every response into (body, error);
+                                    //   confirm()/promptYesNo() implement the --yes/TTY gate (§5)
+      render.go                    // renderObject/renderList: the one json-vs-human branch every
+                                    //   command shares, generic over the response type (§6)
+      parse.go                     // positional-argument parsing, as usage errors (§7)
       root.go                       // persistent flags: --base-url, --token, --api-key, --header,
                                     //   --ca-cert, --insecure, --timeout, --output, --yes
       outbox.go                     // summary, search, get, replay, discard, replay-bulk
+      dashboard.go                  // outbox summary --watch: the poll loop and its renderer (§3.1)
       relay.go                      // status, pause, resume, buckets (list + single), release-bucket, workers
       testdata/                    // canned Admin API response fixtures for the tests below (§10)
       *_test.go                     // one file per resource area, httptest-backed (§10)
@@ -202,7 +210,7 @@ single scalar doesn't gain anything from a refresh loop the way a multi-count sn
   path didn't originally check the output mode, so a request that failed near a JSON-mode test's
   time budget intermittently broke JSON decoding — fixed by branching on `app.Output` in the
   error case, same as the success case already did). This is the one command where a
-  `*exitcode.Error` is deliberately *not* returned up to `main` on every failure — only a real
+  classified error is deliberately *not* returned up to `main` on every failure — only a real
   setup problem (e.g. `--interval 0`) is, and only before the loop starts.
 - **`--interval` must be greater than zero** — a local usage error (exit 2) before any HTTP
   call, same shape as `outbox discard`'s missing `--reason` (§5).
@@ -336,6 +344,12 @@ without parsing prose.
 Every code is documented in `--help` and, once implemented, the module's README section — a
 script author should never need to read this LLD to branch on the result.
 
+Carried in-process by `exitcode.Error`, but **every function signature says plain `error`** —
+`New`/`Wrap` return the interface, never the concrete `*Error`. A helper typed `*Error` that
+returns nil produces a non-nil `error` the moment a caller passes it up, silently turning a
+success into an exit code; `exitcode.CodeOf` recovers the code with `errors.As`, so it keeps
+working through any wrapping a caller adds.
+
 ---
 
 ## 8. Generated client (`oapi-codegen`)
@@ -359,7 +373,10 @@ which *is* hand-written, exactly like `tandem-admin`'s handlers.
 - CI's `tandem-cli` job (`.github/workflows/ci.yml`, separate from the Gradle build) adds a
   **regenerate-and-diff** step (`make generate && git diff --exit-code`) as the drift gate — the
   Go-toolchain equivalent of Specmatic's conformance check for `tandem-admin` — followed by
-  `make lint` (`go vet` + `gofmt -l`) and `make test` (`go test ./... -race`), which also emits
+  `make lint` (**golangci-lint**, pinned in the Makefile so a local run and CI apply the same
+  rules — the standard linter set, which `go vet` alone does not cover, plus `bodyclose` /
+  `predeclared` / `unconvert` / `misspell`, and a separate `fmt --diff` pass because v2's
+  analysis run does not report formatting) and `make test` (`go test ./... -race`), which also emits
   `coverage.out` (`-coverprofile=coverage.out -covermode=atomic`), uploaded to Codecov under the
   `cli` flag — separate from the Java modules' aggregated JaCoCo report (`java` flag), since the
   two live in different CI jobs with no shared build.

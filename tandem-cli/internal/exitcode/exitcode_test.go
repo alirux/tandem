@@ -10,7 +10,7 @@ func TestForProblem_knownSlugsMapToTheirDocumentedCode(t *testing.T) {
 	cases := []struct {
 		status int
 		slug   string
-		want   int
+		want   Code
 	}{
 		{http.StatusUnauthorized, "unauthorized", Unauthorized},
 		{http.StatusNotFound, "not-found", NotFound},
@@ -32,7 +32,7 @@ func TestForProblem_knownSlugsMapToTheirDocumentedCode(t *testing.T) {
 func TestForProblem_unrecognizedSlugFallsBackToStatusWhereUnambiguous(t *testing.T) {
 	cases := []struct {
 		status int
-		want   int
+		want   Code
 	}{
 		{http.StatusUnauthorized, Unauthorized},
 		{http.StatusNotFound, NotFound},
@@ -116,7 +116,7 @@ func TestWrap_preservesTheUnderlyingErrorForUnwrapping(t *testing.T) {
 	if !errors.Is(wrapped, cause) {
 		t.Errorf("errors.Is(wrapped, cause) = false, want true")
 	}
-	if wrapped.Code != ConnectionFailure {
-		t.Errorf("wrapped.Code = %d, want %d", wrapped.Code, ConnectionFailure)
+	if got := CodeOf(wrapped); got != ConnectionFailure {
+		t.Errorf("CodeOf(wrapped) = %d, want %d", got, ConnectionFailure)
 	}
 }

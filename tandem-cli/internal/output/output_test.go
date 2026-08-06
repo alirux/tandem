@@ -207,7 +207,9 @@ func TestTable_coloredCellsDoNotMisalignSubsequentColumns(t *testing.T) {
 func TestCursorHint_printsHintWhenNextCursorIsPresent(t *testing.T) {
 	var buf bytes.Buffer
 	cursor := "abc123"
-	CursorHint(&buf, &cursor)
+	if err := CursorHint(&buf, &cursor); err != nil {
+		t.Fatalf("CursorHint() = %v, want nil", err)
+	}
 	if got := buf.String(); got != "next page: --cursor=abc123\n" {
 		t.Errorf("output = %q", got)
 	}
@@ -215,7 +217,9 @@ func TestCursorHint_printsHintWhenNextCursorIsPresent(t *testing.T) {
 
 func TestCursorHint_printsNothingWhenNextCursorIsNil(t *testing.T) {
 	var buf bytes.Buffer
-	CursorHint(&buf, nil)
+	if err := CursorHint(&buf, nil); err != nil {
+		t.Fatalf("CursorHint() = %v, want nil", err)
+	}
 	if buf.Len() != 0 {
 		t.Errorf("output = %q, want empty", buf.String())
 	}
@@ -224,7 +228,9 @@ func TestCursorHint_printsNothingWhenNextCursorIsNil(t *testing.T) {
 func TestCursorHint_printsNothingWhenNextCursorIsEmptyString(t *testing.T) {
 	var buf bytes.Buffer
 	empty := ""
-	CursorHint(&buf, &empty)
+	if err := CursorHint(&buf, &empty); err != nil {
+		t.Fatalf("CursorHint() = %v, want nil", err)
+	}
 	if buf.Len() != 0 {
 		t.Errorf("output = %q, want empty", buf.String())
 	}
@@ -246,11 +252,11 @@ func TestColorBar_onlyTheFilledCellsAreColored(t *testing.T) {
 	}
 }
 
-func TestColorBar_matchesPlainBarWhenDisabled(t *testing.T) {
+func TestColorBar_emitsNoEscapeCodesWhenDisabled(t *testing.T) {
 	got := ColorBar(5, 10, 10, Red, false)
-	want := Bar(5, 10, 10)
+	want := strings.Repeat("\u2588", 5) + strings.Repeat("\u2591", 5)
 	if got != want {
-		t.Errorf("ColorBar(..., false) = %q, want it to equal the plain Bar() = %q", got, want)
+		t.Errorf("ColorBar(..., false) = %q, want the plain bar %q", got, want)
 	}
 }
 
@@ -273,51 +279,51 @@ func TestColorize_returnsUnmodifiedWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestBar_fullyFilledWhenValueEqualsMax(t *testing.T) {
-	got := Bar(10, 10, 10)
+func TestColorBar_fullyFilledWhenValueEqualsScale(t *testing.T) {
+	got := ColorBar(10, 10, 10, Red, false)
 	if got != strings.Repeat("█", 10) {
-		t.Errorf("Bar(10, 10, 10) = %q, want fully filled", got)
+		t.Errorf("ColorBar(10, 10, 10, Red, false) = %q, want fully filled", got)
 	}
 }
 
-func TestBar_emptyWhenValueIsZero(t *testing.T) {
-	got := Bar(0, 10, 10)
+func TestColorBar_emptyWhenValueIsZero(t *testing.T) {
+	got := ColorBar(0, 10, 10, Red, false)
 	if got != strings.Repeat("░", 10) {
-		t.Errorf("Bar(0, 10, 10) = %q, want fully empty", got)
+		t.Errorf("ColorBar(0, 10, 10, Red, false) = %q, want fully empty", got)
 	}
 }
 
-func TestBar_halfFilledAtHalfTheMax(t *testing.T) {
-	got := Bar(5, 10, 10)
+func TestColorBar_halfFilledAtHalfTheScale(t *testing.T) {
+	got := ColorBar(5, 10, 10, Red, false)
 	want := strings.Repeat("█", 5) + strings.Repeat("░", 5)
 	if got != want {
-		t.Errorf("Bar(5, 10, 10) = %q, want %q", got, want)
+		t.Errorf("ColorBar(5, 10, 10, Red, false) = %q, want %q", got, want)
 	}
 }
 
-func TestBar_zeroMaxRendersEmptyRatherThanDividingByZero(t *testing.T) {
-	got := Bar(3, 0, 8)
+func TestColorBar_zeroScaleRendersEmptyRatherThanDividingByZero(t *testing.T) {
+	got := ColorBar(3, 0, 8, Red, false)
 	if got != strings.Repeat("░", 8) {
-		t.Errorf("Bar(3, 0, 8) = %q, want fully empty", got)
+		t.Errorf("ColorBar(3, 0, 8, Red, false) = %q, want fully empty", got)
 	}
 }
 
-func TestBar_valueAboveMaxClampsToFull(t *testing.T) {
-	got := Bar(999, 10, 6)
+func TestColorBar_valueAboveMaxClampsToFull(t *testing.T) {
+	got := ColorBar(999, 10, 6, Red, false)
 	if got != strings.Repeat("█", 6) {
-		t.Errorf("Bar(999, 10, 6) = %q, want fully filled, not overflowing", got)
+		t.Errorf("ColorBar(999, 10, 6, Red, false) = %q, want fully filled, not overflowing", got)
 	}
 }
 
-func TestBar_negativeValueClampsToEmpty(t *testing.T) {
-	got := Bar(-5, 10, 6)
+func TestColorBar_negativeValueClampsToEmpty(t *testing.T) {
+	got := ColorBar(-5, 10, 6, Red, false)
 	if got != strings.Repeat("░", 6) {
-		t.Errorf("Bar(-5, 10, 6) = %q, want fully empty", got)
+		t.Errorf("ColorBar(-5, 10, 6, Red, false) = %q, want fully empty", got)
 	}
 }
 
-func TestBar_zeroWidthIsEmptyString(t *testing.T) {
-	if got := Bar(5, 10, 0); got != "" {
-		t.Errorf("Bar(5, 10, 0) = %q, want empty string", got)
+func TestColorBar_zeroWidthIsEmptyString(t *testing.T) {
+	if got := ColorBar(5, 10, 0, Red, false); got != "" {
+		t.Errorf("ColorBar(5, 10, 0, Red, false) = %q, want empty string", got)
 	}
 }
