@@ -80,6 +80,61 @@ func TestWriteErr_wrapsAWriteFailureAsUnexpectedError(t *testing.T) {
 	}
 }
 
+func TestConfirm_yesFlagSkipsThePromptEntirely(t *testing.T) {
+	// TTY: false and In: nil would fail this test if confirm ever tried to read - the
+	// --yes flag must short-circuit before touching IO at all.
+	app := &App{Yes: true, IO: IOStreams{TTY: false}}
+	if err := confirm(app, "Discard message 1?"); err != nil {
+		t.Errorf("confirm(Yes=true) = %v, want nil", err)
+	}
+}
+
+func TestPromptYesNo_readsAnAffirmativeAnswerFromTheInjectedReader(t *testing.T) {
+	var errOut strings.Builder
+	app := &App{IO: IOStreams{TTY: true, In: strings.NewReader("y\n"), Err: &errOut}}
+
+	if err := promptYesNo(app, "Proceed?", "refused"); err != nil {
+		t.Errorf("promptYesNo(y) = %v, want nil", err)
+	}
+	if !strings.Contains(errOut.String(), "Proceed?") {
+		t.Errorf("stderr = %q, want the prompt text written to it", errOut.String())
+	}
+}
+
+func TestPromptYesNo_aNegativeAnswerIsConfirmationRequired(t *testing.T) {
+	app := &App{IO: IOStreams{TTY: true, In: strings.NewReader("n\n"), Err: io.Discard}}
+
+	err := promptYesNo(app, "Proceed?", "refused")
+	if got := exitcode.CodeOf(err); got != exitcode.ConfirmationRequired {
+		t.Errorf("CodeOf(promptYesNo(n)) = %d, want ConfirmationRequired (%d)", got, exitcode.ConfirmationRequired)
+	}
+}
+
+func TestPromptYesNo_emptyInputIsConfirmationRequired(t *testing.T) {
+	// io.EOF with no bytes read at all - e.g. stdin closed mid-prompt - reaches
+	// isAffirmative as "", the same as an explicit "n".
+	app := &App{IO: IOStreams{TTY: true, In: strings.NewReader(""), Err: io.Discard}}
+
+	err := promptYesNo(app, "Proceed?", "refused")
+	if got := exitcode.CodeOf(err); got != exitcode.ConfirmationRequired {
+		t.Errorf("CodeOf(promptYesNo(EOF)) = %d, want ConfirmationRequired (%d)", got, exitcode.ConfirmationRequired)
+	}
+}
+
+func TestPromptYesNo_withoutATerminalRefusesWithoutReadingInput(t *testing.T) {
+	// In is nil: if this ever reached the ReadString call it would panic, so a passing
+	// test proves the CanPrompt gate really runs first.
+	app := &App{IO: IOStreams{TTY: false, In: nil, Err: io.Discard}}
+
+	err := promptYesNo(app, "Proceed?", "refused: not a terminal")
+	if got := exitcode.CodeOf(err); got != exitcode.ConfirmationRequired {
+		t.Errorf("CodeOf(promptYesNo, no TTY) = %d, want ConfirmationRequired (%d)", got, exitcode.ConfirmationRequired)
+	}
+	if err == nil || !strings.Contains(err.Error(), "refused: not a terminal") {
+		t.Errorf("Error() = %v, want it to contain the caller's own refusal message", err)
+	}
+}
+
 func TestIsAffirmative_yAndYesAreCaseInsensitive(t *testing.T) {
 	for _, line := range []string{"y", "Y", "yes", "YES", "Yes", " y \n", "y\n", "  yes\n"} {
 		if !isAffirmative(line) {
