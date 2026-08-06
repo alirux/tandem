@@ -110,6 +110,37 @@ class OutboxAdminControllerTest {
     }
 
     @Test
+    void GIVEN_a_correlation_id_query_param_WHEN_messages_are_searched_THEN_every_row_of_that_business_operation_is_returned() throws Exception {
+        // The incident-time lookup: one correlation id spans many rows across aggregates (HLD-tracing §2).
+        insertWithCorrelationId("order-1", "incident-corr");
+        insertWithCorrelationId("shipment-9", "incident-corr");
+        insertWithCorrelationId("order-2", "unrelated-corr");
+
+        mockMvc.perform(get("/tandem/admin/v1/outbox/messages?correlationId=incident-corr"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].correlationId").value("incident-corr"))
+                .andExpect(jsonPath("$.items[1].aggregateId").value("shipment-9"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
+    void GIVEN_a_row_written_without_a_correlation_id_WHEN_it_is_searched_THEN_the_field_is_absent() throws Exception {
+        insert("order-1", "{}");
+
+        mockMvc.perform(get("/tandem/admin/v1/outbox/messages"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].correlationId").doesNotExist())
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    private void insertWithCorrelationId(String aggregateId, String correlationId) {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId(aggregateId).aggregateType("Order").seq(1).payload("{}".getBytes())
+                .header("correlation-id", correlationId).build());
+    }
+
+    @Test
     void GIVEN_an_existing_id_WHEN_the_message_is_fetched_THEN_the_full_detail_including_payload_is_returned() throws Exception {
         insert("order-1", "{\"amount\":42}");
         long id = outbox.all().get(0).id();

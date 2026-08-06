@@ -100,6 +100,16 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: correlationId
+          in: query
+          description: >
+            Exact match on the message's correlation id - the incident-time lookup, since the
+            correlation id usually originates outside this application (an inbound request header,
+            a consumed message) and is often the only identifier available when an investigation
+            starts. One correlation id normally matches MANY messages, across several aggregates,
+            so combine it with status to narrow the page.
+          schema:
+            type: string
         - name: limit
           in: query
           schema:
@@ -634,6 +644,13 @@ components:
         createdAt:
           type: string
           format: date-time
+        correlationId:
+          type: string
+          nullable: true
+          description: >
+            Correlation id captured when the message was written, from its own indexed column - so it
+            is present in the list view too, where headers are not read at all. Null for messages
+            written with trace/correlation propagation disabled.
         headers:
           type: object
           additionalProperties:

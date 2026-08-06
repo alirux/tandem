@@ -10,6 +10,7 @@ import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.ReplayCriteria;
 import com.codingful.tandem.core.ReplayResult;
+import com.codingful.tandem.core.TandemHeaders;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
 import com.codingful.tandem.core.port.DiscardService;
 import com.codingful.tandem.core.port.OutboxQuery;
@@ -489,13 +490,26 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
         if (criteria.createdFrom() != null && r.createdAt().isBefore(criteria.createdFrom())) {
             return false;
         }
+        if (criteria.correlationId() != null && !criteria.correlationId().equals(correlationIdOf(r))) {
+            return false;
+        }
         return criteria.createdTo() == null || !r.createdAt().isAfter(criteria.createdTo());
     }
 
     private static OutboxRowView toRowView(OutboxRecord r) {
         return new OutboxRowView(
                 r.id(), r.aggregateId(), r.aggregateType(), r.type(), r.seq(), r.status(), r.attempts(),
-                r.lastError(), r.discardReason(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt());
+                r.lastError(), r.discardReason(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt(),
+                correlationIdOf(r));
+    }
+
+    /**
+     * Stands in for the JDBC adapter's {@code correlation_id} column, which it fills from
+     * {@code headers["correlation-id"]} at insert (LLD-jdbc §2) — here the headers are read directly,
+     * since this outbox has no columns.
+     */
+    private static String correlationIdOf(OutboxRecord r) {
+        return r.headers().get(TandemHeaders.CORRELATION_ID);
     }
 
     private static OutboxRowDetail toRowDetail(OutboxRecord r) {

@@ -101,9 +101,12 @@ type DiscardRequest struct {
 
 // OutboxEntry One entry in the outbox: the message together with its delivery state. This is the API's own representation and is deliberately NOT the library's internal model - do not assume the two evolve together.
 type OutboxEntry struct {
-	AggregateId   string    `json:"aggregateId"`
-	AggregateType string    `json:"aggregateType"`
-	Attempts      int       `json:"attempts"`
+	AggregateId   string `json:"aggregateId"`
+	AggregateType string `json:"aggregateType"`
+	Attempts      int    `json:"attempts"`
+
+	// CorrelationId Correlation id captured when the message was written, from its own indexed column - so it is present in the list view too, where headers are not read at all. Null for messages written with trace/correlation propagation disabled.
+	CorrelationId *string   `json:"correlationId,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 
 	// DiscardReason Operator-supplied reason recorded when this message was discarded (DISCARDED only)
@@ -258,7 +261,10 @@ type SearchOutboxMessagesParams struct {
 	Type        *string    `form:"type,omitempty" json:"type,omitempty"`
 	CreatedFrom *time.Time `form:"createdFrom,omitempty" json:"createdFrom,omitempty"`
 	CreatedTo   *time.Time `form:"createdTo,omitempty" json:"createdTo,omitempty"`
-	Limit       *int       `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// CorrelationId Exact match on the message's correlation id - the incident-time lookup, since the correlation id usually originates outside this application (an inbound request header, a consumed message) and is often the only identifier available when an investigation starts. One correlation id normally matches MANY messages, across several aggregates, so combine it with status to narrow the page.
+	CorrelationId *string `form:"correlationId,omitempty" json:"correlationId,omitempty"`
+	Limit         *int    `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor Opaque cursor from a previous page (afterId)
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -1066,6 +1072,18 @@ func NewSearchOutboxMessagesRequest(server string, params *SearchOutboxMessagesP
 		if params.CreatedTo != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "createdTo", *params.CreatedTo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CorrelationId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "correlationId", *params.CorrelationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

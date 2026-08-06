@@ -121,6 +121,24 @@ func TestOutboxSearch_createdFromAndCreatedToAreForwardedAsRFC3339(t *testing.T)
 	}
 }
 
+func TestOutboxSearch_correlationIdIsForwardedAsAQueryParameter(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+
+	_, _, code := execute(t, server.URL, "outbox", "search", "--correlation-id", "incident-corr")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(gotQuery, "correlationId=incident-corr") {
+		t.Errorf("query = %q, missing correlationId", gotQuery)
+	}
+}
+
 func TestOutboxSearch_invalidCreatedFromIsAUsageErrorBeforeAnyHTTPCall(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +186,7 @@ func TestOutboxGet_humanRendersPayloadAndHeaders(t *testing.T) {
 	}
 }
 
-func TestOutboxGet_rendersTypeLastErrorDiscardReasonAndLockedByWhenPresent(t *testing.T) {
+func TestOutboxGet_rendersTypeLastErrorDiscardReasonCorrelationIdAndLockedByWhenPresent(t *testing.T) {
 	server := newFixtureServer(t, map[string]route{
 		"GET /outbox/messages/2": {200, "outbox_entry_full.json"},
 	})
@@ -181,6 +199,7 @@ func TestOutboxGet_rendersTypeLastErrorDiscardReasonAndLockedByWhenPresent(t *te
 		"lastError:", "connection refused",
 		"discardReason:", "poison message",
 		"lockedBy:", "worker-3",
+		"correlationId:", "incident-corr",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, missing %q", stdout, want)

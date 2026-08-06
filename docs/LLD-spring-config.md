@@ -1,6 +1,6 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.3
+**Version:** 1.4
 **Status:** Implemented and released — both modules built and tested against Boot 3.3.5 **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
@@ -345,6 +345,22 @@ takes effect when that adapter is actually wired (a `MeterRegistry` bean present
 no-op `TandemMetrics` default ignores it. Nullable, same pattern as `TandemRelayProperties`: unset
 leaves `MicrometerTandemMetrics`'s own default in force (LLD-micrometer §2).
 
+### 2.6 `tandem.tracing.*` — correlation-id capture (`tandem-spring-producer`)
+
+| Property | Type | Default |
+|---|---|---|
+| `tandem.tracing.enabled` | boolean | `false` |
+| `tandem.tracing.correlation-id-mdc-key` | String | `correlationId` |
+
+Bound by `TandemTracingProperties`, registered on `TandemProducerAutoConfiguration`. `enabled` gates
+a `TracePropagator` bean (`MdcCorrelationTracePropagator`) — **explicit only**: never auto-enabled
+because a tracing library happens to be on the classpath (HLD-tracing.md §9). When absent, the
+write-side repository falls back to `TracePropagator.NOOP`. The propagator reads
+`correlation-id-mdc-key` from SLF4J's MDC, falling back to the explicit `TandemContext` API when that
+key is unset; it carries no distributed trace context (`traceparent`/`tracestate`) — the Micrometer
+Tracing bridge for that is not yet built (HLD-tracing.md §5, §9's "OTel adapter module"/"Relay publish
+span" rows).
+
 ---
 
 ## 3. The cross-module `bucket-count` guard
@@ -410,7 +426,12 @@ The write-side module contributes exactly the plain tier:
 
 1. runs `BucketCountGuard.check(dataSource, bucketCount)` as an explicit startup step **before** the
    repository is exposed (§3) — a mismatch fails context refresh, loudly;
-2. contributes `OutboxRepository` = `new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), bucketCount)`.
+2. contributes `OutboxRepository` = `new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), bucketCount, tracePropagator)`,
+   where `tracePropagator` is whatever `TracePropagator` bean exists, or `TracePropagator.NOOP` when
+   none does;
+3. contributes `TracePropagator` = `MdcCorrelationTracePropagator`, **only** when
+   `tandem.tracing.enabled=true` (§2.6) — a `@ConditionalOnProperty`, not a classpath check, so an
+   unrelated dependency landing SLF4J on the classpath cannot turn this on by itself.
 
 The `TransactionAwareDataSourceProxy` is load-bearing, not decoration: `JdbcOutboxRepository` inserts on
 whatever connection its `DataSource` hands it (its constructor does no I/O, LLD-jdbc), and the proxy hands

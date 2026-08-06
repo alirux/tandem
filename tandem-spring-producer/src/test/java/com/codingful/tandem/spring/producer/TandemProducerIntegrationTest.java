@@ -22,6 +22,7 @@ import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -126,6 +127,48 @@ class TandemProducerIntegrationTest {
             assertThatThrownBy(() -> eventService.publishThenFail("evt-rollback")).isInstanceOf(IllegalStateException.class);
             assertThat(outboxRowCount("evt-rollback")).isZero();
         });
+    }
+
+    @Test
+    void GIVEN_tracing_enabled_and_an_mdc_correlation_id_WHEN_the_template_commits_THEN_the_header_is_captured() {
+        MDC.put("correlationId", "corr-mdc-1");
+        try {
+            runner.withPropertyValues("tandem.tracing.enabled=true").run(context -> {
+                context.getBean(TransactionalOutboxTemplate.class)
+                        .executeWithoutResult(outbox -> outbox.record("Order", "tpl-trace", 1L, new OrderEvent("tpl-trace")));
+                assertThat(correlationIdHeaderOf("tpl-trace")).isEqualTo("corr-mdc-1");
+            });
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    @Test
+    void GIVEN_tracing_not_enabled_and_an_mdc_correlation_id_WHEN_the_template_commits_THEN_no_header_is_captured() {
+        MDC.put("correlationId", "corr-mdc-2");
+        try {
+            runner.run(context -> {
+                context.getBean(TransactionalOutboxTemplate.class)
+                        .executeWithoutResult(outbox -> outbox.record("Order", "tpl-no-trace", 1L, new OrderEvent("tpl-no-trace")));
+                assertThat(correlationIdHeaderOf("tpl-no-trace")).isNull();
+            });
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    private static String correlationIdHeaderOf(String aggregateId) {
+        try (Connection connection = container.dataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT headers->>'correlation-id' FROM tandem_outbox WHERE aggregate_id = ?")) {
+            statement.setString(1, aggregateId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                resultSet.next();
+                return resultSet.getString(1);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("reading correlation-id header failed", e);
+        }
     }
 
     private static OutboxMessage message(String aggregateId) {

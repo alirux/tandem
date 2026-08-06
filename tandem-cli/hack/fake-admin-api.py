@@ -2,9 +2,9 @@
 """Fake Admin API for manually trying tandem-cli against something that talks the
 contract, without a real tandem-admin instance running. Not part of the Go module (no
 go.mod entry, not built/tested by it) - a standalone dev convenience kept in the repo.
-Usage: python3 scratch_fake_admin.py 8080
+Usage: python3 fake-admin-api.py 8080
 """
-import http.server, json, sys, re, random
+import http.server, json, sys, re, random, urllib.parse
 
 # Freshly randomized on every request, not on a server-side timer - since --watch polls
 # at its own --interval, this alone makes the dashboard visibly change every refresh.
@@ -28,12 +28,21 @@ def _random_summary():
         "lagAgeSeconds": round(random.uniform(0, 60), 1),
     }
 
+# Rows 1 and 3 deliberately share a correlation id across DIFFERENT aggregates: that is the real
+# shape of the relationship (one correlation id groups a whole business operation, spanning several
+# aggregates), so `outbox search --correlation-id incident-corr` returns both and demonstrates it.
 OUTBOX = {
     1: {"id": 1, "aggregateId": "order-1", "aggregateType": "Order", "seq": 1, "status": "DONE",
         "attempts": 1, "createdAt": "2026-08-05T09:00:00Z", "payload": {"amount": 42},
-        "headers": {"content-type": "application/json"}},
+        "correlationId": "incident-corr",
+        "headers": {"content-type": "application/json", "correlation-id": "incident-corr"}},
     2: {"id": 2, "aggregateId": "order-2", "aggregateType": "Order", "seq": 1, "status": "FAILED",
-        "attempts": 10, "createdAt": "2026-08-05T09:05:00Z", "lastError": "broker unreachable"},
+        "attempts": 10, "createdAt": "2026-08-05T09:05:00Z", "lastError": "broker unreachable",
+        "correlationId": "other-corr", "headers": {"correlation-id": "other-corr"}},
+    3: {"id": 3, "aggregateId": "shipment-9", "aggregateType": "Shipment", "seq": 1, "status": "PENDING",
+        "attempts": 0, "createdAt": "2026-08-05T09:06:00Z",
+        "correlationId": "incident-corr",
+        "headers": {"content-type": "application/json", "correlation-id": "incident-corr"}},
 }
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -50,7 +59,13 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/outbox/summary":
             self._send(200, _random_summary())
         elif self.path.startswith("/outbox/messages?") or self.path == "/outbox/messages":
-            self._send(200, {"items": list(OUTBOX.values()), "nextCursor": None})
+            # Only correlationId is honoured, so the incident-time lookup can actually be tried
+            # end to end; every OTHER filter is still ignored and returns the full list.
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            correlation_id = query.get("correlationId", [None])[0]
+            items = [r for r in OUTBOX.values()
+                     if correlation_id is None or r.get("correlationId") == correlation_id]
+            self._send(200, {"items": items, "nextCursor": None})
         elif m and int(m.group(1)) in OUTBOX:
             self._send(200, OUTBOX[int(m.group(1))])
         elif self.path == "/relay/status":

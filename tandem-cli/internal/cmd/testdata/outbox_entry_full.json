@@ -9,5 +9,6 @@
   "type": "OrderPlaced",
   "lastError": "connection refused",
   "discardReason": "poison message",
-  "lockedBy": "worker-3"
+  "lockedBy": "worker-3",
+  "correlationId": "incident-corr"
 }

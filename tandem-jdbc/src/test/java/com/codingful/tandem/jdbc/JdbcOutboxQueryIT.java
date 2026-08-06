@@ -123,6 +123,51 @@ class JdbcOutboxQueryIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_one_business_operation_spanning_several_aggregates_WHEN_searched_by_its_correlation_id_THEN_every_row_it_produced_is_returned() {
+        // The incident-time lookup: one correlation id normally matches MANY rows, across several
+        // aggregates (HLD-tracing §2) — the search must return the whole set, not just one row.
+        long first = insertWithCorrelationId("order-1", 1, "incident-corr");
+        long second = insertWithCorrelationId("shipment-9", 1, "incident-corr");
+        insertWithCorrelationId("order-2", 1, "unrelated-corr");
+
+        List<OutboxRowView> rows = query.search(
+                OutboxSearchCriteria.builder().correlationId("incident-corr").build());
+
+        assertThat(rows).extracting(OutboxRowView::id).containsExactly(first, second);
+        assertThat(rows).extracting(OutboxRowView::correlationId).containsOnly("incident-corr");
+    }
+
+    @Test
+    void GIVEN_a_correlation_id_and_a_status_WHEN_searched_THEN_both_narrow_the_result() {
+        insertWithCorrelationId("order-1", 1, "incident-corr");
+        long failed = insertWithCorrelationId("order-2", 1, "incident-corr");
+        setStatus(failed, OutboxStatus.FAILED);
+
+        List<OutboxRowView> rows = query.search(OutboxSearchCriteria.builder()
+                .correlationId("incident-corr").status(OutboxStatus.FAILED).build());
+
+        assertThat(rows).extracting(OutboxRowView::id).containsExactly(failed);
+    }
+
+    @Test
+    void GIVEN_a_row_written_without_a_correlation_id_WHEN_searched_THEN_its_view_carries_none() {
+        repository.insert(OutboxMessage.builder()
+                .aggregateId("order-no-corr").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+
+        List<OutboxRowView> rows = query.search(
+                OutboxSearchCriteria.builder().aggregateId(AggregateId.of("order-no-corr")).build());
+
+        assertThat(rows).singleElement().extracting(OutboxRowView::correlationId).isNull();
+    }
+
+    private long insertWithCorrelationId(String aggregateId, long seq, String correlationId) {
+        repository.insert(OutboxMessage.builder()
+                .aggregateId(aggregateId).aggregateType("Order").seq(seq).payload("{}".getBytes())
+                .header("correlation-id", correlationId).build());
+        return lastInsertedId();
+    }
+
+    @Test
     void GIVEN_a_created_time_range_WHEN_searched_THEN_only_rows_inside_the_range_are_returned() {
         long before = insert("order-1", "Order", 1, "{}");
         setCreatedAt(before, Instant.parse("2020-01-01T00:00:00Z"));

@@ -11,6 +11,7 @@ tandem-cli outbox search [flags]
 ```
       --aggregate-id string     filter by aggregate id
       --aggregate-type string   filter by aggregate type
+      --correlation-id string   filter by correlation id (matches every message of one business operation)
       --created-from string     filter: created at or after (RFC3339)
       --created-to string       filter: created at or before (RFC3339)
       --cursor string           opaque cursor from a previous page

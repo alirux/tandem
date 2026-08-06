@@ -14,3 +14,11 @@ tandem:
     # must bind the identical value — the startup guard fails loudly if the two ever diverge, rather
     # than letting the write side insert into buckets the relay never polls.
     bucket-count: 256
+  tracing:
+    # tandem.tracing.enabled — capture trace/correlation context at insert time. Default: false.
+    # Off means no MDC lookup and no header added: a genuine opt-in, never auto-enabled just because
+    # a tracing adapter happens to be on the classpath (HLD-tracing.md §9).
+    enabled: false
+    # tandem.tracing.correlation-id-mdc-key — the MDC key read for the correlation id when enabled.
+    # Default: correlationId. Falls back to the explicit TandemContext API when this key is unset.
+    correlation-id-mdc-key: correlationId

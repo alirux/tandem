@@ -222,8 +222,9 @@ automatic. The archive is the primary *consumer* of those ids, which is why the 
 features are designed together: propagation puts the ids in `headers`, the archive reads them
 out for forensics. **Each works without the other** — with propagation off the archive leaves
 the two columns null, and propagation is fully useful on its own, since the standard
-`traceparent` reaches consumers whether or not anything archives attempts. Tracing's rich mode
-would additionally supply the `trace_id` of the real send instant rather than the write's.
+`traceparent` reaches consumers whether or not anything archives attempts. Tracing's
+instrumented mode would additionally supply the `trace_id` of the real send instant rather than
+the write's.
 
 Also note the distinction that HLD §9 draws: `correlation_id` groups related work, whereas
 `causation_id` links an effect to its one cause. The archive stores the former.

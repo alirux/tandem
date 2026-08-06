@@ -33,6 +33,11 @@ dependencies {
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.jackson.databind)
     testImplementation(libs.slf4j.api)
+    // A real SLF4J binding with a working MDCAdapter — slf4j-simple's is NOPMDCAdapter, a true no-op
+    // (verified empirically), so the trace-capture tests need Logback instead to prove the MDC-based
+    // correlation-id path. Also the realistic case: Spring Boot's own default logging starter is
+    // Logback, so this is what a real consumer's MDC.put actually reaches.
+    testImplementation(libs.logback.classic)
     // AbstractDataSource is the real base the wiring tests' stub DataSource extends (test-only).
     testImplementation(libs.spring.jdbc)
     testImplementation(project(":tandem-test"))
@@ -62,6 +67,7 @@ dependencies {
     bootFourTestRuntimeClasspath(libs.spring.jdbc)
     bootFourTestRuntimeClasspath(libs.jackson.databind)
     bootFourTestRuntimeClasspath(libs.slf4j.api)
+    bootFourTestRuntimeClasspath(libs.logback.classic)
     bootFourTestRuntimeClasspath(project(":tandem-test"))
     bootFourTestRuntimeClasspath(testFixtures(project(":tandem-test")))
     bootFourTestRuntimeClasspath(platform(libs.junit.bom))

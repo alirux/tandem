@@ -8,6 +8,11 @@ import java.time.Instant;
  * search is legitimate — it is bounded by {@code limit}, and "show me the newest rows" needs no
  * selector.
  *
+ * @param correlationId matches the indexed {@code correlation_id} column (HLD-tracing §4) — the
+ *                      incident-time lookup, where this is often the only identifier the operator
+ *                      has. One correlation id normally matches <b>many</b> rows, across several
+ *                      aggregates (HLD-tracing §2), so the result is a page like any other and is
+ *                      typically narrowed further with {@code status}
  * @param afterId the cursor: only rows with {@code id > afterId} are returned; {@code null} starts
  *                from the beginning
  * @param limit   the maximum number of rows to return, between {@value #MIN_LIMIT} and
@@ -20,6 +25,7 @@ public record OutboxSearchCriteria(
         String type,
         Instant createdFrom,
         Instant createdTo,
+        String correlationId,
         Long afterId,
         int limit) {
 
@@ -46,6 +52,7 @@ public record OutboxSearchCriteria(
         private String type;
         private Instant createdFrom;
         private Instant createdTo;
+        private String correlationId;
         private Long afterId;
         private int limit = DEFAULT_LIMIT;
 
@@ -82,6 +89,11 @@ public record OutboxSearchCriteria(
             return this;
         }
 
+        public Builder correlationId(String correlationId) {
+            this.correlationId = correlationId;
+            return this;
+        }
+
         public Builder afterId(Long afterId) {
             this.afterId = afterId;
             return this;
@@ -94,8 +106,8 @@ public record OutboxSearchCriteria(
         }
 
         public OutboxSearchCriteria build() {
-            return new OutboxSearchCriteria(
-                    status, aggregateId, aggregateType, type, createdFrom, createdTo, afterId, limit);
+            return new OutboxSearchCriteria(status, aggregateId, aggregateType, type, createdFrom, createdTo,
+                    correlationId, afterId, limit);
         }
     }
 }

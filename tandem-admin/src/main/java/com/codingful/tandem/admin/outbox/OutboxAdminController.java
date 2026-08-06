@@ -52,6 +52,7 @@ class OutboxAdminController {
                     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdFrom,
             @RequestParam(name = "createdTo", required = false)
                     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdTo,
+            @RequestParam(name = "correlationId", required = false) String correlationId,
             @RequestParam(name = "limit", defaultValue = "" + OutboxSearchCriteria.DEFAULT_LIMIT) int limit,
             @RequestParam(name = "cursor", required = false) String cursor) {
 
@@ -62,6 +63,7 @@ class OutboxAdminController {
                 .type(type)
                 .createdFrom(createdFrom)
                 .createdTo(createdTo)
+                .correlationId(correlationId)
                 .afterId(cursor == null ? null : parseCursor(cursor))
                 .limit(limit)
                 .build();

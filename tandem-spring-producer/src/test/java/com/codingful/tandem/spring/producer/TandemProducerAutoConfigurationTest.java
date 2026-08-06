@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.codingful.tandem.core.port.OutboxRepository;
 import com.codingful.tandem.core.port.PayloadSerializer;
+import com.codingful.tandem.core.port.TracePropagator;
 import com.codingful.tandem.test.InMemoryOutbox;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
@@ -110,5 +111,41 @@ class TandemProducerAutoConfigurationTest {
                     assertThat(context).hasSingleBean(OutboxEventListener.class);
                     assertThat(context).hasSingleBean(OutboxEventMapperRegistry.class);
                 });
+    }
+
+    @Test
+    void GIVEN_tracing_not_enabled_WHEN_the_context_starts_THEN_no_trace_propagator_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .run(context -> assertThat(context).doesNotHaveBean(TracePropagator.class));
+    }
+
+    @Test
+    void GIVEN_tracing_enabled_WHEN_the_context_starts_THEN_an_mdc_correlation_propagator_is_contributed() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .withPropertyValues("tandem.tracing.enabled=true")
+                .run(context -> assertThat(context.getBean(TracePropagator.class))
+                        .isInstanceOf(MdcCorrelationTracePropagator.class));
+    }
+
+    @Test
+    void GIVEN_a_configured_mdc_key_WHEN_the_context_starts_THEN_it_is_bound() {
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .withPropertyValues("tandem.tracing.enabled=true", "tandem.tracing.correlation-id-mdc-key=reqId")
+                .run(context -> assertThat(context.getBean(TandemTracingProperties.class).correlationIdMdcKey())
+                        .isEqualTo("reqId"));
+    }
+
+    @Test
+    void GIVEN_a_user_supplied_trace_propagator_WHEN_tracing_is_enabled_THEN_it_replaces_the_autoconfigured_one() {
+        TracePropagator custom = new TracePropagator() {
+        };
+        runner.withBean(DataSource.class, NoopDataSource::new)
+                .withBean(OutboxRepository.class, InMemoryOutbox::new)
+                .withBean(TracePropagator.class, () -> custom)
+                .withPropertyValues("tandem.tracing.enabled=true")
+                .run(context -> assertThat(context.getBean(TracePropagator.class)).isSameAs(custom));
     }
 }

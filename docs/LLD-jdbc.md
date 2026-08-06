@@ -16,8 +16,15 @@ implements `OutboxRepository`, `OutboxStore`, `ReplayService`.
 
 ## 1. Schema
 
-The `outbox` table is defined in HLD §5.1 (note the `bucket SMALLINT NOT NULL` column). The relay
-adds two tables, used **only under the `LEASE` coordination mode** (§3.2) — i.e. whenever more than
+The `outbox` table is defined in HLD §5.1 (note the `bucket SMALLINT NOT NULL` column). It also
+carries a nullable **`correlation_id VARCHAR(255)`** column with a plain B-tree index
+(`idx_tandem_outbox_correlation`), written at insert from `headers['correlation-id']` (§2) and
+serving the Admin API's incident-time search (HLD-tracing §4.1). A real column rather than an
+expression index over the `headers` JSONB, specifically so it ports to MySQL 8 unchanged (§5, where
+neither expression nor partial indexes exist); the index is deliberately **not** partial for the same
+reason, even though `WHERE correlation_id IS NOT NULL` would be smaller on PostgreSQL.
+
+The relay adds two tables, used **only under the `LEASE` coordination mode** (§3.2) — i.e. whenever more than
 one relay instance runs against the outbox, whether those instances are embedded in a horizontally-
 scaled client or standalone processes. Under `SINGLE` (a single relay instance) there are no tables:
 the instance owns all buckets in-process.
@@ -85,8 +92,8 @@ carries `bucket`.
 Runs inside the caller's transaction (the client's `@Transactional`); never opens its own.
 
 ```sql
-INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, seq, payload, headers)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, seq, payload, headers, correlation_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 ```
 - `bucket` is computed in Java from `aggregate_id` (§1).
 - `payload` is the `byte[]` from the `PayloadSerializer` (JSONB for JSON, BYTEA for binary; §5.2 HLD).
@@ -110,6 +117,23 @@ RETURNING lamport;
 ```
 `:inbound` is the `CausalContext` inbound timestamp (0 if none). When the feature is **off**,
 this step is skipped entirely (no `tandem_aggregate_clock` table, no upsert) — zero cost (§1.3).
+
+**Optional trace/correlation capture (only when tracing is enabled, HLD-tracing.md §5, §9).** After
+the `contentType` merge, `insert`/`insertAll` call `TracePropagator.capture()` and merge the result
+into `headers` for any key **not already present** — an explicit header the caller set (e.g. a
+hand-set `correlation-id`) is never overwritten by captured context. Guarded by
+`TracePropagator.isEnabled()`: when disabled (the default `TracePropagator.NOOP`, wired by the 2-arg
+constructor), no context lookup happens and no map is built (§7 cost table). A manually-assembled
+repository passes a real propagator to the 3-arg constructor; real adapters ship in
+`tandem-spring-producer` / `tandem-tracing-otel`.
+
+**The `correlation_id` column is filled from the headers just computed**, never from a separate
+source — so the indexed copy and the header that reaches Kafka can never disagree (HLD-tracing §4.1).
+The value is **truncated** to `MAX_CORRELATION_ID_LENGTH` (255, the column width) rather than
+rejected: it normally originates outside the application (an inbound HTTP header, a consumed
+message), so it is untrusted input, and an over-long value must not fail the caller's *business*
+transaction — the insert shares it. The `headers` copy keeps the full value; it is not indexed. The
+column stays `NULL` when no correlation id is present, which is every row when tracing is off.
 
 ---
 

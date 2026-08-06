@@ -2,6 +2,7 @@ package com.codingful.tandem.spring.producer;
 
 import com.codingful.tandem.core.port.OutboxRepository;
 import com.codingful.tandem.core.port.PayloadSerializer;
+import com.codingful.tandem.core.port.TracePropagator;
 import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +13,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -40,23 +42,40 @@ import org.springframework.transaction.support.TransactionTemplate;
         "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
         "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration"})
 @ConditionalOnSingleCandidate(DataSource.class)
-@EnableConfigurationProperties(TandemOutboxProperties.class)
+@EnableConfigurationProperties({TandemOutboxProperties.class, TandemTracingProperties.class})
 public class TandemProducerAutoConfiguration {
 
     /**
      * The write-side repository, backed by JDBC. The bucket-count guard runs first, so a bucket count
      * that diverges from what the database already holds fails context refresh (LLD-spring-config §3)
-     * instead of silently inserting into buckets the relay never polls.
+     * instead of silently inserting into buckets the relay never polls. {@code tracePropagator} is
+     * empty unless {@link #tandemTracePropagator} was contributed, in which case {@link JdbcOutboxRepository}
+     * falls back to {@link TracePropagator#NOOP} — trace/correlation capture stays off (HLD-tracing.md §7).
      */
     @Bean
     @ConditionalOnMissingBean
-    OutboxRepository tandemOutboxRepository(DataSource dataSource, TandemOutboxProperties properties) {
+    OutboxRepository tandemOutboxRepository(DataSource dataSource, TandemOutboxProperties properties,
+            ObjectProvider<TracePropagator> tracePropagator) {
         BucketCountGuard.check(dataSource, properties.bucketCount());
         // Wrap in a transaction-aware proxy so the insert joins the application's Spring transaction —
         // the JdbcOutboxRepository takes whatever connection the DataSource hands it, and this proxy hands
         // it the one bound to the active transaction. Without it, the insert would run on a separate
         // autocommitted connection and lose atomicity with the business state change.
-        return new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), properties.bucketCount());
+        return new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), properties.bucketCount(),
+                tracePropagator.getIfAvailable(() -> TracePropagator.NOOP));
+    }
+
+    /**
+     * Correlation-id-only trace capture (HLD-tracing.md §9), contributed only when
+     * {@code tandem.tracing.enabled=true} — never from a tracing adapter's mere classpath presence, so
+     * an unrelated dependency cannot silently turn this on. MDC is assumed present (Spring Boot always
+     * ships SLF4J); the real distributed trace context (Micrometer Tracing bridge) is wired separately.
+     */
+    @Bean
+    @ConditionalOnMissingBean(TracePropagator.class)
+    @ConditionalOnProperty(prefix = "tandem.tracing", name = "enabled", havingValue = "true")
+    TracePropagator tandemTracePropagator(TandemTracingProperties properties) {
+        return new MdcCorrelationTracePropagator(properties.correlationIdMdcKey());
     }
 
     /**

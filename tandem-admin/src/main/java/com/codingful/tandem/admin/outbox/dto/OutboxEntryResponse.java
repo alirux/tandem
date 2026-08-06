@@ -40,6 +40,7 @@ public record OutboxEntryResponse(
         String lockedBy,
         Instant lockedUntil,
         Instant createdAt,
+        String correlationId,
         Map<String, String> headers,
         Object payload) {
 
@@ -59,6 +60,7 @@ public record OutboxEntryResponse(
                 view.lockedBy(),
                 view.lockedUntil(),
                 view.createdAt(),
+                view.correlationId(),
                 null,
                 null);
     }
@@ -79,6 +81,7 @@ public record OutboxEntryResponse(
                 detail.lockedBy(),
                 detail.lockedUntil(),
                 detail.createdAt(),
+                detail.correlationId(),
                 detail.headers(),
                 renderPayload(detail.payload(), objectMapper));
     }

@@ -733,7 +733,7 @@ Design highlights (full design: [HLD-tracing.md](HLD-tracing.md)):
   in `tandem-spring-producer`) and OpenTelemetry (optional `tandem-tracing-otel`).
 - **Off by default, zero cost when off.** Guarded capture — no context lookup, no
   allocation, nothing added to `headers` when disabled.
-- **Rich mode is per record, and only where work happened.** The optional relay-side span is
+- **Instrumented mode is per record, and only where work happened.** The optional relay-side span is
   emitted **one per outbox record**, parented to that record's own captured context — a claimed
   batch is a fan-in of unrelated traces, so no single parent for it is correct — and never for a
   poll that claimed nothing. Span attributes carry the same structural identifiers as logs, never
@@ -984,8 +984,8 @@ Tandem is positioned in the gap between a hand-rolled outbox (correct, but you b
 | ~~Spring-events tier event mapping~~ | **Resolved (Q22):** both — a published `OutboxMessage` is inserted directly, otherwise a registered `OutboxEventMapper<T>` SPI maps it; the synchronous listener is scoped to those types and fails fast without an active transaction (LLD-spring-producer §5) | |
 | ~~Lamport clock store~~ | **Resolved:** Tandem-managed `tandem_aggregate_clock` table (clean boundary — Tandem never writes domain tables); atomic upsert serializes the per-aggregate advance (§9.3) | |
 | ~~Spring Boot dual-version packaging~~ | **Resolved:** a **single artifact per module** on the common 6.x/7.x API, Spring `compileOnly`, validated by an in-build Boot 3.x/4.x test matrix; `-boot3`/`-boot4` split kept only as a fallback if a real incompatibility surfaces (§10.1, LLD-spring-config §1.1/§1.2) | |
-| Trace propagation enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is on the classpath | Only relevant when trace/correlation propagation is used (§7.1) |
-| Correlation-id source | MDC key (default) vs. explicit `TandemContext` API vs. both | |
+| ~~Trace propagation enablement~~ | **Resolved:** explicit flag (`tandem.tracing.enabled`, default `false`); never auto-enabled by a tracing adapter's mere classpath presence (HLD-tracing.md §9) | |
+| ~~Correlation-id source~~ | **Resolved:** both — an MDC key (default) and an explicit `TandemContext` API (HLD-tracing.md §9) | |
 | Admin API spec ↔ code binding | Generate server stubs from the OpenAPI at build time vs. hand-write + validate against the spec in CI | API-first either way (§7.2) |
 | Admin API discard semantics | Hard skip (ordering break, acknowledged) vs. discard + tombstone/compensation | Only relevant when the Admin API is enabled |
 | ~~Producer/relay packaging (split topology)~~ | **Resolved:** split by role into `tandem-spring-producer` / `tandem-spring-relay`, no all-in-one aggregator — structural (the producer cannot pull Kafka transitively) rather than convention-based (a single module with an optional Kafka dep + conditional relay autoconfig would rest the invariant on every conditional staying correct) (§3.2, LLD-spring-config §1) | |

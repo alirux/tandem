@@ -126,6 +126,37 @@ class InMemoryOutboxQueryTest {
     }
 
     @Test
+    void GIVEN_one_business_operation_spanning_several_aggregates_WHEN_searched_by_its_correlation_id_THEN_every_row_it_produced_is_returned() {
+        insertWithCorrelationId("order-1", "incident-corr");
+        insertWithCorrelationId("shipment-9", "incident-corr");
+        insertWithCorrelationId("order-2", "unrelated-corr");
+
+        List<OutboxRowView> rows =
+                outbox.search(OutboxSearchCriteria.builder().correlationId("incident-corr").build());
+
+        assertThat(rows).extracting(OutboxRowView::aggregateId)
+                .containsExactly(AggregateId.of("order-1"), AggregateId.of("shipment-9"));
+        assertThat(rows).extracting(OutboxRowView::correlationId).containsOnly("incident-corr");
+    }
+
+    @Test
+    void GIVEN_a_row_written_without_a_correlation_id_WHEN_searched_THEN_its_view_carries_none() {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-no-corr").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+
+        List<OutboxRowView> rows = outbox.search(
+                OutboxSearchCriteria.builder().aggregateId(AggregateId.of("order-no-corr")).build());
+
+        assertThat(rows).singleElement().extracting(OutboxRowView::correlationId).isNull();
+    }
+
+    private void insertWithCorrelationId(String aggregateId, String correlationId) {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId(aggregateId).aggregateType("Order").seq(1).payload("{}".getBytes())
+                .header("correlation-id", correlationId).build());
+    }
+
+    @Test
     void GIVEN_a_created_time_range_WHEN_searched_THEN_only_rows_inside_the_range_are_returned() {
         clock.set(Instant.parse("2020-01-01T00:00:00Z"));
         insert("order-1", "Order", null, 1);   // outside the range below

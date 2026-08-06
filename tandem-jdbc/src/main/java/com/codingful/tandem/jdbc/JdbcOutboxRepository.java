@@ -6,6 +6,7 @@ import com.codingful.tandem.core.TandemHeaders;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
 import com.codingful.tandem.core.exception.OutboxInsertException;
 import com.codingful.tandem.core.port.OutboxRepository;
+import com.codingful.tandem.core.port.TracePropagator;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -40,14 +41,24 @@ import javax.sql.DataSource;
 public final class JdbcOutboxRepository implements OutboxRepository {
 
     private static final String INSERT_SQL =
-            "INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, seq, payload, headers) "
-                    + "VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb))";
+            "INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, seq, payload, headers, correlation_id) "
+                    + "VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)";
 
     /** PostgreSQL {@code unique_violation} SQLSTATE (LLD-jdbc §2 → DuplicateSeqException). */
     private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
 
+    /**
+     * Width of the {@code correlation_id} column, which the value is truncated to at insert (LLD-jdbc §2).
+     * The correlation id normally originates <b>outside</b> this application — an inbound HTTP header, a
+     * consumed message — so it is untrusted input; an unbounded value would otherwise fail the insert (and
+     * with it the caller's business transaction) or bloat the index it exists to serve. The header copy in
+     * {@code headers} is left at full length: it is what reaches Kafka, and it is not indexed.
+     */
+    public static final int MAX_CORRELATION_ID_LENGTH = 255;
+
     private final DataSource dataSource;
     private final int bucketCount;
+    private final TracePropagator tracePropagator;
 
     /**
      * <p>This constructor does <b>no</b> I/O: the {@code dataSource} may be a transaction-aware proxy
@@ -55,6 +66,9 @@ public final class JdbcOutboxRepository implements OutboxRepository {
      * joins the caller's {@code @Transactional}), so it cannot be queried at construction time. The
      * bucket-count guard (LLD-bucket-count-guard) is therefore an explicit assembly step run against a
      * plain {@code DataSource} — {@link BucketCountGuard} — not something this constructor performs.
+     *
+     * <p>Delegates to the 3-arg constructor with {@link TracePropagator#NOOP} — trace/correlation
+     * capture disabled (HLD-tracing.md §7).
      *
      * @param dataSource  the write-side connection source; the insert joins whatever transaction the
      *                     returned {@link Connection} is already part of
@@ -64,8 +78,24 @@ public final class JdbcOutboxRepository implements OutboxRepository {
      *                                  {@link RelayConfig#MAX_BUCKET_COUNT} (the {@code SMALLINT} column bound)
      */
     public JdbcOutboxRepository(DataSource dataSource, int bucketCount) {
+        this(dataSource, bucketCount, TracePropagator.NOOP);
+    }
+
+    /**
+     * @param dataSource      the write-side connection source; see {@link #JdbcOutboxRepository(DataSource, int)}
+     * @param bucketCount     must match the relay's {@link RelayConfig#bucketCount()}; see
+     *                        {@link #JdbcOutboxRepository(DataSource, int)}
+     * @param tracePropagator captures trace/correlation headers at insert time when
+     *                        {@link TracePropagator#isEnabled()} (HLD-tracing.md §5); real adapters ship
+     *                        in {@code tandem-spring-producer} / {@code tandem-tracing-otel}
+     * @throws IllegalArgumentException if {@code bucketCount <= 0} or above
+     *                                  {@link RelayConfig#MAX_BUCKET_COUNT} (the {@code SMALLINT} column bound)
+     * @throws NullPointerException     if {@code dataSource} or {@code tracePropagator} is {@code null}
+     */
+    public JdbcOutboxRepository(DataSource dataSource, int bucketCount, TracePropagator tracePropagator) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
         this.bucketCount = RelayConfig.boundedBucketCount(bucketCount);
+        this.tracePropagator = Objects.requireNonNull(tracePropagator, "tracePropagator");
     }
 
     @Override
@@ -111,18 +141,43 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         ps.setInt(4, BucketHash.bucketFor(message.aggregateId().value(), bucketCount));
         ps.setLong(5, message.seq());
         ps.setString(6, new String(message.payload(), StandardCharsets.UTF_8));
-        ps.setString(7, MiniJson.writeObject(effectiveHeaders(message)));
+        Map<String, String> headers = effectiveHeaders(message);
+        ps.setString(7, MiniJson.writeObject(headers));
+        String correlationId = truncate(headers.get(TandemHeaders.CORRELATION_ID));
+        if (correlationId == null) {
+            ps.setNull(8, Types.VARCHAR);
+        } else {
+            ps.setString(8, correlationId);
+        }
+    }
+
+    /** Bounds an untrusted, externally-originated correlation id to the column width; {@code null} stays null. */
+    private static String truncate(String correlationId) {
+        return correlationId == null || correlationId.length() <= MAX_CORRELATION_ID_LENGTH
+                ? correlationId
+                : correlationId.substring(0, MAX_CORRELATION_ID_LENGTH);
     }
 
     /**
      * The headers actually stored: the message headers with {@code contentType} folded into
-     * {@code headers["content-type"]}. The typed field is the single source of truth — it overrides
-     * any {@code content-type} already in the map (LLD-jdbc §2).
+     * {@code headers["content-type"]} (the typed field is the single source of truth — it overrides
+     * any {@code content-type} already in the map), plus any trace/correlation context captured from
+     * {@link #tracePropagator} for a key not already present — an explicit header the caller set is
+     * never overwritten by captured context (LLD-jdbc §2, HLD-tracing.md §5).
+     *
+     * <p>Also the source of the {@code correlation_id} column: whatever ends up under
+     * {@code headers["correlation-id"]} here is copied into it, so the column can never disagree with
+     * the header that actually reaches Kafka.
      */
-    private static Map<String, String> effectiveHeaders(OutboxMessage message) {
+    private Map<String, String> effectiveHeaders(OutboxMessage message) {
         Map<String, String> headers = new LinkedHashMap<>(message.headers());
         if (message.contentType() != null) {
             headers.put(TandemHeaders.CONTENT_TYPE, message.contentType());
+        }
+        if (tracePropagator.isEnabled()) {
+            for (Map.Entry<String, String> captured : tracePropagator.capture().entrySet()) {
+                headers.putIfAbsent(captured.getKey(), captured.getValue());
+            }
         }
         return headers;
     }

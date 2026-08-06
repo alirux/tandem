@@ -80,6 +80,10 @@ public record OutboxRowDetail(OutboxRowView view, byte[] payload, Map<String, St
         return view.createdAt();
     }
 
+    public String correlationId() {
+        return view.correlationId();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {

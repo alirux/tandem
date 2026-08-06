@@ -36,7 +36,8 @@ import javax.sql.DataSource;
 public final class JdbcOutboxQuery implements OutboxQuery {
 
     private static final String VIEW_COLUMNS = "id, aggregate_id, aggregate_type, type, seq, status, "
-            + "attempts, last_error, discard_reason, next_attempt_at, locked_by, locked_until, created_at";
+            + "attempts, last_error, discard_reason, next_attempt_at, locked_by, locked_until, created_at, "
+            + "correlation_id";
 
     private final DataSource dataSource;
 
@@ -96,6 +97,12 @@ public final class JdbcOutboxQuery implements OutboxQuery {
         if (criteria.createdTo() != null) {
             predicates.add("created_at <= ?");
             params.add(OffsetDateTime.ofInstant(criteria.createdTo(), ZoneOffset.UTC));
+        }
+        if (criteria.correlationId() != null) {
+            // Exact match on the indexed column (idx_tandem_outbox_correlation) — never a LIKE/prefix
+            // scan: this is the incident-time lookup and must stay index-backed on a large outbox.
+            predicates.add("correlation_id = ?");
+            params.add(criteria.correlationId());
         }
 
         StringBuilder sql = new StringBuilder("SELECT ").append(VIEW_COLUMNS).append(" FROM tandem_outbox");
@@ -158,7 +165,8 @@ public final class JdbcOutboxQuery implements OutboxQuery {
                 instantOrNull(rs, "next_attempt_at"),
                 rs.getString("locked_by"),
                 instantOrNull(rs, "locked_until"),
-                instantOrNull(rs, "created_at"));
+                instantOrNull(rs, "created_at"),
+                rs.getString("correlation_id"));
     }
 
     private static Instant instantOrNull(ResultSet rs, String column) throws SQLException {

@@ -35,6 +35,7 @@ CREATE TABLE tandem_outbox (
     next_attempt_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
     discard_reason  TEXT,                    -- operator-supplied reason when the Admin API discards a FAILED row (HLD-admin-api §6.1); distinct from last_error, which stays the original delivery failure
+    correlation_id  VARCHAR(255),            -- searchable copy of headers['correlation-id'] (HLD-tracing §4); headers stay the source of truth for what reaches Kafka. Bounded length: the value typically arrives from OUTSIDE this application (an inbound HTTP header, a consumed message), so it is untrusted input and must not widen an index without limit
 
     UNIQUE (aggregate_id, seq)               -- per-aggregate ordering safety net (HLD §4.2)
 );
@@ -88,6 +89,18 @@ CREATE INDEX idx_tandem_outbox_inflight
 CREATE INDEX idx_tandem_outbox_failed
     ON tandem_outbox (aggregate_id, id)
     WHERE status = 3;
+
+-- Supports the Admin API's search by correlation id (HLD-admin-api §4) — the incident-time lookup, where
+-- the correlation id is often the ONLY identifier an operator has (it comes from a log line, an alert or a
+-- customer ticket; the aggregate id is not known yet). A plain, non-partial B-tree on a real column rather
+-- than an expression/GIN index over `headers`: portable to MySQL 8 unchanged, where expression and partial
+-- indexes are unavailable and would need a generated-column workaround (LLD-jdbc §5). Non-unique by nature —
+-- one correlation id spans many rows, typically across several aggregates (HLD-tracing §2). NULL for every
+-- row written with tracing off, and Postgres B-trees do index NULLs, so `(correlation_id) WHERE
+-- correlation_id IS NOT NULL` would be smaller — kept non-partial deliberately, for the same MySQL
+-- portability reason.
+CREATE INDEX idx_tandem_outbox_correlation
+    ON tandem_outbox (correlation_id);
 
 -- ---------------------------------------------------------------------------
 -- LEASE coordination mode only (multi-instance)

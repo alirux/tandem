@@ -57,11 +57,21 @@ and governance rules (naming, descriptions, examples) that Specmatic does not en
 
 | Area | Operations |
 |---|---|
-| **Outbox — read** | health summary (counts per status, lag count/age); search messages (by status / aggregate / type / time); get one message with full payload + headers |
+| **Outbox — read** | health summary (counts per status, lag count/age); search messages (by status / aggregate / type / time / **correlation id**); get one message with full payload + headers |
 | **Outbox — act** | replay one message; bulk replay by criteria (with `dryRun` preview); discard a FAILED message (explicit ordering-break acknowledgement required) |
 | **Relay** | status (state, bucket coverage, worker count); pause / resume (whole relay or a single bucket); **per-bucket ownership + lag**, listed or one at a time (spot uncovered/hot buckets); **active workers**; **force-release a bucket** for reassignment (zombie owner recovery) |
 
 Replay builds on the per-aggregate `ReplayService` (HLD §8).
+
+**Search by correlation id is the incident-time entry point**, not just one filter among the
+others. The correlation id typically originates *outside* the application (an inbound request
+header, a consumed message) and is what an operator actually holds when an investigation starts —
+from a log line, an alert, or a customer ticket — whereas the aggregate id the other filters are
+built around is usually not known yet. Since production database access is normally forbidden (§1),
+this API is the only place the question can be asked at all. It is backed by its own indexed column
+rather than a scan over the `headers` JSONB (HLD-tracing §4.1), and it returns **many** rows —
+one correlation id groups the whole business operation, typically across several aggregates — so it
+is paginated like any other search and usually combined with `status`.
 
 The Admin API exposes no attempt-level forensic history (a timeline of every delivery attempt
 per message). It is **designed but not built**, and its two operations were removed from this

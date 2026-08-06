@@ -1,7 +1,7 @@
 # Tandem — Trace & Correlation Propagation (Design Note)
 
-**Version:** 1.0  
-**Status:** Draft  
+**Version:** 1.1  
+**Status:** Reviewed — design fully decided, not yet implemented  
 **Companion to:** HLD §7.1 (Trace & Correlation Propagation)
 
 Propagate distributed-tracing and correlation identifiers across the asynchronous outbox
@@ -62,16 +62,15 @@ TracePropagator.capture()  ──▶ { traceparent, tracestate, correlation-id }
 
 The decisive simplification: **the relay already publishes the outbox `headers` as Kafka
 headers**. So once the trace context is captured into `headers` at produce time, downstream
-propagation is *already done* — no relay change needed for basic propagation. And because
+propagation is *already done* — no relay change needed for propagation mode. And because
 the stored value is the opaque W3C `traceparent` string, **`tandem-core` and the relay never
 need a tracing library** to carry it; they just move bytes.
 
 ---
 
-## 4. Storage — reuse the existing `headers` column
+## 4. Storage — the `headers` column, plus one indexed column for the correlation id
 
-No schema change. The captured context is merged into the outbox `headers` JSONB under
-standard keys:
+The captured context is merged into the outbox `headers` JSONB under standard keys:
 
 | Key | Source |
 |---|---|
@@ -80,7 +79,50 @@ standard keys:
 | `correlation-id` | Configurable; from MDC key (default) or an explicit API |
 
 Standard key names mean **automatic interop**: any OpenTelemetry-instrumented Kafka
-consumer continues the trace with zero Tandem-specific knowledge.
+consumer continues the trace with zero Tandem-specific knowledge. **`headers` remains the
+source of truth for what reaches Kafka** — the relay copies it verbatim (§3), so nothing
+downstream depends on anything else.
+
+### 4.1 Why the correlation id also gets its own column
+
+`tandem_outbox.correlation_id` (`VARCHAR(255)`, nullable, indexed) is written at the same
+chokepoint, copied from whatever ends up in `headers['correlation-id']` — so the two can
+never disagree. It is **not** a second source of truth; it exists to make one specific
+question answerable:
+
+- **The correlation id is what an operator actually has during an incident.** It arrives
+  from *outside* the application — an inbound request header, a consumed message — and is
+  what appears in a log line, an alert, or a customer ticket. The aggregate id, which the
+  existing filters are built around, is typically *not* known when an investigation starts.
+- **The Admin API is the only sanctioned way to reach outbox state in production**
+  (HLD-admin-api §1: production database access is normally forbidden, and replay/discard
+  need authorization and an audit trail). So "search by correlation id" has to be an API
+  capability, or it does not exist at all.
+- **A capture nobody can query does not keep this note's promise.** §1 justifies the whole
+  feature by the outbox breaking the causal link between write and publish; restoring the
+  link but leaving it unsearchable during an incident restores it only in principle.
+
+Why a column rather than an index over the JSONB:
+
+- **Portability.** A B-tree on a real column ports to MySQL 8 unchanged. An expression index
+  over `headers->>'correlation-id'` does not: MySQL has neither expression nor partial
+  indexes and would need a generated-column workaround (LLD-jdbc §5) — i.e. the column,
+  arrived at by a longer route and only on one engine.
+- **The list view never reads `headers`.** `OutboxRowView` deliberately does not select the
+  JSONB columns (HLD-admin-api §4); a searchable copy in its own column is what lets a search
+  result *show* the correlation id without reading the payload/headers of every row.
+- **Bounded, because the value is untrusted.** Coming from outside, it is truncated to the
+  column width at insert rather than being allowed to fail the caller's business transaction
+  or widen the index without limit. The header copy keeps the full value — it is not indexed.
+
+The relationship is **one correlation id to many rows** (§2: correlation *groups* related
+work), typically spanning several aggregates and possibly several services sharing the outbox.
+So the search returns a page like any other, is normally combined with `status`, and its
+results carry **no ordering guarantee relative to each other** — Tandem orders per aggregate,
+and these rows generally belong to different ones.
+
+Additive and compatible both ways (HLD §1.4): the column is nullable, an older writer simply
+leaves it `NULL`, and an older reader never selects it.
 
 ---
 
@@ -88,33 +130,49 @@ consumer continues the trace with zero Tandem-specific knowledge.
 
 - **Port:** `TracePropagator` (in `tandem-core`): `Map<String,String> capture()` returns the
   context headers; default no-op.
-- **Default adapter:** `NoOpTracePropagator` — captures nothing. Wired by default.
+- **Default adapter:** `TracePropagator.NOOP` — captures nothing. Wired by default.
 - **Capture chokepoint:** `JdbcOutboxRepository.insert(...)` calls `capture()` and merges the
   result into `headers` — so **all four usage tiers** (plain, template, annotation, Spring
-  events) get propagation transparently, with no per-tier code.
-- **Opt-in adapters:**
-  - **Spring / Micrometer Tracing** (in `tandem-spring-producer`): auto-wired when Spring Boot's
-    tracing is on the classpath — covers the Spring majority with no extra module. Bridges
-    to whatever backend the app uses (OTel or Brave).
+  events) get propagation transparently, with no per-tier code. **Implemented.**
+- **Opt-in capture adapters:**
+  - **MDC correlation id** (`MdcCorrelationTracePropagator`, in `tandem-spring-producer`):
+    reads a configured MDC key, falling back to the explicit `TandemContext` API — no
+    tracing library needed. Gated by `tandem.tracing.enabled` (explicit only, §9).
+    **Implemented.**
+  - **Spring / Micrometer Tracing**: the real distributed-trace-context bridge (`traceparent`/
+    `tracestate`), covering the Spring majority with no extra module. **Not yet built** —
+    needs its own dependency/version research (no `micrometer-tracing` coordinate exists in
+    the project yet).
   - **OpenTelemetry** (optional `tandem-tracing-otel` module): for non-Spring users; uses
-    the OTel `TextMapPropagator` to capture `Context.current()`.
+    the OTel `TextMapPropagator` to capture `Context.current()`. **Not yet built.**
+- **Relay-side span-emission port:** `TandemSpanRecorder` (in `tandem-core`): `startPublishSpan(...)`
+  returns a `Span` handle ended from the dispatch completion callback (§6.2), never via a
+  thread-local scope. Default `TandemSpanRecorder.NOOP`. Deliberately explicit parameters
+  (row id, aggregate type/id, attempts, topic, `traceparent`/`tracestate`, `correlation-id`), not a
+  generic header map, so an adapter is structurally unable to attach a payload or an arbitrary
+  header value to a span (§6.4). Wired into `KafkaRelay.dispatch(...)` (start after a successful
+  encode, end in the producer's send callback). Real adapters ship in `tandem-spring-relay` /
+  `tandem-tracing-otel` — **not yet built**, same dependency gap as the Micrometer Tracing bridge
+  above.
+- **Search side:** the captured `correlation-id` is also stored in its own indexed column and
+  exposed as an Admin API search filter — §4.1, the incident-time lookup.
 - **Correlation id** needs no tracing library: read from an MDC key (default) or set via an
   explicit Tandem API.
 
 ---
 
-## 6. Basic vs rich mode
+## 6. Propagation vs instrumented mode
 
-- **Basic (default when enabled).** Capture context into `headers`; the relay propagates it
-  as-is; consumers continue the trace via the standard `traceparent`. Minimal, standard,
+- **Propagation (default when enabled).** Capture context into `headers`; the relay propagates
+  it as-is; consumers continue the trace via the standard `traceparent`. Minimal, standard,
   dependency-free downstream.
-- **Rich (optional).** The relay additionally emits a short **`tandem.relay.publish`** span
-  linked to the captured context, timestamped at the actual send — so the trace shows the
+- **Instrumented (optional).** The relay additionally emits a short **`tandem.relay.publish`**
+  span linked to the captured context, timestamped at the actual send — so the trace shows the
   outbox dwell + relay latency + retries as a real span. Requires a tracing adapter on the
   relay side; off unless asked for.
 
-Four rules constrain rich mode. Each one, broken, produces traces that *look* plausible and
-are wrong.
+Four rules constrain instrumented mode. Each one, broken, produces traces that *look* plausible
+and are wrong.
 
 ### 6.1 One span per record — a batch span has no correct parent
 
@@ -163,10 +221,23 @@ own loop — is the application's to exclude, and the documentation must say so.
 ### 6.4 Span attributes carry identifiers, never payloads
 
 Attributes are limited to the structural identifiers already deemed safe to log — `aggregate_id`,
-`aggregate_type`, row id, bucket, topic/partition, attempt number, status. **Never** the payload,
-header *values*, `last_error` bodies, or bound SQL parameters. The rule and its reasoning are the
-same as for logging ([HLD-logging.md](HLD-logging.md)); a span exported to a tracing backend is at
-least as widely readable as a log line, so it gets no exemption.
+`aggregate_type`, row id, bucket, topic/partition, attempt number, status, and the
+**`correlation-id`**. **Never** the payload, other header *values*, `last_error` bodies, or bound
+SQL parameters. The rule and its reasoning are the same as for logging
+([HLD-logging.md](HLD-logging.md)); a span exported to a tracing backend is at least as widely
+readable as a log line, so it gets no exemption.
+
+The `correlation-id` is on that list for the same reason logging already allows it — it is an
+opaque identifier, not business data — and it earns its place by being the **join key between the
+two tools**: an investigation that starts in the tracing backend (a slow or failed publish span)
+crosses to the Admin API's search by that same id, and one that starts from a log line or a ticket
+crosses the other way. Without it the two views can only be joined through the aggregate id, which
+the incident may not yet know (§4.1).
+
+Note the asymmetry this does *not* remove: a span reaches the tracing backend only in instrumented
+mode and only for the **sampled** fraction (§9), whereas the `correlation_id` column is written for
+**every** row whenever propagation is on. The tracing backend is therefore a complement to the
+Admin API search, never a replacement for it.
 
 ---
 
@@ -194,33 +265,36 @@ into MDC, so application logs on the consumer carry the originating ids.
 
 ---
 
-## 9. Open decisions
+## 9. Decisions
 
-**Sampling is frozen at insert time, for the life of the row.** The sampling decision travels in
-the `traceparent`'s trace-flags, so capturing the header also captures the verdict. A row written
-while its trace was sampled out stays sampled out — when the relay publishes it seconds later,
-when a retry publishes it an hour later, and when a replay publishes it next year. That inheritance
-is what keeps a trace coherent end to end, and it has a consequence: **the outbox dwell and relay
-behaviour are observable in traces only for the sampled fraction**, so tracing cannot be the primary
-evidence for "is the relay keeping up" — that is the metrics port's job, which samples nothing
-(HLD §7). Open: whether the relay may override the inherited decision for rows that failed or aged
-past a threshold, so the interesting minority is always traced.
+**Sampling is frozen at insert time, for the life of the row — no override.** The sampling
+decision travels in the `traceparent`'s trace-flags, so capturing the header also captures the
+verdict. A row written while its trace was sampled out stays sampled out — when the relay
+publishes it seconds later, when a retry publishes it an hour later, and when a replay publishes
+it next year. That inheritance is what keeps a trace coherent end to end, and it has a
+consequence: **the outbox dwell and relay behaviour are observable in traces only for the
+sampled fraction**, so tracing cannot be the primary evidence for "is the relay keeping up" —
+that is the metrics port's job, which samples nothing (HLD §7). The relay never force-samples
+failed or aged rows: if the domain-side span was never exported under a head-sampling decision,
+flipping the trace-flag later does not resurrect it — it only produces an orphan relay span with
+no root in the backend, the same failure mode the replay decision below rules out. Visibility
+into failed/aged rows stays the metrics port's job.
 
-**Replay must not resurrect the original trace as a live parent.** A replayed row still carries
-the `traceparent` of the business transaction that produced it, possibly long expired: making the
-republish a child of it would append spans to a trace whose root has aged out of the backend,
-producing an orphan fragment dated in the present under an identifier from the past — and would
-mix a deliberate operator action into the trace of an unrelated user request. The likely answer is
-that replay opens a **new** trace with a **span link** to the captured context, keeping the original
-ids as attributes so the connection stays queryable. The choice also governs what the Admin API's
-replay endpoint reports back.
+**Replay opens a new trace with a span link to the original context — never a live parent.** A
+replayed row still carries the `traceparent` of the business transaction that produced it,
+possibly long expired: making the republish a child of it would append spans to a trace whose
+root has aged out of the backend, producing an orphan fragment dated in the present under an
+identifier from the past — and would mix a deliberate operator action into the trace of an
+unrelated user request. Replay instead starts a **new** trace with a **span link** to the
+captured context, keeping the original ids as attributes so the connection stays queryable. The
+Admin API's replay endpoint reports the new trace id, with the original kept as an attribute.
 
-| Area | Options |
+| Area | Decision |
 |---|---|
-| Enablement | Explicit flag (`tandem.tracing.enabled`) vs. auto-enable when a tracing adapter is detected on the classpath | 
-| Correlation-id source | MDC key (default, e.g. `correlationId`) vs. explicit `TandemContext` API vs. both |
-| Relay publish span | Off by default (basic mode) vs. on (rich mode) when a relay-side tracing adapter is present |
-| OTel adapter module | Dedicated `tandem-tracing-otel` (preferred for non-Spring) vs. fold capture into existing modules |
-| Sampling | Inherit the captured decision unconditionally vs. let the relay force-sample failed/aged rows |
-| Replay semantics | New trace + span link to the original (preferred) vs. reuse the captured context as parent vs. no trace at all |
-| Verification | Assert span structure in tests only vs. also a runnable demo through a real tracing backend, the way the metrics are demonstrated (LLD-benchmark.md §6.3) |
+| Enablement | Explicit flag (`tandem.tracing.enabled`, default `false`) — never auto-enabled from a tracing adapter's mere presence on the classpath. A dependency pulled in transitively for an unrelated reason must not silently start capturing context and adding headers; opt-in means an explicit action. |
+| Correlation-id source | Both: an MDC key (default, e.g. `correlationId`) for zero-code propagation where one is already populated, and an explicit `TandemContext` API for call sites with no active MDC (batch jobs, Kafka listeners). |
+| Relay publish span | Off by default (propagation mode); instrumented mode requires its own explicit flag, for the same reason as enablement — the mere presence of a relay-side tracing adapter must not auto-enable span emission. |
+| OTel adapter module | Dedicated `tandem-tracing-otel`, for non-Spring users — same pattern as `tandem-micrometer`/`tandem-kafka`: an optional dependency stays isolated in its own module, never folded into one a client already depends on. |
+| Sampling | Inherited unconditionally; no relay override (see above). |
+| Replay semantics | New trace + span link to the original (see above). |
+| Verification | Both: assert span structure in tests, and a runnable demo through a real tracing backend (Tempo + Grafana), mirroring `metricsDashboardDemo` (LLD-benchmark.md §6.3, backlog item 5). |

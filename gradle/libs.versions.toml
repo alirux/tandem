@@ -65,6 +65,11 @@ micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "mic
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+# Test-only, tandem-spring-producer: a working MDCAdapter (slf4j-simple's is NOPMDCAdapter — a true
+# no-op, verified empirically) is needed to test MDC-based correlation-id capture (HLD-tracing.md §9).
+# No version of its own: managed by the already-imported Spring Boot BOM, matching every other
+# Spring-line coordinate below.
+logback-classic = { module = "ch.qos.logback:logback-classic" }
 
 # Spring: the BOM aligns every module version; the individual coordinates carry no version of their own.
 # spring-boot-dependencies-v4 is the same BOM at the 4.x line, used only by the dual-generation test suite.

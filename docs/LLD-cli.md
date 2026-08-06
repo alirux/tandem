@@ -135,7 +135,7 @@ the table:
 | `operationId` | Command |
 |---|---|
 | `getOutboxSummary` | `tandem-cli outbox summary [--watch] [--interval <dur>]` |
-| `searchOutboxMessages` | `tandem-cli outbox search [--status] [--aggregate-id] [--aggregate-type] [--type] [--created-from] [--created-to] [--limit] [--cursor]` |
+| `searchOutboxMessages` | `tandem-cli outbox search [--status] [--aggregate-id] [--aggregate-type] [--type] [--created-from] [--created-to] [--correlation-id] [--limit] [--cursor]` |
 | `getOutboxMessage` | `tandem-cli outbox get <id>` |
 | `replayMessage` | `tandem-cli outbox replay <id>` |
 | `discardMessage` | `tandem-cli outbox discard <id> --reason <text> [--yes]` |

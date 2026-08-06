@@ -80,7 +80,7 @@ func countValue(n *int64) int64 {
 }
 
 func newOutboxSearchCmd() *cobra.Command {
-	var status, aggregateID, aggregateType, eventType, createdFrom, createdTo, cursor string
+	var status, aggregateID, aggregateType, eventType, createdFrom, createdTo, correlationID, cursor string
 	var limit int
 
 	cmd := &cobra.Command{
@@ -102,6 +102,9 @@ func newOutboxSearchCmd() *cobra.Command {
 			}
 			if eventType != "" {
 				params.Type = &eventType
+			}
+			if correlationID != "" {
+				params.CorrelationId = &correlationID
 			}
 			if cursor != "" {
 				params.Cursor = &cursor
@@ -152,6 +155,7 @@ func newOutboxSearchCmd() *cobra.Command {
 	f.StringVar(&eventType, "type", "", "filter by CloudEvents event type")
 	f.StringVar(&createdFrom, "created-from", "", "filter: created at or after (RFC3339)")
 	f.StringVar(&createdTo, "created-to", "", "filter: created at or before (RFC3339)")
+	f.StringVar(&correlationID, "correlation-id", "", "filter by correlation id (matches every message of one business operation)")
 	f.IntVar(&limit, "limit", 0, "page size, 1-500 (default 50 server-side)")
 	f.StringVar(&cursor, "cursor", "", "opaque cursor from a previous page")
 	return cmd
@@ -196,6 +200,9 @@ func entryPairs(_ *App, e client.OutboxEntry) [][2]string {
 	}
 	if e.Type != nil {
 		pairs = append(pairs, [2]string{"type", *e.Type})
+	}
+	if e.CorrelationId != nil {
+		pairs = append(pairs, [2]string{"correlationId", *e.CorrelationId})
 	}
 	if e.LastError != nil {
 		pairs = append(pairs, [2]string{"lastError", *e.LastError})
