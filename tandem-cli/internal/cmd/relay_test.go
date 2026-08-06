@@ -26,13 +26,14 @@ func TestRelayStatus_humanRendersState(t *testing.T) {
 	}
 }
 
-func TestRelayStatusPairs_colorsRunningGreenAndPausedYellow(t *testing.T) {
+func TestRelayStatusPairs_colorsRunningGreenPausedYellowDownRed(t *testing.T) {
 	cases := []struct {
 		state client.RelayStatusState
 		color output.Color
 	}{
 		{client.RUNNING, output.Green},
 		{client.PAUSED, output.Yellow},
+		{client.DOWN, output.Red},
 	}
 	for _, c := range cases {
 		pairs := relayStatusPairs(client.RelayStatus{State: c.state}, true)

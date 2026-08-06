@@ -43,6 +43,7 @@ public final class InMemoryRelayControl implements RelayQuery, RelayControl {
 
     private volatile RelayCoordinationMode coordinationMode = RelayCoordinationMode.SINGLE;
     private volatile boolean wholeRelayPaused;
+    private volatile boolean alive = true;
 
     /**
      * @param outbox      the real outbox collaborator this relay's buckets belong to — {@link #buckets}
@@ -77,6 +78,11 @@ public final class InMemoryRelayControl implements RelayQuery, RelayControl {
         members.put(instanceId, lastHeartbeat);
     }
 
+    /** Simulates a dead relay for {@code RelayStatus.state == DOWN} tests; true (alive) by default. */
+    public void setAlive(boolean alive) {
+        this.alive = alive;
+    }
+
     // --- RelayQuery ---
 
     @Override
@@ -87,7 +93,7 @@ public final class InMemoryRelayControl implements RelayQuery, RelayControl {
     @Override
     public RelayStatusView status() {
         if (coordinationMode == RelayCoordinationMode.SINGLE) {
-            return new RelayStatusView(wholeRelayPaused, bucketCount, 0, 0);
+            return new RelayStatusView(alive, wholeRelayPaused, bucketCount, 0, 0);
         }
         int uncovered = 0;
         for (Map.Entry<Integer, BucketLease> entry : buckets.entrySet()) {
@@ -95,7 +101,7 @@ public final class InMemoryRelayControl implements RelayQuery, RelayControl {
                 uncovered++;
             }
         }
-        return new RelayStatusView(wholeRelayPaused, bucketCount, uncovered, members.size());
+        return new RelayStatusView(alive, wholeRelayPaused, bucketCount, uncovered, members.size());
     }
 
     @Override

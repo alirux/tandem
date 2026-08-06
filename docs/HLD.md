@@ -698,13 +698,17 @@ startup even on the failure path**, before the relay aborts — so it is present
 first reading is taken when the relay starts, not one `metricsInterval` later, so a healthy
 just-started relay does not masquerade as an absent one.
 
-**Detecting an absent relay from outside the process depends on the coordination mode (§3.2).** Under
-`LEASE`, `tandem_relay_member` carries each instance's heartbeat, so an external observer — the Admin
-API, or a plain query — can see that no member is fresh and conclude the relay is gone rather than
-slow. Under `SINGLE` there is no such table: nothing in the database records that a relay was ever
-supposed to exist, so "no relay running" and "no relay ever configured" are indistinguishable from the
-data alone, and the only witness is the process that is missing. An operator running `SINGLE` must
-therefore rely on application-level liveness for that case.
+**Detecting an absent relay from outside the process no longer depends on the coordination mode
+(§3.2) — resolved via the Admin API (`docs/open-questions-lld.md` Q30, HLD-admin-api §4.1).**
+Originally, only `LEASE`'s `tandem_relay_member` gave an external observer any liveness signal:
+under `SINGLE` nothing in the database recorded that a relay was ever supposed to exist, so "no
+relay running" and "no relay ever configured" were indistinguishable from the data alone. Every
+relay instance now heartbeats a shared `tandem_meta` row on its existing maintenance cadence,
+under **both** coordination modes — `GET /relay/status` reports `state: DOWN` once that heartbeat
+goes stale, independent of the relay process being reachable at all (a standalone admin computing
+this from the database needs no in-process witness). Application-level liveness is still the
+faster, in-process signal for the local case (`WorkerPool.status()`, above) — the Admin API's
+`DOWN` is for an external observer with no other way to tell.
 
 ### 7.1 Trace & Correlation Propagation (optional, off by default)
 

@@ -329,10 +329,14 @@ public final class WorkerPool {
         }
     }
 
-    /** Refreshes the cached Admin-API pause state (HLD-admin-api §4.1). Never disturbs delivery on failure. */
+    /**
+     * Refreshes the cached Admin-API pause state and marks this instance alive for
+     * {@code RelayStatus.state == DOWN} (HLD-admin-api §4.1). Never disturbs delivery on failure.
+     */
     private void controlTick() {
         try {
             controlSource.refresh();
+            controlSource.heartbeat();
         } catch (Exception e) {
             LOG.log(Level.ERROR, "Relay control refresh failed", e);
         }

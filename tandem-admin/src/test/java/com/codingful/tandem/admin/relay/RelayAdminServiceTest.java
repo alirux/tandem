@@ -59,6 +59,24 @@ class RelayAdminServiceTest {
     }
 
     @Test
+    void GIVEN_no_relay_has_heartbeated_WHEN_status_is_read_THEN_it_reports_DOWN() {
+        control.setAlive(false);
+
+        RelayStatusResponse status = service.status();
+
+        assertThat(status.state()).isEqualTo("DOWN");
+    }
+
+    @Test
+    void GIVEN_a_relay_paused_before_going_down_WHEN_status_is_read_THEN_DOWN_takes_priority_over_PAUSED() {
+        service.pause(null, "test-user");
+
+        control.setAlive(false);
+
+        assertThat(service.status().state()).isEqualTo("DOWN");
+    }
+
+    @Test
     void GIVEN_SINGLE_coordination_WHEN_a_bucket_selector_is_used_to_pause_THEN_it_is_refused() {
         assertThatThrownBy(() -> service.pause(3, "test-user")).isInstanceOf(RelayCoordinationUnsupportedException.class);
     }

@@ -65,17 +65,21 @@ class RelayAdminIT {
     }
 
     @Test
-    void GIVEN_no_relay_has_ever_started_WHEN_status_is_requested_THEN_it_reports_RUNNING_with_zero_SINGLE_fields() throws Exception {
+    void GIVEN_no_relay_has_ever_started_WHEN_status_is_requested_THEN_it_reports_DOWN_with_zero_SINGLE_fields() throws Exception {
+        // No coordination row at all means no relay has ever heartbeated - DOWN, not a misleading
+        // RUNNING, is the whole point of this feature (HLD-admin-api §4.1).
         mockMvc.perform(get("/tandem/admin/v1/relay/status"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.state").value("RUNNING"))
+                .andExpect(jsonPath("$.state").value("DOWN"))
                 .andExpect(jsonPath("$.uncoveredBuckets").value(0))
                 .andExpect(jsonPath("$.workers").value(0))
                 .andExpect(OpenApiConformance.conformsToOpenApi());
     }
 
     @Test
-    void GIVEN_SINGLE_coordination_WHEN_the_whole_relay_is_paused_over_http_THEN_it_is_recorded_in_tandem_meta() throws Exception {
+    void GIVEN_a_running_SINGLE_relay_WHEN_the_whole_relay_is_paused_over_http_THEN_it_is_recorded_in_tandem_meta() throws Exception {
+        recordCoordination("SINGLE");   // simulates a relay that has actually started and is heartbeating
+
         mockMvc.perform(post("/tandem/admin/v1/relay/pause"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("PAUSED"))
@@ -159,6 +163,20 @@ class RelayAdminIT {
 
         mockMvc.perform(get("/tandem/admin/v1/relay/buckets"))
                 .andExpect(jsonPath("$[5].paused").value(true));
+    }
+
+    @Test
+    void GIVEN_a_relay_that_stopped_heartbeating_a_long_time_ago_WHEN_status_is_requested_over_http_THEN_it_reports_DOWN() throws Exception {
+        try (Connection conn = container.dataSource().getConnection();
+                Statement stmt = conn.createStatement()) {
+            stmt.execute("INSERT INTO tandem_meta (key, value) VALUES ('relay_heartbeat_interval_seconds', '5')");
+            stmt.execute("INSERT INTO tandem_meta (key, value, updated_at) VALUES ('coordination', 'SINGLE', now() - interval '1 hour')");
+        }
+
+        mockMvc.perform(get("/tandem/admin/v1/relay/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("DOWN"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
     }
 
     private static void recordCoordination(String mode) throws SQLException {

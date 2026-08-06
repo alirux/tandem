@@ -58,6 +58,16 @@ class RelayAdminControllerTest {
     }
 
     @Test
+    void GIVEN_no_relay_has_heartbeated_WHEN_status_is_requested_THEN_it_reports_DOWN() throws Exception {
+        control.setAlive(false);
+
+        mockMvc.perform(get("/tandem/admin/v1/relay/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("DOWN"))
+                .andExpect(OpenApiConformance.conformsToOpenApi());
+    }
+
+    @Test
     void GIVEN_no_request_body_WHEN_the_relay_is_paused_THEN_the_whole_relay_is_paused() throws Exception {
         mockMvc.perform(post("/tandem/admin/v1/relay/pause"))
                 .andExpect(status().isOk())

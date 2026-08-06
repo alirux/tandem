@@ -135,33 +135,29 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   block the aggregate (excluded from the poison-gate). *(tandem-core / jdbc / admin; HLD §5.3, HLD-admin-api)*
 - [ ] **Q25 (P2)** — **`AdminService` signatures** (1:1 with the OpenAPI `operationId`s), cursor
   pagination encoding, relay-control table schema (see Q16). *(tandem-admin; admin-api.openapi.yaml)*
-- [ ] **Q30 (P2)** — **Three admin additions around the lag gauges.** The relay reads them on a fixed
-  `metricsInterval` (default 10s, LLD-jdbc §4), which leaves an operator gaps the metrics alone
-  cannot close — hence, API-first, three additions to design **in the OpenAPI before implementing**:
-  1. **Change `metricsInterval` at runtime**, without a restart: raise the resolution while
-     investigating an incident, lower it again afterwards. Design points: it is a *relay* control like
-     pause/resume (Q16, `tandem_relay_control`), so it must reach **every** instance, not just the one
-     answering the request — the DB is the coordination point; bounds and validation on the accepted
-     value; whether it persists across restarts or reverts to the configured default.
-  2. **Take a lag reading on demand**, returning it in the response. This is the one that also covers
-     the **dead-relay** case (HLD §7 alerting): a reading computed by the admin layer querying
-     `tandem_outbox` needs no relay to be alive, so it answers precisely when the gauges have gone
-     stale. Design points: whether it also pushes the value through `TandemMetrics` (so a scrape sees
-     it) or only returns it; per-bucket breakdown (the port has no per-bucket reading — see the
-     backlog); and its cost, since `min(created_at)` is unindexed and therefore proportional to the
-     backlog.
-  3. **`RelayStatus` must be able to say "no relay is alive".** Its `state` enum is `RUNNING | PAUSED`
-     today, which cannot express the case an operator most needs the endpoint for — and which the lag
-     gauges cannot cover either, since they are emitted *by* the relay (HLD §7). Adding an enum value
-     is additive and allowed (§1.4 requires readers to tolerate unknown enum values), so this is a
-     design decision, not a breaking change. Two harder parts come with it: **who answers** when the
-     relay is down (an Admin API embedded in the relay's own process cannot), and **how the state is
-     determined**, which is not uniform across coordination modes — under `LEASE` the heartbeats in
-     `tandem_relay_member` witness liveness from the database, whereas under `SINGLE` no table records
-     that a relay exists at all, so "not running" and "never configured" are indistinguishable from
-     the data. Either accept and document that limit for `SINGLE`, or make `tandem_relay_member` no
-     longer a `LEASE`-only structure — a cost imposed on the default mode, so a Pareto decision
-     (§1.1), not an obvious win. *(tandem-admin; admin-api.openapi.yaml, HLD §3.2/§7, LLD-jdbc §3.2)*
+- [x] **Q30 (P2)** — **Three admin additions around the lag gauges.** ✅ Resolved 2026-08-05:
+  1. **Change `metricsInterval` at runtime** — **demoted to the backlog at very low priority, not
+     built.** It would require restructuring `WorkerPool`'s scheduling from a single
+     `scheduleWithFixedDelay` call to a self-rescheduling task (`ScheduledExecutorService` has no
+     API to change a pending fixed-delay task's period) — the only place in the codebase needing
+     that pattern, disproportionate to how rarely "raise resolution during an incident" would
+     actually get used. See the backlog for the demoted entry.
+  2. **Take a lag reading on demand** — **already built, nothing was needed.** `GET
+     /outbox/summary` already calls `OutboxStore.lag()` synchronously on every request
+     (`OutboxAdminService.summary()`), independent of any relay process being alive, and does not
+     push through `TandemMetrics`. The query is bounded to backlog size, not table size, via the
+     existing partial index `idx_tandem_outbox_dispatch (bucket, id) WHERE status = 0` — this
+     question's original "unindexed, proportional to backlog" framing predated that index.
+  3. **`RelayStatus` can now say "no relay is alive"** — **done.** `state` gains `DOWN`
+     (additive, §1.4). Resolved by giving `SINGLE` a lightweight heartbeat too, closing the
+     asymmetry this question described: `RelayControlSource.heartbeat()` re-touches
+     `tandem_meta.coordination.updated_at` on the same cadence `refresh()` already runs on
+     (`WorkerPool`'s `controlTick`, every `reclaimInterval`) — under both coordination modes, not
+     just `LEASE`'s `tandem_relay_member`. The relay also publishes its own heartbeat cadence once
+     at startup (`relay_heartbeat_interval_seconds`), so the admin computes staleness
+     (`> 3× that interval`) without guessing it. *(tandem-core: `RelayStatusView.alive`;
+     tandem-jdbc: `RelayControlSource.heartbeat()`, `JdbcRelayQuery.status()`; tandem-admin:
+     `RelayStatusResponse.from`; admin-api.openapi.yaml)*
 
 ## F. tandem-test
 

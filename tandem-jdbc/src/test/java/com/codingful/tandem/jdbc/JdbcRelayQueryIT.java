@@ -41,6 +41,29 @@ class JdbcRelayQueryIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_no_relay_has_ever_started_WHEN_the_status_is_read_THEN_it_is_not_alive() {
+        assertThat(query.status().alive()).isFalse();
+    }
+
+    @Test
+    void GIVEN_a_relay_heartbeated_within_the_threshold_WHEN_the_status_is_read_THEN_it_is_alive() {
+        execute("INSERT INTO tandem_meta (key, value) VALUES ('relay_heartbeat_interval_seconds', '5')",
+                "INSERT INTO tandem_meta (key, value, updated_at) VALUES ('coordination', 'SINGLE', now())");
+
+        assertThat(query.status().alive()).isTrue();
+    }
+
+    @Test
+    void GIVEN_a_relay_heartbeated_well_past_the_threshold_WHEN_the_status_is_read_THEN_it_is_not_alive() {
+        // Threshold is 3x the published interval (5s here, so 15s) - an hour-old heartbeat is well
+        // past it, not a borderline case.
+        execute("INSERT INTO tandem_meta (key, value) VALUES ('relay_heartbeat_interval_seconds', '5')",
+                "INSERT INTO tandem_meta (key, value, updated_at) VALUES ('coordination', 'SINGLE', now() - interval '1 hour')");
+
+        assertThat(query.status().alive()).isFalse();
+    }
+
+    @Test
     void GIVEN_the_relay_is_paused_WHEN_the_status_is_read_THEN_it_reports_paused() {
         execute("INSERT INTO tandem_meta (key, value) VALUES ('relay_paused', 'true')",
                 "INSERT INTO tandem_meta (key, value) VALUES ('bucket_count', '256')");

@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -29,7 +30,20 @@ import javax.sql.DataSource;
 public final class JdbcRelayQuery implements RelayQuery {
 
     private static final String META_SQL =
-            "SELECT key, value FROM tandem_meta WHERE key IN ('bucket_count', 'relay_paused', 'coordination')";
+            "SELECT key, value FROM tandem_meta"
+                    + " WHERE key IN ('bucket_count', 'relay_paused', 'coordination', 'relay_heartbeat_interval_seconds')";
+
+    private static final String COORDINATION_UPDATED_AT_SQL =
+            "SELECT updated_at FROM tandem_meta WHERE key = 'coordination'";
+
+    // Missed heartbeats tolerated before RelayStatus.state reports DOWN - a couple of slow ticks
+    // shouldn't flip it, only a relay that has genuinely stopped touching tandem_meta.
+    private static final int DOWN_THRESHOLD_MISSED_HEARTBEATS = 3;
+
+    // Assumed heartbeat cadence when relay_heartbeat_interval_seconds is absent - an old relay build
+    // that predates this feature never publishes it, so this is the best guess available; matches
+    // RelayConfig's own documented reclaimInterval default (LLD-jdbc §4).
+    private static final long DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 5;
 
     // Same predicate BucketLeaseManager's own uncoveredBuckets() uses: free/expired AND has pending work.
     private static final String UNCOVERED_COUNT_SQL =
@@ -96,10 +110,27 @@ public final class JdbcRelayQuery implements RelayQuery {
         RelayCoordinationMode mode = meta.containsKey("coordination")
                 ? RelayCoordinationMode.valueOf(meta.get("coordination"))
                 : RelayCoordinationMode.SINGLE;
+        long heartbeatIntervalSeconds = meta.containsKey("relay_heartbeat_interval_seconds")
+                ? Long.parseLong(meta.get("relay_heartbeat_interval_seconds"))
+                : DEFAULT_HEARTBEAT_INTERVAL_SECONDS;
+        boolean alive = readCoordinationUpdatedAt()
+                .map(updatedAt -> updatedAt.isAfter(Instant.now()
+                        .minus(Duration.ofSeconds(DOWN_THRESHOLD_MISSED_HEARTBEATS * heartbeatIntervalSeconds))))
+                .orElse(false);
         if (mode == RelayCoordinationMode.SINGLE) {
-            return new RelayStatusView(paused, bucketCount, 0, 0);
+            return new RelayStatusView(alive, paused, bucketCount, 0, 0);
         }
-        return new RelayStatusView(paused, bucketCount, count(UNCOVERED_COUNT_SQL), count(LIVE_WORKER_COUNT_SQL));
+        return new RelayStatusView(alive, paused, bucketCount, count(UNCOVERED_COUNT_SQL), count(LIVE_WORKER_COUNT_SQL));
+    }
+
+    private Optional<Instant> readCoordinationUpdatedAt() {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(COORDINATION_UPDATED_AT_SQL);
+                ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? Optional.ofNullable(instantOrNull(rs, "updated_at")) : Optional.empty();
+        } catch (SQLException e) {
+            throw new TandemException("coordination heartbeat query failed", e);
+        }
     }
 
     @Override

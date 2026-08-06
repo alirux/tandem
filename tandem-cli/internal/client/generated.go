@@ -46,6 +46,7 @@ func (e OutboxStatus) Valid() bool {
 
 // Defines values for RelayStatusState.
 const (
+	DOWN    RelayStatusState = "DOWN"
 	PAUSED  RelayStatusState = "PAUSED"
 	RUNNING RelayStatusState = "RUNNING"
 )
@@ -53,6 +54,8 @@ const (
 // Valid indicates whether the value is a known member of the RelayStatusState enum.
 func (e RelayStatusState) Valid() bool {
 	switch e {
+	case DOWN:
+		return true
 	case PAUSED:
 		return true
 	case RUNNING:
@@ -183,17 +186,19 @@ type ProblemDetail struct {
 // RelayStatus defines model for RelayStatus.
 type RelayStatus struct {
 	// BucketCount Total virtual buckets B (fixed)
-	BucketCount int              `json:"bucketCount"`
-	State       RelayStatusState `json:"state"`
+	BucketCount int `json:"bucketCount"`
+
+	// State DOWN means no relay instance has heartbeated within the last few reclaimIntervals (5s by default, so DOWN typically surfaces within ~15s of the last instance stopping) - true under both SINGLE and LEASE coordination, since every relay instance touches this heartbeat regardless of mode. A relay that was PAUSED before going down still reports DOWN, not PAUSED: "is anything running at all" takes priority over the desired-state flag.
+	State RelayStatusState `json:"state"`
 
 	// UncoveredBuckets Buckets with PENDING rows but no live owner (coverage stall). Always 0 under SINGLE coordination, which owns every bucket in-process and so has no coverage to stall - the same reason the relay's own bucket.uncovered gauge reports nothing in that mode.
 	UncoveredBuckets int `json:"uncoveredBuckets"`
 
-	// Workers Live relay instances, counted from tandem_relay_member. Always 0 under SINGLE coordination, which does not register presence - it does NOT mean no relay is running. For SINGLE, liveness comes from the relay's own in-process WorkerPool.status() or the tandem.outbox.workers.active metric, neither of which a standalone admin can reach.
+	// Workers Live relay instances, counted from tandem_relay_member. Always 0 under SINGLE coordination, which does not register presence there - it does NOT mean no relay is running; check state instead, which covers SINGLE too via a separate, lighter heartbeat.
 	Workers int `json:"workers"`
 }
 
-// RelayStatusState defines model for RelayStatus.State.
+// RelayStatusState DOWN means no relay instance has heartbeated within the last few reclaimIntervals (5s by default, so DOWN typically surfaces within ~15s of the last instance stopping) - true under both SINGLE and LEASE coordination, since every relay instance touches this heartbeat regardless of mode. A relay that was PAUSED before going down still reports DOWN, not PAUSED: "is anything running at all" takes priority over the desired-state flag.
 type RelayStatusState string
 
 // ReplayRequest At least one of aggregateId / aggregateType / id range / statuses must be present - a selector-less request would replay the entire outbox and is rejected (400 replay-no-selector).

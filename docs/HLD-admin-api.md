@@ -220,7 +220,7 @@ is why the relay records it (below):
 | `GET /relay/buckets/{bucket}` | `409` | ✅ works (`404` outside `[0, B)`) |
 | `GET /relay/workers` | `409` | ✅ works |
 | `POST /relay/buckets/{bucket}/release` | `409` | ✅ works (`404` outside `[0, B)`) |
-| `GET /relay/status` | ✅ works — `workers` and `uncoveredBuckets` are `0` by definition | ✅ works |
+| `GET /relay/status` | ✅ works — `workers` and `uncoveredBuckets` are `0` by definition, `state` covers `DOWN` too (below) | ✅ works |
 
 **`409`, not an empty list or a `404`**, because the lease tables' *presence* says nothing about
 whether the relay maintains them. Under `SINGLE` those tables are either absent (any query is then a
@@ -233,6 +233,21 @@ relay rendered as a total coverage stall — and a per-bucket `pause` updates a 
 through — because the admin cannot infer it: coordination is the *relay's* configuration and a
 standalone admin has its own. Absent key — no relay of this version has started here — is treated
 as `SINGLE`, since nothing is known to be maintaining the coordination state.
+
+**The same `coordination` row doubles as a heartbeat, so `RelayStatus.state` can say `DOWN`.**
+Before this, liveness only existed under `LEASE` (`tandem_relay_member`'s per-instance
+heartbeats) — under `SINGLE`, the default mode, `coordination` was written once and never
+touched again, so "the relay died an hour ago" and "the relay never died" were indistinguishable
+from the data (`docs/open-questions-lld.md` Q30). Every relay instance's `WorkerPool` now
+re-touches `coordination.updated_at` on the same cadence it already re-reads pause state
+(`reclaimInterval`, via `RelayControlSource.heartbeat()`), under **both** coordination modes —
+one shared code path, not "check `tandem_relay_member` under `LEASE`, something else under
+`SINGLE`". The relay also publishes its own heartbeat cadence once at startup
+(`relay_heartbeat_interval_seconds`), so the admin computes staleness (missing more than **3×**
+that interval) without guessing a threshold that might not match the deployment's actual
+configuration. `state` reports `DOWN` whenever this staleness check fails — taking priority over
+`PAUSED`, since "is anything running at all" matters more than the desired-state flag once
+nothing is heartbeating.
 
 Everything else stays DB-only and works across multiple relay instances and admin restarts, and
 behaves identically embedded or standalone.

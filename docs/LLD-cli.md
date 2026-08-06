@@ -295,10 +295,11 @@ the CLI relaxing something the contract requires — would not be.
   `--watch`'s dashboard uses, §3.1) — restricted to the field(s) that answer "is this normal or
   worth a second look," never a whole row: labels, counts, and unfilled bar cells always stay
   plain.
-  - `relay status`/`pause`/`resume`: `state` — green `RUNNING`, yellow `PAUSED`. No red mapping;
-    unlike the outbox's `FAILED`, the relay status enum has no "something is broken" value to
-    color — a stuck relay shows up as `uncoveredBuckets` or a worker's stale heartbeat, not as a
-    third `RelayStatus.State`. A future additive enum value (§1.4) falls through uncolored.
+  - `relay status`/`pause`/`resume`: `state` — green `RUNNING`, yellow `PAUSED`, red `DOWN` (no
+    relay instance has heartbeated recently, HLD-admin-api §4.1 — the same "something needs a
+    human" meaning as the outbox's `FAILED`). `DOWN` takes priority over `PAUSED` server-side, so
+    the CLI never has to choose between them. A future additive enum value (§1.4) falls through
+    uncolored.
   - `relay buckets`/`release-bucket`: `covered` — green `true` / red `false` (both values are
     worth flagging, since an uncovered bucket under `LEASE` means nothing is draining it).
     `paused` — yellow `true` only; `false` is the boring default and stays plain, same rule as

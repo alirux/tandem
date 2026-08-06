@@ -148,6 +148,14 @@ this step is skipped entirely (no `tandem_aggregate_clock` table, no upsert) —
   result on every claim, so pause support costs nothing beyond that one periodic query — the claim loop
   itself (§3.1, continuous while busy) never touches the database for it. `RelayControlSource.NOOP`
   keeps this a no-op where no `DataSource` is available (the basic-round convenience constructor).
+- **The same tick also heartbeats, for `RelayStatus.state == DOWN` (HLD-admin-api §4.1).**
+  `controlTick` calls `RelayControlSource.heartbeat()` right after `refresh()` — one more UPDATE of
+  a single already-written row (`tandem_meta.coordination.updated_at`), same cadence, same
+  connection cost class. Unlike `refresh()`'s pause state, this is unconditional on coordination
+  mode: `SINGLE` heartbeats exactly like `LEASE` does, closing the gap where only `LEASE`'s
+  `tandem_relay_member` gave an admin any liveness signal at all. `JdbcRelayControlSource` also
+  publishes its own cadence once at `onStart()` (`relay_heartbeat_interval_seconds`), so the admin
+  can compute a staleness threshold instead of guessing one.
 
 ### 3.2 Bucket assignment — the coordination mode
 
@@ -611,8 +619,10 @@ WorkerPool        relay      = new WorkerPool(store, dispatcher, cfg,
                                    BackoffStrategy.fullJitter(), buckets);       // full constructor
 
 // With Admin-API pause/resume support (HLD-admin-api §4.1) — an eighth argument, RelayControlSource,
-// publishes this instance's coordination mode to tandem_meta and caches the desired pause state:
-RelayControlSource control    = new JdbcRelayControlSource(dataSource, cfg.coordination());
+// publishes this instance's coordination mode to tandem_meta, caches the desired pause state, and
+// heartbeats on the same cadence (for RelayStatus.state == DOWN) - reclaimInterval is also the
+// heartbeat cadence, published once at startup so the admin can compute a staleness threshold:
+RelayControlSource control    = new JdbcRelayControlSource(dataSource, cfg.coordination(), cfg.reclaimInterval());
 WorkerPool        relay       = new WorkerPool(store, dispatcher, cfg,
                                    TandemMetrics.NOOP, Clock.systemUTC(),
                                    BackoffStrategy.fullJitter(), buckets, control);

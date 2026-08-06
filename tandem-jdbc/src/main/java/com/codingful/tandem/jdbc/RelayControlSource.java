@@ -26,6 +26,14 @@ public interface RelayControlSource {
     default void refresh() {
     }
 
+    /**
+     * Marks this instance as still alive, for the Admin API's {@code RelayStatus.state == DOWN}
+     * reading (HLD-admin-api §4.1) — a lightweight liveness signal, distinct from {@link #refresh}'s
+     * read of desired state. Called on the same cadence as {@link #refresh}. No-op by default.
+     */
+    default void heartbeat() {
+    }
+
     /** @return the whole-relay desired state as of the last {@link #refresh()}; {@code false} by default */
     default boolean wholeRelayPaused() {
         return false;

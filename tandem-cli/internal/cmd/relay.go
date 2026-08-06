@@ -33,12 +33,13 @@ func newRelayCmd() *cobra.Command {
 // relayStatusPairs colors the state value with the same severity palette as the outbox
 // summary dashboard (LLD-cli.md §3.1) - green for RUNNING (healthy, same meaning as
 // IN_FLIGHT: work is actively moving), yellow for PAUSED (an operator-initiated,
-// deliberate state, same meaning as PENDING: not broken, but worth a second look). There
-// is no red mapping: unlike the outbox's FAILED, the relay's own status has no
-// "something is broken" state to report here - a relay that's actually stuck shows up as
-// workers.cycle_age_seconds or uncoveredBuckets, not as a third RelayStatus.State value.
-// A future additive enum value the contract adds (forward compatibility, §1.4) falls
-// through uncolored rather than guessing a severity for it.
+// deliberate state, same meaning as PENDING: not broken, but worth a second look), red for
+// DOWN (no relay instance has heartbeated recently - same meaning as the outbox's FAILED,
+// something needs a human). DOWN takes priority over PAUSED server-side (HLD-admin-api
+// §4.1: "is anything running at all" matters more than the desired-state flag), so this
+// switch never needs to choose between them. A future additive enum value the contract
+// adds (forward compatibility, §1.4) falls through uncolored rather than guessing a
+// severity for it.
 func relayStatusPairs(s client.RelayStatus, color bool) [][2]string {
 	state := string(s.State)
 	switch s.State {
@@ -46,6 +47,8 @@ func relayStatusPairs(s client.RelayStatus, color bool) [][2]string {
 		state = output.Colorize(state, output.Green, color)
 	case client.PAUSED:
 		state = output.Colorize(state, output.Yellow, color)
+	case client.DOWN:
+		state = output.Colorize(state, output.Red, color)
 	}
 	return [][2]string{
 		{"state", state},

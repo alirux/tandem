@@ -152,7 +152,7 @@ public class TandemRelayAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     RelayControlSource tandemRelayControlSource(RelayConfig relayConfig, DataSource dataSource) {
-        return new JdbcRelayControlSource(dataSource, relayConfig.coordination());
+        return new JdbcRelayControlSource(dataSource, relayConfig.coordination(), relayConfig.reclaimInterval());
     }
 
     @Bean

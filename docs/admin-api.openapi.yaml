@@ -834,6 +834,14 @@ components:
           enum:
             - RUNNING
             - PAUSED
+            - DOWN
+          description: >
+            DOWN means no relay instance has heartbeated within the last few
+            reclaimIntervals (5s by default, so DOWN typically surfaces within ~15s of
+            the last instance stopping) - true under both SINGLE and LEASE coordination,
+            since every relay instance touches this heartbeat regardless of mode. A
+            relay that was PAUSED before going down still reports DOWN, not PAUSED:
+            "is anything running at all" takes priority over the desired-state flag.
         bucketCount:
           type: integer
           description: Total virtual buckets B (fixed)
@@ -848,10 +856,9 @@ components:
           type: integer
           description: >
             Live relay instances, counted from tandem_relay_member. Always 0 under SINGLE
-            coordination, which does not register presence - it does NOT mean no relay is
-            running. For SINGLE, liveness comes from the relay's own in-process
-            WorkerPool.status() or the tandem.outbox.workers.active metric, neither of
-            which a standalone admin can reach.
+            coordination, which does not register presence there - it does NOT mean no
+            relay is running; check state instead, which covers SINGLE too via a
+            separate, lighter heartbeat.
 
     ProblemDetail:
       type: object
