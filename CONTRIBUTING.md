@@ -64,7 +64,7 @@ cd tandem-cli
 make generate   # regenerate internal/client/generated.go after an OpenAPI contract change
 make docs       # regenerate docs/cli/*.md after a command/flag/description change
 make build
-make test       # go test ./... -race
+make test       # go test ./... -race -coverprofile=coverage.out -covermode=atomic
 make lint       # go vet + gofmt -l
 ```
 

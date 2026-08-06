@@ -38,6 +38,7 @@ jobs:
           # mis-attributed 0% entries (e.g. tandem-core's ReplayResult).
           files: ./tandem-coverage/build/reports/jacoco/aggregated/aggregated.xml
           disable_search: true
+          flags: java
 
       - name: Submit dependency graph
         # Only on push to main: fork PRs don't get a token with contents:write, and the
@@ -82,3 +83,11 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./tandem-cli/coverage.out
+          disable_search: true
+          flags: cli

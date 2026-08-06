@@ -15,7 +15,7 @@ build:
 	go build -o bin/tandem-cli ./cmd/tandem-cli
 
 test:
-	go test ./... -race
+	go test ./... -race -coverprofile=coverage.out -covermode=atomic
 
 lint:
 	go vet ./...

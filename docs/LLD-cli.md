@@ -359,7 +359,10 @@ which *is* hand-written, exactly like `tandem-admin`'s handlers.
 - CI's `tandem-cli` job (`.github/workflows/ci.yml`, separate from the Gradle build) adds a
   **regenerate-and-diff** step (`make generate && git diff --exit-code`) as the drift gate — the
   Go-toolchain equivalent of Specmatic's conformance check for `tandem-admin` — followed by
-  `make lint` (`go vet` + `gofmt -l`) and `make test` (`go test ./... -race`).
+  `make lint` (`go vet` + `gofmt -l`) and `make test` (`go test ./... -race`), which also emits
+  `coverage.out` (`-coverprofile=coverage.out -covermode=atomic`), uploaded to Codecov under the
+  `cli` flag — separate from the Java modules' aggregated JaCoCo report (`java` flag), since the
+  two live in different CI jobs with no shared build.
 - **Forward compatibility applies to the client too** (§1.4, HLD.md): the generated types must
   tolerate unknown fields and unknown enum values in responses — `oapi-codegen`'s default struct
   generation already does this (unrecognized JSON object fields are simply dropped by
