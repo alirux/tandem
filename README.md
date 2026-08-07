@@ -166,14 +166,15 @@ list. What changed between versions, breaking changes included, is on the
 generations** — Spring is `compileOnly`, so your application's own Boot BOM controls the runtime
 version, and Tandem never appears in your dependency tree.
 
-| | Spring Boot |
-|---|---|
-| Compiled against (baseline) | 3.3.13 |
-| Verified via `bootLatestThreeTest` | 3.5.16 |
-| Verified via `bootFourTest` | 4.1.0 |
+| | Spring Boot | Spring Framework |
+|---|---|---|
+| Compiled against (baseline) | 3.3.x | 6.1.x |
+| Verified via `bootLatestThreeTest` | 3.5.x | 6.2.x |
+| Verified via `bootFourTest` | 4.1.x | 7.0.x |
 
-Any Boot 3.x ≥ 3.3.13 or Boot 4.x ≥ 4.1.0 is expected to work; CI pins and tests exactly these three
-versions, not every intermediate release.
+Any Boot 3.x ≥ the baseline or Boot 4.x ≥ the verified 4.x line is expected to work; CI pins and tests
+exactly these three versions (see [gradle/libs.versions.toml](gradle/libs.versions.toml) for the exact
+pins), not every intermediate release.
 
 ## Usage
 
