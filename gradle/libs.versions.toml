@@ -1,5 +1,5 @@
 [versions]
-junit = "6.1.1"
+junit = "6.1.2"
 assertj = "3.27.7"
 postgresql = "42.7.12"
 # Spring modules compile once against the lowest supported Boot 3.x line (LLD-spring-config §1.1);
