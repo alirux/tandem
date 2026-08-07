@@ -24,9 +24,10 @@ jobs:
         with:
           fetch-depth: 0   # annotated tag objects, so the tag message is readable below
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: tandem-cli/go.mod
+          cache-dependency-path: tandem-cli/go.sum
 
       # The annotated tag's message becomes the release notes, same convention as the
       # library's own release.yml (AGENTS.md §Releases): first line is the title,

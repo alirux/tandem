@@ -81,6 +81,8 @@ class OutboxEventListenerTest {
     }
 
     private static final class SelfPublishingOrderPlaced extends ApplicationEvent {
+        private static final long serialVersionUID = 1L;
+
         private SelfPublishingOrderPlaced() {
             super("test-source");
         }

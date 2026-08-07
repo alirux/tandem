@@ -57,9 +57,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: tandem-cli/go.mod
+          cache-dependency-path: tandem-cli/go.sum
 
       - name: Regenerate the Admin API client and fail on drift
         # The committed internal/client/generated.go must match what the current
