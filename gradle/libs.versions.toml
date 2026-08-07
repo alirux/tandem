@@ -31,7 +31,7 @@ testcontainers = "1.21.4"
 commons-compress = "1.28.0"
 # Benchmark-only (leaf app, not part of any published library footprint).
 hdrhistogram = "2.2.2"
-hikaricp = "5.1.0"
+hikaricp = "7.1.0"
 # slf4j-api is already a runtime-scope transitive of kafka-clients (1.7.36); declaring it
 # explicitly at a current version only makes it visible at compile time (HLD-logging.md §2.2)
 # and does not add a new dependency to the relay-side footprint.
