@@ -20,3 +20,12 @@ updates:
       # Bumping any of the three stays a deliberate, manual change with the doc updates that go with it
       # (AGENTS.md "Releases"/commit-message conventions).
       - dependency-name: "org.springframework.boot:spring-boot-dependencies"
+      # A major bump is, by definition, allowed to break — a coordinate rename (like
+      # org.testcontainers:postgresql -> org.testcontainers:testcontainers-postgresql in Testcontainers
+      # 2.0), a removed API, a raised toolchain floor. Auto-proposing it as a routine PR invites either a
+      # broken build (the PR sits red) or an accidental merge of a change nobody actually reviewed as a
+      # migration. Every dependency keeps getting patch/minor bumps automatically; a major bump stays a
+      # deliberate, hand-driven upgrade with its own migration and test pass, same discipline as the
+      # Spring Boot line above.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
