@@ -5,9 +5,11 @@
 **Depends on:** [admin-api.openapi.yaml](admin-api.openapi.yaml) (the only interface it talks to)
 **Companion to:** [HLD-admin-api.md](HLD-admin-api.md) §4 (names the CLI as a future consumer of the contract);
 backlog item 4 (`project_backlog_topics` memory) for the product requirements this LLD implements
-**Toolchain:** Go 1.24+ (raised from the originally-planned 1.23 — `cobra`'s own `go.mod`
-requires it), `cobra` (command tree), `oapi-codegen` (generated client, run from a separate
-`tandem-cli/tools/` module so its own higher Go-version floor never raises the main module's)
+**Toolchain:** Go 1.25+ (raised from 1.24 — `cobra`'s own `go.mod` floor — to match
+`tandem-cli/tools/`'s own higher floor, so the two modules build with the same toolchain in
+CI; `tools/` stays a separate module regardless, so a future bump there still doesn't force
+one here), `cobra` (command tree), `oapi-codegen` (generated client, run from
+`tandem-cli/tools/`)
 **Published:** Not a JVM artifact, not on Maven Central. Distributed as cross-compiled binaries
 attached to GitHub Releases (§9).
 **Versioned independently of the library**, tagged `cli-v<semver>`; its compatibility contract is
@@ -73,7 +75,7 @@ apply in spirit and are called out explicitly rather than silently skipped:
 
 ```
 tandem-cli/
-  go.mod / go.sum                   // go 1.24 - raised by cobra's own floor, not chosen (§1)
+  go.mod / go.sum                   // go 1.25 - matches tools/'s own floor (§1)
   LICENSE                           // copy of the repo's Apache-2.0 text - this module is
                                     //   distributed as standalone binaries (§9), independent of
                                     //   the JVM modules' Maven Central publication, so it carries

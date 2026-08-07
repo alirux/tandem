@@ -19,7 +19,7 @@ non-default cases).
 - **Docker**, running and reachable — most integration/e2e tests use
   [Testcontainers](https://testcontainers.com) to spin up real PostgreSQL and Kafka instances.
   There are no mocks standing in for the database or the broker in this project.
-- **Go 1.24+**, only for [`tandem-cli`](tandem-cli/) — a separate toolchain and build, not part
+- **Go 1.25+**, only for [`tandem-cli`](tandem-cli/) — a separate toolchain and build, not part
   of `./gradlew check` (see below).
 
 ## Building and testing
