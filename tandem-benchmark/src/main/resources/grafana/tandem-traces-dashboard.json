@@ -1,0 +1,66 @@
+{
+  "uid": "tandem-traces",
+  "title": "Tandem traces",
+  "tags": [
+    "tandem"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "5s",
+  "time": {
+    "from": "now-10m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Each row below is one trace: **write** (the domain transaction's `TandemContext` span) → **outbox dwell** (the gap between the write span ending and the publish span starting — there is no span for this, it is what the gap itself shows) → **`tandem.relay.publish`** (the real Kafka send) → **consume** (the benchmark's own consumer span). Click a row's **Trace ID** to open its waterfall. To find every trace belonging to one simulated business operation, run `{span.tandem.correlation_id=\"biz-<aggregate>\"}` in Explore → Tempo — the same value the demo prints for `tandem outbox search --correlation-id`."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Recent traces",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tandem-tempo"
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tandem-tempo"
+          },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"tandem-benchmark\"}",
+          "limit": 40,
+          "tableType": "traces",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

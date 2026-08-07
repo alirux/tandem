@@ -86,11 +86,14 @@ micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-br
 # The tracing API tandem-tracing-otel bridges to — the one OpenTelemetry coordinate Tandem
 # redistributes (the SDK stays the application's choice, as it is with any OTel instrumentation).
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
-# Test-only, and only where no Spring Boot BOM is in play: gives the two version-less SDK entries
-# below their versions in tandem-tracing-otel, which has no Spring dependency to manage them.
+# Never published: gives the version-less SDK entries below their versions where no Spring Boot BOM is
+# in play — tandem-tracing-otel's tests, and tandem-benchmark's tracing demo, which needs a real SDK
+# because an adapter alone exports nothing.
 opentelemetry-bom = { module = "io.opentelemetry:opentelemetry-bom", version.ref = "opentelemetry" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing" }
+# Benchmark-only: ships the spans of the tracing demo (§6.4) to its Tempo container over OTLP.
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 # Test-only, tandem-spring-producer: a working MDCAdapter (slf4j-simple's is NOPMDCAdapter — a true

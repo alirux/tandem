@@ -1,9 +1,11 @@
 # Tandem — Trace & Correlation Propagation (Design Note)
 
-**Version:** 1.3  
+**Version:** 1.4  
 **Status:** Implemented — propagation and instrumented mode ship for Spring applications
 (`tandem-spring-*`) and for applications instrumenting themselves with the OpenTelemetry SDK
-directly (`tandem-tracing-otel`). Only the Tempo + Grafana demo (§9's verification item) remains.  
+directly (`tandem-tracing-otel`). §9's verification item is fully closed: both span-structure
+assertions (throughout the adapters' own tests) and the runnable Tempo + Grafana demo
+(`tandem-benchmark`'s `TracingDashboardDemo`, LLD-benchmark §6.4) exist.  
 **Companion to:** HLD §7.1 (Trace & Correlation Propagation)
 
 Propagate distributed-tracing and correlation identifiers across the asynchronous outbox
@@ -202,9 +204,50 @@ leaves it `NULL`, and an older reader never selects it.
   it as-is; consumers continue the trace via the standard `traceparent`. Minimal, standard,
   dependency-free downstream.
 - **Instrumented (optional).** The relay additionally emits a short **`tandem.relay.publish`**
-  span linked to the captured context, timestamped at the actual send — so the trace shows the
-  outbox dwell + relay latency + retries as a real span. Requires a tracing adapter on the
-  relay side; off unless asked for.
+  span linked to the captured context, timestamped at the actual send. That one span is what
+  makes relay latency and retries visible directly — and, indirectly, makes the outbox dwell
+  readable too, as the *gap* before it (§6.0). Requires a tracing adapter on the relay side; off
+  unless asked for.
+
+### 6.0 What "dwell" actually is on the waterfall
+
+**Outbox dwell** is the elapsed time between an event's outbox row being committed and the relay
+actually sending it to Kafka — how long the row sat waiting, already durable, before a relay
+worker claimed and dispatched it. It is a consequence of the outbox's whole reason for existing
+(§1): the write and the send are deliberately decoupled, and dwell is the size of that decoupling
+for one given row.
+
+**The outbox dwell is never a span.** Instrumented mode adds exactly one span,
+`tandem.relay.publish` (§6.1); the dwell is what a viewer reads directly off the *gap* between
+that span starting and whichever span represents the domain transaction ending. Nothing is
+instrumented in between — the row simply sits, already committed, in the outbox table until some
+relay worker's next poll cycle claims and sends it (LLD-jdbc §3, dispatch-latency.md). This is
+also why §6.3 forbids a span per poll and §6.1 forbids a batch-level span: either would flood
+that gap with noise (busy or idle) or misattribute it to the wrong record. The dwell stays
+legible precisely *because* nothing is emitted for it — a viewer computes it as arithmetic on two
+timestamps already on the waterfall, not from a signal Tandem produces.
+
+A real trace from `TracingDashboardDemo` (LLD-benchmark.md §6.4) makes the shape concrete:
+
+```
+0ms          4.9ms                                         99.6ms  102.5ms 103.7ms
+│── write ───│                                                │── publish ──│consume
+  INTERNAL     ◀───────────── outbox dwell: ~95ms ─────────▶    PRODUCER      CONSUMER
+  (4.9ms)         no span — the row is committed and idle        (2.97ms)      (5.8µs)
+                        in tandem_outbox this whole time
+```
+
+- `tandem.benchmark.write` (`INTERNAL`, 0 → 4.9ms) — the domain transaction, ending at commit.
+- **The gap, 4.9ms → 99.6ms.** No span exists for it; it is read straight off the waterfall as
+  the interval between the write span ending and `tandem.relay.publish` starting. On this run it
+  is ~95ms — about 91% of the trace's 103.7ms total, i.e. almost the entire trace is dwell, not
+  work.
+- `tandem.relay.publish` (`PRODUCER`, 99.6ms → 102.5ms) — the real Kafka send, parented to the
+  context captured on *that row* at write time (§6.1), never to whatever the relay worker
+  happened to be doing — carrying `tandem.outbox.row_id`, `tandem.attempts`,
+  `tandem.correlation_id` as attributes (§6.4).
+- `tandem.benchmark.consume` (`CONSUMER`, 103.7ms) — ~1.2ms after publish ends, a downstream
+  consumer continuing the same trace via the propagated `traceparent` (§8).
 
 Four rules constrain instrumented mode. Each one, broken, produces traces that *look* plausible
 and are wrong.
@@ -332,4 +375,4 @@ Admin API's replay endpoint reports the new trace id, with the original kept as 
 | OTel adapter module | Dedicated `tandem-tracing-otel`, for applications instrumenting themselves with the OpenTelemetry SDK directly — same pattern as `tandem-micrometer`/`tandem-kafka`: an optional dependency stays isolated in its own module, never folded into one a client already depends on. **Implemented** (§5): `OtelTracePropagator` + `OtelTandemSpanRecorder`. |
 | Sampling | Inherited unconditionally; no relay override (see above). |
 | Replay semantics | New trace + span link to the original (see above). |
-| Verification | Both: assert span structure in tests, and a runnable demo through a real tracing backend (Tempo + Grafana), mirroring `metricsDashboardDemo` (LLD-benchmark.md §6.3, backlog item 5). |
+| Verification | Both: assert span structure in tests, and a runnable demo through a real tracing backend (Tempo + Grafana), mirroring `metricsDashboardDemo` (LLD-benchmark.md §6.3, backlog item 5). **Implemented**: `TracingDashboardDemo` (LLD-benchmark.md §6.4) — one real trace, write through consume, over a real OpenTelemetry SDK → OTLP → Tempo pipeline. |

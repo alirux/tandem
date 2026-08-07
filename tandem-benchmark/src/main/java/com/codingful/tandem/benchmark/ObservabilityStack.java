@@ -23,12 +23,17 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * A real Prometheus scraping the relay's Micrometer endpoints, and a Grafana pre-provisioned with a
- * dashboard over it (LLD-benchmark §6.3). Started alongside the benchmark's own Postgres/Kafka
- * containers, on a network of its own — it never talks to them, only to the JVM's scrape endpoints.
+ * dashboard over it (LLD-benchmark §6.3) — optionally with a Tempo receiving the JVM's spans over OTLP
+ * (§6.4), so one Grafana serves both signals. Started alongside the benchmark's own Postgres/Kafka
+ * containers, on a network of its own — it never talks to them, only to the JVM.
  *
  * <p>The Prometheus configuration is generated here rather than checked in, because the scrape
  * targets are the {@link MetricsExporter}s' OS-assigned ports; the Grafana provisioning files and the
  * dashboard itself are static classpath resources.
+ *
+ * <p><b>The two signals travel in opposite directions</b>, which is why only one of them needs
+ * {@code host.testcontainers.internal}: Prometheus reaches <i>into</i> the JVM to scrape it, while the
+ * JVM pushes spans <i>out</i> to Tempo's mapped OTLP port like any other client of a container.
  */
 public final class ObservabilityStack implements AutoCloseable {
 
@@ -39,8 +44,11 @@ public final class ObservabilityStack implements AutoCloseable {
     // panel, so the phase markers below are silently invisible (§6.3). A/B-verified on this exact
     // dashboard — same Prometheus, same annotation, lines only on 11.6.0.
     private static final DockerImageName GRAFANA_IMAGE = DockerImageName.parse("grafana/grafana:11.6.0");
+    private static final DockerImageName TEMPO_IMAGE = DockerImageName.parse("grafana/tempo:2.7.2");
     private static final int PROMETHEUS_PORT = 9090;
     private static final int GRAFANA_PORT = 3000;
+    private static final int TEMPO_HTTP_PORT = 3200;
+    private static final int TEMPO_OTLP_HTTP_PORT = 4318;
 
     /** Fine enough that a phase lasting a few seconds is several points rather than one. */
     private static final Duration SCRAPE_INTERVAL = Duration.ofSeconds(1);
@@ -54,6 +62,7 @@ public final class ObservabilityStack implements AutoCloseable {
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> prometheus;
     private final GenericContainer<?> grafana;
+    private final GenericContainer<?> tempo;   // null unless tracing is requested (§6.4)
     private final HttpClient http = HttpClient.newHttpClient();
 
     /**
@@ -61,6 +70,18 @@ public final class ObservabilityStack implements AutoCloseable {
      *                  should read {@code relay-1}, {@code relay-2}, …
      */
     public ObservabilityStack(List<MetricsExporter> exporters) {
+        this(exporters, false);
+    }
+
+    /**
+     * @param exporters   see {@link #ObservabilityStack(List)}
+     * @param withTracing starts a Tempo container alongside Prometheus and provisions it as a second
+     *                    Grafana datasource, plus the traces dashboard (§6.4). {@code false} reproduces
+     *                    the metrics-only stack exactly — {@link TracingDashboardDemo} is the only
+     *                    caller that passes {@code true}, so {@link MetricsDashboardDemo} never pays for
+     *                    a container it doesn't use.
+     */
+    public ObservabilityStack(List<MetricsExporter> exporters, boolean withTracing) {
         // Makes the JVM's own ports reachable from inside the containers as host.testcontainers.internal.
         exporters.forEach(exporter -> Testcontainers.exposeHostPorts(exporter.port()));
 
@@ -71,7 +92,17 @@ public final class ObservabilityStack implements AutoCloseable {
                 .withCopyToContainer(Transferable.of(prometheusConfig(exporters)), "/etc/prometheus/prometheus.yml")
                 .waitingFor(Wait.forHttp("/-/ready").forPort(PROMETHEUS_PORT));
 
-        grafana = new GenericContainer<>(GRAFANA_IMAGE)
+        tempo = withTracing
+                ? new GenericContainer<>(TEMPO_IMAGE)
+                        .withNetwork(network)
+                        .withNetworkAliases("tempo")
+                        .withCommand("-config.file=/etc/tempo/tempo.yml")
+                        .withExposedPorts(TEMPO_HTTP_PORT, TEMPO_OTLP_HTTP_PORT)
+                        .withCopyToContainer(Transferable.of(tempoConfig()), "/etc/tempo/tempo.yml")
+                        .waitingFor(Wait.forHttp("/ready").forPort(TEMPO_HTTP_PORT))
+                : null;
+
+        GenericContainer<?> grafanaContainer = new GenericContainer<>(GRAFANA_IMAGE)
                 .withNetwork(network)
                 .withExposedPorts(GRAFANA_PORT)
                 // Anonymous admin: the demo's whole value is being able to open the dashboard and look,
@@ -83,19 +114,46 @@ public final class ObservabilityStack implements AutoCloseable {
                 // and what it will actually honor) regardless of what the dashboard JSON's "refresh"
                 // field says — this is a server-side setting, not a per-dashboard one.
                 .withEnv("GF_DASHBOARDS_MIN_REFRESH_INTERVAL", "1s")
-                .withCopyToContainer(Transferable.of(datasourceProvisioning()),
-                        "/etc/grafana/provisioning/datasources/prometheus.yml")
+                .withCopyToContainer(Transferable.of(datasourceProvisioning(withTracing)),
+                        "/etc/grafana/provisioning/datasources/datasources.yml")
                 .withCopyToContainer(Transferable.of(dashboardProvisioning()),
                         "/etc/grafana/provisioning/dashboards/tandem.yml")
                 .withCopyToContainer(Transferable.of(dashboardJson()),
                         "/var/lib/grafana/dashboards/tandem-dashboard.json")
                 .waitingFor(Wait.forHttp("/api/health").forPort(GRAFANA_PORT));
+        if (withTracing) {
+            grafanaContainer.withCopyToContainer(Transferable.of(tracesDashboardJson()),
+                    "/var/lib/grafana/dashboards/tandem-traces-dashboard.json");
+        }
+        grafana = grafanaContainer;
     }
 
     public ObservabilityStack start() {
         prometheus.start();
+        if (tempo != null) {
+            tempo.start();
+        }
         grafana.start();
         return this;
+    }
+
+    /**
+     * The OTLP/HTTP endpoint the JVM exports spans to, reachable from the host because Tempo's port is
+     * mapped like any other Testcontainers port — unlike Prometheus scraping, this direction needs no
+     * {@code host.testcontainers.internal} bridge (see the class javadoc).
+     *
+     * @throws IllegalStateException if this stack was built without {@code withTracing}
+     */
+    public String tempoOtlpEndpoint() {
+        if (tempo == null) {
+            throw new IllegalStateException("this ObservabilityStack was not started with tracing");
+        }
+        return "http://" + tempo.getHost() + ":" + tempo.getMappedPort(TEMPO_OTLP_HTTP_PORT);
+    }
+
+    /** Where to point a browser for the traces dashboard — only valid alongside {@link #tempoOtlpEndpoint()}. */
+    public String tracesDashboardUrl() {
+        return grafanaBaseUrl() + "/d/tandem-traces/tandem-traces?from=now-10m&to=now";
     }
 
     /** Where to point a browser — the dashboard itself, not Grafana's home page. */
@@ -171,10 +229,8 @@ public final class ObservabilityStack implements AutoCloseable {
                 .formatted(SCRAPE_INTERVAL.toSeconds(), SCRAPE_INTERVAL.toSeconds(), targets);
     }
 
-    private static String datasourceProvisioning() {
-        return """
-                apiVersion: 1
-                datasources:
+    private static String datasourceProvisioning(boolean withTracing) {
+        String prometheusEntry = """
                   - name: Prometheus
                     uid: tandem-prometheus
                     type: prometheus
@@ -182,6 +238,18 @@ public final class ObservabilityStack implements AutoCloseable {
                     url: http://prometheus:9090
                     isDefault: true
                 """;
+        // Points Grafana's trace view at Tempo's own search API, so a Prometheus-sourced correlation-id
+        // is one click away from its spans without leaving the dashboard (§6.4).
+        String tempoEntry = withTracing
+                ? """
+                  - name: Tempo
+                    uid: tandem-tempo
+                    type: tempo
+                    access: proxy
+                    url: http://tempo:%d
+                """.formatted(TEMPO_HTTP_PORT)
+                : "";
+        return "apiVersion: 1\ndatasources:\n" + prometheusEntry + tempoEntry;
     }
 
     private static String dashboardProvisioning() {
@@ -197,7 +265,14 @@ public final class ObservabilityStack implements AutoCloseable {
     }
 
     private static String dashboardJson() {
-        String resource = "/grafana/tandem-dashboard.json";
+        return classpathResource("/grafana/tandem-dashboard.json");
+    }
+
+    private static String tracesDashboardJson() {
+        return classpathResource("/grafana/tandem-traces-dashboard.json");
+    }
+
+    private static String classpathResource(String resource) {
         try (InputStream in = ObservabilityStack.class.getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IllegalStateException(resource + " not found on classpath");
@@ -208,9 +283,47 @@ public final class ObservabilityStack implements AutoCloseable {
         }
     }
 
+    /**
+     * Minimal single-binary config: local disk storage (WAL + blocks under {@code /tmp/tempo}, a
+     * throwaway container's own filesystem — nothing is retained past {@link #close()}), OTLP/HTTP
+     * receiver only (the one protocol {@code tandem-tracing-otel}'s exporter speaks), no metrics-
+     * generator or compactor tuning — this is a demo stack, not a production deployment.
+     *
+     * <p><b>The OTLP HTTP receiver's {@code endpoint} must be explicit.</b> Left unset, Tempo 2.7.2
+     * binds it to {@code localhost:4318} <i>inside the container</i> — verified directly: {@code docker
+     * logs} showed {@code endpoint=localhost:4318}, and every export from outside the container
+     * (including through Docker's own published port) got {@code Connection reset}, not a clean
+     * refusal, because the TCP handshake completes against Docker's proxy before the loopback-only bind
+     * inside drops it. {@code 0.0.0.0:4318} is required for the JVM — reachable only via the mapped
+     * port, never {@code host.testcontainers.internal} — to reach it at all (see the class javadoc on
+     * why this direction differs from Prometheus's).
+     */
+    private static String tempoConfig() {
+        return """
+                server:
+                  http_listen_port: %d
+                distributor:
+                  receivers:
+                    otlp:
+                      protocols:
+                        http:
+                          endpoint: 0.0.0.0:%d
+                storage:
+                  trace:
+                    backend: local
+                    local:
+                      path: /tmp/tempo/blocks
+                    wal:
+                      path: /tmp/tempo/wal
+                """.formatted(TEMPO_HTTP_PORT, TEMPO_OTLP_HTTP_PORT);
+    }
+
     @Override
     public void close() {
         grafana.stop();
+        if (tempo != null) {
+            tempo.stop();
+        }
         prometheus.stop();
         network.close();
     }

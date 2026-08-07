@@ -3,6 +3,7 @@ package com.codingful.tandem.benchmark;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
+import com.codingful.tandem.core.port.TandemSpanRecorder;
 import com.codingful.tandem.jdbc.BackoffStrategy;
 import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.BucketSource;
@@ -129,7 +130,18 @@ public final class BenchmarkEnvironment implements AutoCloseable {
      * so one shared sink collapses them to whichever instance reported last (§6.3).
      */
     public RelayInstance newRelayInstance(RelayConfig relayCfg, TandemMetrics instanceMetrics) {
-        KafkaRelay producer = new KafkaRelay(producerConfig(), record -> TOPIC, KafkaRelayConfig.of("/tandem/benchmark"));
+        return newRelayInstance(relayCfg, instanceMetrics, TandemSpanRecorder.NOOP);
+    }
+
+    /**
+     * As {@link #newRelayInstance(RelayConfig, TandemMetrics)}, but also wiring {@code spanRecorder}
+     * into the instance's producer — {@link TracingDashboardDemo}'s one relay instance is the only
+     * caller that passes a real one (§6.4); every other scenario gets the free default.
+     */
+    public RelayInstance newRelayInstance(RelayConfig relayCfg, TandemMetrics instanceMetrics,
+            TandemSpanRecorder spanRecorder) {
+        KafkaRelay producer = new KafkaRelay(producerConfig(), record -> TOPIC,
+                KafkaRelayConfig.of("/tandem/benchmark"), spanRecorder);
         extraProducers.add(producer);
         OutboxDispatcher dispatcher = new FaultInjectingDispatcher(producer, faultInjector);
         // Wrapped here, not on the shared `store` field: only an instance built through this method can

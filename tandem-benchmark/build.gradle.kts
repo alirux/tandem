@@ -34,6 +34,15 @@ dependencies {
     implementation(project(":tandem-micrometer"))
     implementation(libs.micrometer.registry.prometheus)
 
+    // The real OpenTelemetry adapter, driven by the tracing demo (§6.4) — same reasoning as the
+    // Micrometer one above: the demo exists to show what a consumer's tracing backend actually
+    // receives. The SDK and the OTLP exporter come with it because an adapter emits spans but never
+    // exports them: outside Spring, assembling the SDK is the application's own job (LLD-base §1).
+    implementation(project(":tandem-tracing-otel"))
+    implementation(platform(libs.opentelemetry.bom))
+    implementation(libs.opentelemetry.sdk)
+    implementation(libs.opentelemetry.exporter.otlp)
+
     implementation(libs.hdrhistogram)
     implementation(libs.hikaricp)
 
@@ -112,6 +121,19 @@ tasks.register<JavaExec>("metricsDashboardDemo") {
     description = "Runs the relay against Prometheus + Grafana and holds the dashboard open. Requires Docker."
     group = "verification"
     mainClass.set("com.codingful.tandem.benchmark.MetricsDashboardDemo")
+    classpath = sourceSets["main"].runtimeClasspath
+    standardInput = System.`in`
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+// The tracing counterpart of the demo above: one trace per business operation, spanning the write, the
+// outbox dwell and the real send, read in the same Grafana over a Tempo datasource (§6.4). Also gates
+// nothing; `standardInput` for the same reason — it holds the stack open until Enter.
+tasks.register<JavaExec>("tracingDashboardDemo") {
+    description = "Runs the relay against Tempo + Grafana and holds the trace view open. Requires Docker."
+    group = "verification"
+    mainClass.set("com.codingful.tandem.benchmark.TracingDashboardDemo")
     classpath = sourceSets["main"].runtimeClasspath
     standardInput = System.`in`
     standardOutput = System.out

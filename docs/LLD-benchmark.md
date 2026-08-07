@@ -1,10 +1,11 @@
 # Tandem — `tandem-benchmark` LLD
 
-**Version:** 0.3 (Implemented & smoke-verified; gauge demo added)  
+**Version:** 0.4 (Implemented & smoke-verified; gauge, metrics, and tracing demos added)  
 **Module:** `tandem-benchmark` · package `com.codingful.tandem.benchmark`  
 **Depends on:** `tandem-test` (transitively pulls `tandem-core`, `tandem-jdbc`, `tandem-kafka`,
-`kafka-clients`, and the Testcontainers Postgres+Kafka runtime), HdrHistogram, HikariCP; JUnit 6 +
-AssertJ (test scope, for the CI smoke run).  
+`kafka-clients`, and the Testcontainers Postgres+Kafka runtime), HdrHistogram, HikariCP,
+`tandem-micrometer` (§6.3), `tandem-tracing-otel` + the OpenTelemetry SDK/OTLP exporter (§6.4); JUnit 6
++ AssertJ (test scope, for the CI smoke run).  
 **Toolchain:** **JDK 25** (per-module override; the rest of Tandem stays Java 17). Justified because
 this module is **not published** — no consumer sees its bytecode — and the load driver benefits from
 virtual threads (§4.2), which need Java 21+ and, for blocking JDBC, the Java 24+ no-pinning fix. It
@@ -533,6 +534,71 @@ passing assertion:
   leaves a row or two behind the poisoned aggregate — technically correct and visually nothing. This
   demo is sized for legibility; throughput belongs to `LoadTestRunner`.
 
+### 6.4 `TracingDashboardDemo` — one real trace, write to consume
+
+`./gradlew :tandem-benchmark:tracingDashboardDemo` runs one relay instance against a real OpenTelemetry
+SDK → OTLP → Tempo pipeline, read on the same Grafana `MetricsDashboardDemo` uses (§6.3) over a second,
+Tempo-backed datasource. Closes out HLD-tracing.md §9's verification item (slice 6) — the design was
+fully specified once the Spring/Micrometer and OpenTelemetry adapters existed (item 5's slices 1–5,
+`docs/HLD-tracing.md`), and this demo needed no further port work, only assembly. Same intent, same
+non-goal as §6.2/§6.3: it **measures nothing and gates nothing** — a signal's usefulness is judged by
+looking at it, and a trace is the one signal a metrics dashboard cannot show at all.
+
+**Shape.** `ObservabilityStack` gained an optional third container, Tempo, and a second constructor
+parameter (`withTracing`) — `false` reproduces the metrics-only stack byte-for-byte, so
+`MetricsDashboardDemo` is untouched. A real `OpenTelemetrySdk` (W3C propagator, `BatchSpanProcessor`
+over `OtlpHttpSpanExporter`, 1s schedule delay so a live demo doesn't wait out the 5s SDK default) feeds
+both `OtelTracePropagator` (write side) and `OtelTandemSpanRecorder` (wired into this demo's one
+`RelayInstance` via a new `BenchmarkEnvironment.newRelayInstance(RelayConfig, TandemMetrics,
+TandemSpanRecorder)` overload — every other scenario keeps the free `TandemSpanRecorder.NOOP` default).
+`LoadGenerator` gained two nullable collaborators, mirroring how `CommitTimestamps` was added earlier:
+a `TracePropagator` (passed straight into `JdbcOutboxRepository`'s existing 3-arg constructor) and a
+`WriteSpanScope` — a generic `(aggregateId, Runnable) -> void` seam, not an OpenTelemetry type, so the
+harness's shared driver stays off the tracing SDK the way the product's own ports do. Every other call
+site passes the two no-op defaults and is unaffected.
+
+**Four span kinds stitch one trace**, and only two of them are product code:
+
+| Span | Kind | Emitted by |
+|---|---|---|
+| `tandem.benchmark.write` | `INTERNAL` | This demo — opens it around each unit of work (`WriteSpanScope`), current on the thread that calls `repository.insert`, so `OtelTracePropagator.capture()` has something real to read. Not shipped: a real caller's own domain-transaction span plays this role, which is why HLD-tracing.md never specifies one — Tandem only ever captures whatever is already current. |
+| *(the outbox dwell)* | — | Nobody. The gap between the write span ending and the publish span starting is deliberately unspannned — the gap itself, read on the waterfall, is what makes the async boundary HLD-tracing.md §1 describes visible. |
+| `tandem.relay.publish` | `PRODUCER` | `OtelTandemSpanRecorder` — real product code, instrumented mode. |
+| `tandem.benchmark.consume` | `CONSUMER` | This demo — extracts `traceparent`/`tracestate` back out of the Kafka headers the relay already copied the row's captured context into (HLD-tracing.md §3: no product change needed for propagation to reach here) and opens a child span. A real consumer instrumenting itself would do the same thing. |
+
+**Correlation id, shown without standing up the Admin API.** Every unit of work carries
+`correlation-id = "biz-" + aggregateId` — genuinely 1:n, since an aggregate's later events share it —
+captured the dependency-free way via `TandemContext` and merged with the trace context through
+`TracePropagator.composite(...)` (HLD-tracing.md §4.1, item 5's slice 7). The run prints the exact
+`tandem outbox search --correlation-id <id>` an operator would run next. Running `tandem-admin` inside
+this benchmark was considered and rejected: the relay here is assembled by hand without Spring (§3), and
+standing up a Spring Boot admin app would be far more machinery than the join key needs to demonstrate.
+
+**A real bug, found only by running it, not by inspection:** Tempo 2.7.2's OTLP/HTTP receiver defaults
+to binding `localhost:4318` **inside the container** when the config leaves `endpoint` unset — confirmed
+via `docker logs` (`endpoint=localhost:4318`). Every export from outside — including through Docker's
+own published port mapping — failed with `Connection reset`, not a clean refusal, because the TCP
+handshake completes against Docker's proxy before the loopback-only bind inside drops it; the JVM's
+OTel SDK logged `SEVERE: Failed to export spans` on a tight retry loop and no trace ever reached Tempo,
+even though the container's own `/ready` health check passed throughout. Fixed with an explicit
+`endpoint: 0.0.0.0:4318` in the generated `tempo.yml`. **Verified past "it compiled":** queried Tempo's
+own `/api/search` and `/api/traces/<id>` directly against a live run — real traces present, correct
+span kinds, correct parent-child linkage (all four spans share one trace id), the outbox dwell gap
+visible as real elapsed time between the write span ending and the publish span starting (~40ms on this
+Mac), and `tandem.correlation_id` landing on every span as designed.
+
+**Direction asymmetry, unlike §6.3's Prometheus scraping.** Prometheus reaches *into* the JVM
+(`host.testcontainers.internal`) to scrape it; the JVM pushes spans *out* to Tempo's own mapped port
+like any other OTLP client of a container — the two signals in this shared stack travel in opposite
+directions, which is also why only the metrics side needed `Testcontainers.exposeHostPorts`.
+
+**The traces dashboard panel** is a `type: "table"` panel running `queryType: "traceql"` with the query
+string `{resource.service.name="tandem-benchmark"}` — a list of recent traces whose Trace ID column
+carries the datasource's internal data link, so one click opens the full waterfall. Neither half of that
+pairing is interchangeable with the plausible-looking alternative (discovery 14 below), and no
+annotation mechanics (§6.3's hard-won `dashboardUID` lesson) apply here: a trace list has no timeline to
+paint a vertical line on.
+
 ---
 
 ## 7. `RampController` — adaptive rate search (S1)
@@ -794,6 +860,10 @@ no measurable time. No product code involved.
   (§6.3). Same status — out of `test`/`check` and out of `loadTest`. ~3 minutes of scripted phases, then
   it holds the Grafana stack open until Enter; `--args="--hold=<seconds>"` for a non-interactive run.
   Needs Docker for two containers beyond the usual Postgres/Kafka pair.
+- **Tracing demo:** `./gradlew :tandem-benchmark:tracingDashboardDemo` → `TracingDashboardDemo.main`
+  (§6.4). Same status — out of `test`/`check` and out of `loadTest`. ~40s of live traffic, then holds
+  the Grafana traces view open until Enter; `--args="--hold=<seconds>"` for a non-interactive run.
+  Needs Docker for three containers beyond the usual Postgres/Kafka pair (Prometheus + Grafana + Tempo).
 - **`--duration=<seconds>`** overrides whichever base config's `duration` (applied after
   `--smoke`/`--demo`) — for a run longer than `--demo`'s 20s but far short of the 10-minute full-run
   default. S3 is safe to include regardless: its own drive phase and drain timeout are both capped
@@ -870,9 +940,10 @@ at their real defaults (unlike `toSmoke()`), caps `maxConnections ≤ 16` and `a
 
 **In:** the harness above — `BenchmarkEnvironment` (+ `RelayInstance`, `relayConfigBuilder()`,
 `newRelayInstance(...)`), `LoadGenerator` (+ `TransactionalUnitOfWork`, `CommitTimestamps`,
-`AggregateSelector`), `CorrelationConsumer` + `LatencyRecorder`, `BenchmarkMetrics` + `LagProbe`,
-`FaultInjector`/`FaultInjectingDispatcher`, `RampController`, scenarios S1–S6 and S8, the `loadTest`
-entrypoint, and the CI smoke test. PostgreSQL only.
+`AggregateSelector`, `WriteSpanScope`), `CorrelationConsumer` + `LatencyRecorder`, `BenchmarkMetrics` +
+`LagProbe`, `FaultInjector`/`FaultInjectingDispatcher`, `RampController`, scenarios S1–S6 and S8, the
+`loadTest` entrypoint, the CI smoke test, and the three observability demos (`LagGaugeDemo` §6.2,
+`MetricsDashboardDemo` §6.3, `TracingDashboardDemo` §6.4). PostgreSQL only.
 
 **Out (later):** S7 causal-ordering overhead (needs the feature); MySQL repetition (needs the MySQL
 DDL, open question Q28); distributed/multi-host runs (single-clock latency is out of scope,
@@ -888,8 +959,9 @@ evaluate is undecided, and the number needs the reference baseline to mean anyth
 
 ## 12. Discoveries during implementation (delta from the original design)
 
-Recorded here so the reasoning isn't re-derived later. All were found via real Docker-container runs
-(`SmokeLoadTest`, and later `LoadTestRunner --demo`), not by inspection:
+Recorded here so the reasoning isn't re-derived later. All were found by actually running the harness
+against real Docker containers (`SmokeLoadTest`, later `LoadTestRunner --demo`, and the §6.2–§6.4
+demos) rather than from the design:
 
 1. **The lag signal had no product-side source at all** (§6) — the original design assumed
    `TandemMetrics.recordLagAgeSeconds` was the ramp signal, but nothing in the relay called it, so
@@ -953,3 +1025,21 @@ Recorded here so the reasoning isn't re-derived later. All were found via real D
     condition (found by re-running it until it reproduced, not by inspection). Fixed in both places by
     additionally requiring every instance to hold at least half of an even share before treating the
     partition as stable.
+13. **Tempo 2.7.2's OTLP/HTTP receiver binds `localhost` by default, not `0.0.0.0`** (§6.4) — found only
+    by running `TracingDashboardDemo` and seeing every span export fail with `Connection reset` even
+    though the container's own `/ready` health check passed. `docker logs` showed
+    `endpoint=localhost:4318`; the loopback-only bind rejects a connection arriving through Docker's own
+    published port mapping, and the JVM-side symptom (a reset mid-handshake) gives no hint that the fix
+    is server-side config, not a networking or Testcontainers issue. Fixed with an explicit
+    `endpoint: 0.0.0.0:4318` in the generated config.
+14. **Grafana's traces *panel* and the `traceqlSearch` *query type* are both the wrong half of the
+    obvious-looking pair** (§6.4) — the traces dashboard rendered an empty panel while Tempo's own
+    `/api/search` returned the traces fine, so the fault was entirely in the dashboard JSON, and it was
+    two independent defects at once. First, `queryType: "traceqlSearch"` builds its query from the
+    target's `filters` array and **silently ignores the `query` string**; with no `filters` the
+    generated query is empty, so the authored `{resource.service.name="tandem-benchmark"}` never ran. A
+    TraceQL string only takes effect under `queryType: "traceql"`. Second, `type: "traces"` renders a
+    *single* trace's span hierarchy, not search results — handed the tabular frame a search returns, it
+    prints "No data found in response". A list of recent traces is a `table` panel; the Trace ID column's
+    internal data link is what opens the waterfall. Both failures look identical from the outside (an
+    empty panel, no error), which is why the combination survived until someone opened the dashboard.

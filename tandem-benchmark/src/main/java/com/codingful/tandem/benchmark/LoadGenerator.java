@@ -1,6 +1,7 @@
 package com.codingful.tandem.benchmark;
 
 import com.codingful.tandem.core.OutboxMessage;
+import com.codingful.tandem.core.port.TracePropagator;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -9,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -46,6 +48,7 @@ public final class LoadGenerator implements AutoCloseable {
     private final AggregateSelector selector;
     private final byte[] payload;
     private final CommitTimestamps commitTimestamps;   // nullable — only set in ACCURATE latency mode
+    private final WriteSpanScope spanScope;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Semaphore inFlightPermits;
 
@@ -60,13 +63,44 @@ public final class LoadGenerator implements AutoCloseable {
 
     public LoadGenerator(DataSource rawDataSource, int bucketCount, int maxInFlight, AggregateSelector selector,
                           int payloadBytes, CommitTimestamps commitTimestamps) {
+        this(rawDataSource, bucketCount, maxInFlight, selector, payloadBytes, commitTimestamps,
+                TracePropagator.NOOP, WriteSpanScope.NOOP);
+    }
+
+    /**
+     * As the six-argument constructor, plus the two collaborators only {@link TracingDashboardDemo}
+     * needs (§6.4) — both default to a no-op above, so every existing call site is unaffected.
+     *
+     * @param tracePropagator captures the write span opened by {@code spanScope} into the row's headers,
+     *                        the same seam {@code JdbcOutboxRepository} exposes for any adapter
+     * @param spanScope       opens (and closes) the span each unit of work runs inside, so
+     *                        {@code tracePropagator.capture()} — called from within {@code insertOne}
+     *                        via {@code repository.insert} — has a live context to read. A generic
+     *                        {@code Runnable}-wrapping seam rather than an OTel type, so this module
+     *                        stays off the tracing SDK the way {@link JdbcOutboxRepository} itself does.
+     */
+    public LoadGenerator(DataSource rawDataSource, int bucketCount, int maxInFlight, AggregateSelector selector,
+                          int payloadBytes, CommitTimestamps commitTimestamps, TracePropagator tracePropagator,
+                          WriteSpanScope spanScope) {
         this.unitOfWork = new TransactionalUnitOfWork(rawDataSource);
-        this.repository = new JdbcOutboxRepository(unitOfWork.transactionAware(), bucketCount);
+        this.repository = new JdbcOutboxRepository(unitOfWork.transactionAware(), bucketCount, tracePropagator);
         this.selector = selector;
         this.payload = referencePayload(payloadBytes);
         this.commitTimestamps = commitTimestamps;
+        this.spanScope = Objects.requireNonNull(spanScope, "spanScope");
         this.inFlightPermits = new Semaphore(maxInFlight);
         seedAggregates(rawDataSource, selector.universe());
+    }
+
+    /**
+     * Wraps one unit of work in a span, so a {@link TracePropagator} reading the ambient context during
+     * that work captures something real. No-op by default (every scenario but the tracing demo).
+     */
+    @FunctionalInterface
+    public interface WriteSpanScope {
+        WriteSpanScope NOOP = (aggregateId, work) -> work.run();
+
+        void run(String aggregateId, Runnable work);
     }
 
     /** Starts the pacer thread offering inserts at {@code ratePerSecond}. */
@@ -153,29 +187,33 @@ public final class LoadGenerator implements AutoCloseable {
     private void insertOne() {
         String aggregateId = selector.nextAggregateId();
         attempted.incrementAndGet();
-        try {
-            long seq = unitOfWork.runInTransaction(conn -> {
-                long version = lockAndBumpVersion(conn, aggregateId);
-                OutboxMessage message = OutboxMessage.builder()
-                        .aggregateId(aggregateId)
-                        .aggregateType(AGGREGATE_TYPE)
-                        .type("bench.event")
-                        .seq(version)
-                        .payload(payload)
-                        .contentType("application/json")
-                        .header(BenchmarkHeaders.T0_NANOS, Long.toString(System.nanoTime()))
-                        .build();
-                repository.insert(message);
-                return version;
-            });
-            if (commitTimestamps != null) {
-                commitTimestamps.recordCommit(aggregateId, seq, System.nanoTime());
+        // The whole unit of work runs inside the span (default no-op): the write span must still be
+        // current when repository.insert calls tracePropagator.capture() deep inside runInTransaction.
+        spanScope.run(aggregateId, () -> {
+            try {
+                long seq = unitOfWork.runInTransaction(conn -> {
+                    long version = lockAndBumpVersion(conn, aggregateId);
+                    OutboxMessage message = OutboxMessage.builder()
+                            .aggregateId(aggregateId)
+                            .aggregateType(AGGREGATE_TYPE)
+                            .type("bench.event")
+                            .seq(version)
+                            .payload(payload)
+                            .contentType("application/json")
+                            .header(BenchmarkHeaders.T0_NANOS, Long.toString(System.nanoTime()))
+                            .build();
+                    repository.insert(message);
+                    return version;
+                });
+                if (commitTimestamps != null) {
+                    commitTimestamps.recordCommit(aggregateId, seq, System.nanoTime());
+                }
+                insertedKeys.add(aggregateId + '#' + seq);
+                succeeded.incrementAndGet();
+            } catch (Exception e) {
+                failed.incrementAndGet();
             }
-            insertedKeys.add(aggregateId + '#' + seq);
-            succeeded.incrementAndGet();
-        } catch (Exception e) {
-            failed.incrementAndGet();
-        }
+        });
     }
 
     private long lockAndBumpVersion(Connection conn, String aggregateId) throws SQLException {

@@ -363,6 +363,19 @@ down, or pass `--args="--hold=<seconds>"` to close it automatically instead. See
 [LLD-benchmark.md §6.3](docs/LLD-benchmark.md) for what each panel means, including the alerting
 gap the first real runs found — the reason `blocked.count` exists.
 
+The same benchmark's `tracingDashboardDemo` does the same for traces: a real OpenTelemetry SDK
+exports through a real Tempo, read on the same Grafana over a second datasource, so one full trace
+— write, the outbox dwell, `tandem.relay.publish`, and the consumer — can be opened as a waterfall
+instead of taken on faith.
+
+```bash
+./gradlew :tandem-benchmark:tracingDashboardDemo
+```
+
+See [LLD-benchmark.md §6.4](docs/LLD-benchmark.md) for what stitches the trace together and which
+spans are the shipped product versus the demo's own stand-ins for a caller's domain span and a
+consumer.
+
 ## Documentation
 
 | Document | Contents |
