@@ -17,6 +17,9 @@ dependencies {
     // Optional payload serializer — auto-configured only when Jackson is on the consumer's classpath
     // (LLD-spring-producer §2); never forced, hence compile-only.
     compileOnly(libs.jackson.databind)
+    // Optional distributed-trace-context bridge — auto-configured only when the application already runs
+    // Micrometer Tracing (HLD-tracing.md §5); never forced, hence compile-only.
+    compileOnly(libs.micrometer.tracing)
     // Spring Boot always ships SLF4J; declaring it compile-only adds nothing to the footprint.
     compileOnly(libs.slf4j.api)
 
@@ -32,6 +35,12 @@ dependencies {
     testImplementation(libs.spring.aspects)
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.jackson.databind)
+    // A real tracer and a real W3C propagator, so the bridge is proven against a genuine traceparent
+    // rather than a hand-written stand-in — and so each matrix line exercises its own Boot generation's
+    // micrometer-tracing and OpenTelemetry SDK releases.
+    testImplementation(libs.micrometer.tracing)
+    testImplementation(libs.micrometer.tracing.bridge.otel)
+    testImplementation(libs.opentelemetry.sdk)
     testImplementation(libs.slf4j.api)
     // A real SLF4J binding with a working MDCAdapter — slf4j-simple's is NOPMDCAdapter, a true no-op
     // (verified empirically), so the trace-capture tests need Logback instead to prove the MDC-based
@@ -69,6 +78,9 @@ dependencies {
     bootLatestThreeTestRuntimeClasspath(libs.spring.aspects)
     bootLatestThreeTestRuntimeClasspath(libs.spring.jdbc)
     bootLatestThreeTestRuntimeClasspath(libs.jackson.databind)
+    bootLatestThreeTestRuntimeClasspath(libs.micrometer.tracing)
+    bootLatestThreeTestRuntimeClasspath(libs.micrometer.tracing.bridge.otel)
+    bootLatestThreeTestRuntimeClasspath(libs.opentelemetry.sdk)
     bootLatestThreeTestRuntimeClasspath(libs.slf4j.api)
     bootLatestThreeTestRuntimeClasspath(libs.logback.classic)
     bootLatestThreeTestRuntimeClasspath(project(":tandem-test"))
@@ -85,6 +97,9 @@ dependencies {
     bootFourTestRuntimeClasspath(libs.spring.aspects)
     bootFourTestRuntimeClasspath(libs.spring.jdbc)
     bootFourTestRuntimeClasspath(libs.jackson.databind)
+    bootFourTestRuntimeClasspath(libs.micrometer.tracing)
+    bootFourTestRuntimeClasspath(libs.micrometer.tracing.bridge.otel)
+    bootFourTestRuntimeClasspath(libs.opentelemetry.sdk)
     bootFourTestRuntimeClasspath(libs.slf4j.api)
     bootFourTestRuntimeClasspath(libs.logback.classic)
     bootFourTestRuntimeClasspath(project(":tandem-test"))

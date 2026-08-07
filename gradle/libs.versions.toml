@@ -67,6 +67,17 @@ micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "mic
 # Benchmark-only: the registry the metrics dashboard demo scrapes from (LLD-benchmark §6.3). Never a
 # dependency of tandem-micrometer itself, which stays registry-agnostic.
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
+# The distributed-tracing API the Spring modules bridge to (HLD-tracing.md §5). No version of its own:
+# managed by the already-imported Spring Boot BOM, so each line of the compatibility matrix resolves the
+# micrometer-tracing release its own Boot generation ships (1.3.x / 1.5.x / 1.7.x). The API those releases
+# expose to this project — Tracer, Propagator, Span, Span.Builder, TraceContext, CurrentTraceContext — is
+# byte-identical across them (verified with javap), which is what lets one artifact serve every line.
+micrometer-tracing = { module = "io.micrometer:micrometer-tracing" }
+# Test-only: a real tracer/propagator pair, so the bridge is exercised against a genuine W3C traceparent
+# and real exported spans rather than a hand-written stand-in.
+micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 # Test-only, tandem-spring-producer: a working MDCAdapter (slf4j-simple's is NOPMDCAdapter — a true

@@ -210,6 +210,7 @@ public interface TandemMetrics {                       // §7
 public interface TracePropagator {                     // §7.1
     default boolean isEnabled() { return false; }
     Map<String,String> capture();   // {} when disabled
+    static TracePropagator composite(TracePropagator... delegates);  // merge; earlier wins on collision
 }
 
 public interface CausalContext {                       // §9

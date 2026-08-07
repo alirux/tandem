@@ -1,7 +1,8 @@
 # Tandem — Trace & Correlation Propagation (Design Note)
 
-**Version:** 1.1  
-**Status:** Reviewed — design fully decided, not yet implemented  
+**Version:** 1.2  
+**Status:** Implemented for Spring — propagation and instrumented mode both ship in the
+`tandem-spring-*` modules; the standalone OpenTelemetry adapter (§5) is the one piece still open  
 **Companion to:** HLD §7.1 (Trace & Correlation Propagation)
 
 Propagate distributed-tracing and correlation identifiers across the asynchronous outbox
@@ -139,10 +140,17 @@ leaves it `NULL`, and an older reader never selects it.
     reads a configured MDC key, falling back to the explicit `TandemContext` API — no
     tracing library needed. Gated by `tandem.tracing.enabled` (explicit only, §9).
     **Implemented.**
-  - **Spring / Micrometer Tracing**: the real distributed-trace-context bridge (`traceparent`/
-    `tracestate`), covering the Spring majority with no extra module. **Not yet built** —
-    needs its own dependency/version research (no `micrometer-tracing` coordinate exists in
-    the project yet).
+  - **Spring / Micrometer Tracing** (`MicrometerTracePropagator`, in `tandem-spring-producer`):
+    the real distributed-trace-context bridge, covering the Spring majority with no extra module.
+    Gated by `tandem.tracing.enabled`, and merged with the correlation-id adapter above via
+    `TracePropagator.composite(...)` — the two identifiers come from independent sources (§2), so
+    an application may have either without the other. **Implemented.**
+    Capture delegates to the application's own `Propagator` bean rather than formatting a
+    `traceparent` directly, so whatever propagation format the application configured is what lands
+    in the row — W3C under Spring Boot's default, `b3` under a B3 configuration. Writing W3C
+    unconditionally would produce a header the application's own consumers do not read. A
+    B3-configured application therefore gets propagation but no relay publish span, which reads
+    `traceparent` to find its parent.
   - **OpenTelemetry** (optional `tandem-tracing-otel` module): for non-Spring users; uses
     the OTel `TextMapPropagator` to capture `Context.current()`. **Not yet built.**
 - **Relay-side span-emission port:** `TandemSpanRecorder` (in `tandem-core`): `startPublishSpan(...)`
@@ -151,9 +159,20 @@ leaves it `NULL`, and an older reader never selects it.
   (row id, aggregate type/id, attempts, topic, `traceparent`/`tracestate`, `correlation-id`), not a
   generic header map, so an adapter is structurally unable to attach a payload or an arbitrary
   header value to a span (§6.4). Wired into `KafkaRelay.dispatch(...)` (start after a successful
-  encode, end in the producer's send callback). Real adapters ship in `tandem-spring-relay` /
-  `tandem-tracing-otel` — **not yet built**, same dependency gap as the Micrometer Tracing bridge
-  above.
+  encode, end in the producer's send callback).
+  - **Spring / Micrometer Tracing** (`MicrometerTandemSpanRecorder`, in `tandem-spring-relay`):
+    resolves the parent by handing the row's `traceparent`/`tracestate` to the application's own
+    `Propagator`, tags the span with the identifiers of §6.4 under uniform `tandem.*` names, and
+    ends it — success or failure — from the dispatch completion callback. Gated by its own explicit
+    `tandem.tracing.publish-span` flag, separate from the write side's `tandem.tracing.enabled`
+    because under the split topology the two run in different processes and the costs differ (a
+    header on the row versus export volume in the backend). **Implemented.**
+    **A row carrying no `traceparent` gets no span**, rather than a root span: the relay would
+    otherwise become the root of a new trace holding one publish and nothing about the business
+    operation behind it — the same orphan outcome §9 rejected when it ruled out force-sampling.
+    Instrumented mode therefore builds on propagation mode.
+  - **OpenTelemetry** (optional `tandem-tracing-otel` module), for non-Spring users — **not yet
+    built**.
 - **Search side:** the captured `correlation-id` is also stored in its own indexed column and
   exposed as an Admin API search filter — §4.1, the incident-time lookup.
 - **Correlation id** needs no tracing library: read from an MDC key (default) or set via an

@@ -6,6 +6,8 @@ import com.codingful.tandem.core.port.TracePropagator;
 import com.codingful.tandem.jdbc.BucketCountGuard;
 import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import javax.sql.DataSource;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.springframework.beans.factory.ObjectProvider;
@@ -29,18 +31,29 @@ import org.springframework.transaction.support.TransactionTemplate;
  * candidate ({@link ConditionalOnSingleCandidate}) — it resolves the {@code @Primary} one when several
  * exist and backs off, rather than guessing, when the choice is ambiguous. This module never pulls Kafka.
  *
- * <p>The ordering is declared by <b>name</b>, listing both generations' coordinates: Boot 4 moved these
- * two autoconfigurations out of {@code spring-boot-autoconfigure} into their own modules, so a class
- * literal would name a type that does not exist there and the ordering would be silently lost — one jar
- * has to satisfy both lines (LLD-spring-config §1.1). Names that match nothing are ignored.
+ * <p>The ordering is declared by <b>name</b>, listing both generations' coordinates: Boot 4 moved every
+ * one of these autoconfigurations out of {@code spring-boot-autoconfigure} (and out of
+ * {@code spring-boot-actuator-autoconfigure}) into its own module, so a class literal would name a type
+ * that does not exist there and the ordering would be silently lost — one jar has to satisfy both lines
+ * (LLD-spring-config §1.1). Names that match nothing are ignored. The tracing entries matter because
+ * {@link #tandemMicrometerTracePropagator} is conditional on the {@code Tracer}/{@code Propagator} beans
+ * those autoconfigurations contribute: evaluated too early, the condition sees no tracer and the write
+ * side silently falls back to correlation-id-only capture.
  */
 @AutoConfiguration(afterName = {
         // Spring Boot 3.x
         "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
         "org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration",
-        // Spring Boot 4.x — relocated into spring-boot-jdbc / spring-boot-transaction
+        "org.springframework.boot.actuate.autoconfigure.tracing.MicrometerTracingAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.tracing.BraveAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.tracing.OpenTelemetryAutoConfiguration",
+        // Spring Boot 4.x — relocated into spring-boot-jdbc / spring-boot-transaction and, for tracing,
+        // into spring-boot-micrometer-tracing{,-brave,-opentelemetry}
         "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
-        "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration"})
+        "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.opentelemetry.autoconfigure.OpenTelemetryTracingAutoConfiguration"})
 @ConditionalOnSingleCandidate(DataSource.class)
 @EnableConfigurationProperties({TandemOutboxProperties.class, TandemTracingProperties.class})
 public class TandemProducerAutoConfiguration {
@@ -66,10 +79,43 @@ public class TandemProducerAutoConfiguration {
     }
 
     /**
-     * Correlation-id-only trace capture (HLD-tracing.md §9), contributed only when
-     * {@code tandem.tracing.enabled=true} — never from a tracing adapter's mere classpath presence, so
-     * an unrelated dependency cannot silently turn this on. MDC is assumed present (Spring Boot always
-     * ships SLF4J); the real distributed trace context (Micrometer Tracing bridge) is wired separately.
+     * Full trace capture — the distributed trace context <i>and</i> the correlation id (HLD-tracing.md
+     * §3/§5) — contributed when the application runs Micrometer Tracing. The two are merged rather than
+     * folded into one adapter because they are independent identifiers from independent sources (§2):
+     * an application may well have a correlation id and no active trace, or the reverse.
+     *
+     * <p>Like every capture bean it is gated on the explicit {@code tandem.tracing.enabled} flag, never on
+     * the tracing library's mere presence — a transitively-pulled dependency must not silently start
+     * writing headers onto outbox rows (§9). Declared before {@link #tandemTracePropagator} so that, when
+     * both apply, this is the one that wins and the correlation-id-only bean backs off.
+     *
+     * <p>The class and bean conditions sit on the bean method, not on a nested {@code @Configuration},
+     * which Spring Boot 4 would not process (LLD-spring-config §1.1). Spring reads those annotations from
+     * ASM metadata, so naming the Micrometer types <i>there</i> is safe when the library is absent — but
+     * it still reflects over every method of this class to build its bean definitions, so an optional type
+     * must not appear in a method's <b>erased signature</b>. Hence {@link ObjectProvider}: the type
+     * survives only as a generic argument, which erasure removes. Declaring the parameters as
+     * {@code Tracer}/{@code Propagator} directly compiles and passes the isolated wiring tests, then fails
+     * every application that does not have Micrometer Tracing with a {@code NoClassDefFoundError} — the
+     * conditions never get the chance to back the bean off.
+     */
+    @Bean
+    @ConditionalOnClass(Tracer.class)
+    @ConditionalOnBean({Tracer.class, Propagator.class})
+    @ConditionalOnMissingBean(TracePropagator.class)
+    @ConditionalOnProperty(prefix = "tandem.tracing", name = "enabled", havingValue = "true")
+    TracePropagator tandemMicrometerTracePropagator(ObjectProvider<Tracer> tracer,
+            ObjectProvider<Propagator> propagator, TandemTracingProperties properties) {
+        return TracePropagator.composite(
+                new MicrometerTracePropagator(tracer.getObject(), propagator.getObject()),
+                new MdcCorrelationTracePropagator(properties.correlationIdMdcKey()));
+    }
+
+    /**
+     * Correlation-id-only trace capture (HLD-tracing.md §9), the fallback when the application has no
+     * tracing library — contributed only when {@code tandem.tracing.enabled=true}, never from a tracing
+     * adapter's mere classpath presence, so an unrelated dependency cannot silently turn this on. MDC is
+     * assumed present (Spring Boot always ships SLF4J).
      */
     @Bean
     @ConditionalOnMissingBean(TracePropagator.class)

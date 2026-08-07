@@ -4,6 +4,7 @@ import com.codingful.tandem.core.exception.TandemConfigurationException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
+import com.codingful.tandem.core.port.TandemSpanRecorder;
 import com.codingful.tandem.core.port.TopicRouter;
 import com.codingful.tandem.jdbc.BackoffStrategy;
 import com.codingful.tandem.jdbc.BucketSource;
@@ -14,14 +15,18 @@ import com.codingful.tandem.jdbc.RelayControlSource;
 import com.codingful.tandem.jdbc.WorkerPool;
 import com.codingful.tandem.kafka.KafkaRelay;
 import com.codingful.tandem.kafka.KafkaRelayConfig;
+import io.micrometer.tracing.propagation.Propagator;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
@@ -35,16 +40,28 @@ import org.springframework.context.annotation.Bean;
  * can replace any piece — most usefully a custom {@link TopicRouter}.
  *
  * <p>The ordering is declared by <b>name</b> for both generations: Boot 4 moved
- * {@code DataSourceAutoConfiguration} into {@code spring-boot-jdbc}, so a class literal would name a type
- * absent there and the ordering would be silently lost (LLD-spring-config §1.1).
+ * {@code DataSourceAutoConfiguration} into {@code spring-boot-jdbc} and every tracing autoconfiguration
+ * out of {@code spring-boot-actuator-autoconfigure}, so a class literal would name a type absent there
+ * and the ordering would be silently lost (LLD-spring-config §1.1). The tracing entries matter because
+ * {@link #tandemSpanRecorder} is conditional on the {@code Propagator} bean they contribute: evaluated
+ * too early, the condition sees none and the relay silently emits no publish span.
  */
 @AutoConfiguration(afterName = {
-        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",   // Spring Boot 3.x
-        "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration"})  // Spring Boot 4.x
+        // Spring Boot 3.x
+        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.tracing.MicrometerTracingAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.tracing.BraveAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.tracing.OpenTelemetryAutoConfiguration",
+        // Spring Boot 4.x — relocated into spring-boot-jdbc and
+        // spring-boot-micrometer-tracing{,-brave,-opentelemetry}
+        "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration",
+        "org.springframework.boot.micrometer.tracing.opentelemetry.autoconfigure.OpenTelemetryTracingAutoConfiguration"})
 @ConditionalOnSingleCandidate(DataSource.class)
 @ConditionalOnProperty(prefix = "tandem.relay", name = "enabled", matchIfMissing = true)
-@EnableConfigurationProperties({
-        TandemOutboxProperties.class, TandemRelayProperties.class, TandemKafkaProperties.class})
+@EnableConfigurationProperties({TandemOutboxProperties.class, TandemRelayProperties.class,
+        TandemKafkaProperties.class, TandemTracingProperties.class})
 public class TandemRelayAutoConfiguration {
 
     @Bean
@@ -113,9 +130,33 @@ public class TandemRelayAutoConfiguration {
         return TopicRouter.kebabWithSuffix(kafka.topicSuffix());
     }
 
+    /**
+     * Instrumented mode (HLD-tracing.md §6): the {@code tandem.relay.publish} span emitter, contributed
+     * only when the application runs Micrometer Tracing <b>and</b> asks for it explicitly — a tracing
+     * library on the classpath never turns span emission on by itself (§9). Absent, {@link KafkaRelay}
+     * falls back to {@link TandemSpanRecorder#NOOP} and only propagation mode is in force.
+     *
+     * <p>The conditions sit on the bean method, not a nested {@code @Configuration} that Spring Boot 4
+     * would not process (LLD-spring-config §1.1). Spring reads them from ASM metadata, so naming the
+     * Micrometer type there is safe when the library is absent — but it still reflects over every method
+     * of this class, so the type must not appear in a method's <b>erased signature</b>. Hence
+     * {@link ObjectProvider}, whose generic argument erasure removes: a bare {@code Propagator} parameter
+     * would fail every application without Micrometer Tracing with a {@code NoClassDefFoundError}, before
+     * any condition could back the bean off.
+     */
+    @Bean
+    @ConditionalOnClass(Propagator.class)
+    @ConditionalOnBean(Propagator.class)
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "tandem.tracing", name = "publish-span", havingValue = "true")
+    TandemSpanRecorder tandemSpanRecorder(ObjectProvider<Propagator> propagator) {
+        return new MicrometerTandemSpanRecorder(propagator.getObject());
+    }
+
     @Bean
     @ConditionalOnMissingBean
-    OutboxDispatcher tandemOutboxDispatcher(TandemKafkaProperties kafka, TopicRouter topicRouter) {
+    OutboxDispatcher tandemOutboxDispatcher(TandemKafkaProperties kafka, TopicRouter topicRouter,
+            ObjectProvider<TandemSpanRecorder> spanRecorder) {
         // tandem.kafka.source is the one key with no default. Checked here so the failure names the
         // property the operator has to set, instead of surfacing as a NullPointerException from the
         // CloudEvents config, several frames away from the configuration that caused it.
@@ -127,7 +168,8 @@ public class TandemRelayAutoConfiguration {
         Map<String, Object> producerConfig = new HashMap<>(kafka.producer());
         KafkaRelayConfig kafkaConfig =
                 new KafkaRelayConfig(kafka.source(), kafka.defaultContentType(), kafka.defaultDataSchema());
-        return new KafkaRelay(producerConfig, topicRouter, kafkaConfig);
+        return new KafkaRelay(producerConfig, topicRouter, kafkaConfig,
+                spanRecorder.getIfAvailable(() -> TandemSpanRecorder.NOOP));
     }
 
     @Bean

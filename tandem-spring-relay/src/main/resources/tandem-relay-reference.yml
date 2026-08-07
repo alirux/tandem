@@ -86,6 +86,19 @@ tandem:
     # max-publish-latency: 5m
 
   # ----------------------------------------------------------------------------------------------
+  # tandem.tracing — instrumented mode. Only takes effect when the application runs Micrometer
+  # Tracing (a Propagator bean present); without it the relay emits no span and ignores this.
+  # ----------------------------------------------------------------------------------------------
+  tracing:
+    # tandem.tracing.publish-span — emit one publish span per delivered record, parented to the trace
+    # captured on that row at insert time, so a trace shows the outbox dwell and the real send instant
+    # instead of a gap. Default: false — explicit only, never turned on just because a tracing library
+    # is on the classpath (HLD-tracing.md §9, which also names the span).
+    # Builds on the write side's capture: a row carrying no trace context gets no span, rather than an
+    # orphan trace holding a publish and nothing about the business operation behind it.
+    # publish-span: false
+
+  # ----------------------------------------------------------------------------------------------
   # tandem.kafka — the CloudEvents envelope and the Kafka producer.
   # ----------------------------------------------------------------------------------------------
   kafka:

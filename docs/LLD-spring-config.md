@@ -1,6 +1,6 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.4
+**Version:** 1.5
 **Status:** Implemented and released — both modules built and tested against Boot 3.3.13, **3.5.16**, **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
@@ -366,21 +366,57 @@ takes effect when that adapter is actually wired (a `MeterRegistry` bean present
 no-op `TandemMetrics` default ignores it. Nullable, same pattern as `TandemRelayProperties`: unset
 leaves `MicrometerTandemMetrics`'s own default in force (LLD-micrometer §2).
 
-### 2.6 `tandem.tracing.*` — correlation-id capture (`tandem-spring-producer`)
+### 2.6 `tandem.tracing.*` — trace capture and span emission
 
-| Property | Type | Default |
-|---|---|---|
-| `tandem.tracing.enabled` | boolean | `false` |
-| `tandem.tracing.correlation-id-mdc-key` | String | `correlationId` |
+| Property | Module | Type | Default |
+|---|---|---|---|
+| `tandem.tracing.enabled` | `tandem-spring-producer` | boolean | `false` |
+| `tandem.tracing.correlation-id-mdc-key` | `tandem-spring-producer` | String | `correlationId` |
+| `tandem.tracing.publish-span` | `tandem-spring-relay` | boolean | `false` |
 
-Bound by `TandemTracingProperties`, registered on `TandemProducerAutoConfiguration`. `enabled` gates
-a `TracePropagator` bean (`MdcCorrelationTracePropagator`) — **explicit only**: never auto-enabled
-because a tracing library happens to be on the classpath (HLD-tracing.md §9). When absent, the
-write-side repository falls back to `TracePropagator.NOOP`. The propagator reads
-`correlation-id-mdc-key` from SLF4J's MDC, falling back to the explicit `TandemContext` API when that
-key is unset; it carries no distributed trace context (`traceparent`/`tracestate`) — the Micrometer
-Tracing bridge for that is not yet built (HLD-tracing.md §5, §9's "OTel adapter module"/"Relay publish
-span" rows).
+One namespace, **two independently bound records** — `TandemTracingProperties` in each module, each
+registered on its own autoconfiguration. They are deliberately not merged: under the split topology
+the write side and the relay are usually separate processes configured separately, and the two
+decisions differ in cost (a header on the row versus export volume in the tracing backend).
+
+Every key here is **explicit only**: none is ever auto-enabled because a tracing library happens to be
+on the classpath (HLD-tracing.md §9).
+
+`enabled` gates the write side's `TracePropagator` bean; absent, the repository falls back to
+`TracePropagator.NOOP`. Which propagator is contributed depends on what the application runs:
+
+- **Micrometer Tracing present** (a `Tracer` and a `Propagator` bean) → `TracePropagator.composite` of
+  `MicrometerTracePropagator` (the distributed trace context, in the application's own propagation
+  format) and `MdcCorrelationTracePropagator`.
+- **Otherwise** → `MdcCorrelationTracePropagator` alone: the correlation id read from
+  `correlation-id-mdc-key` in SLF4J's MDC, falling back to the explicit `TandemContext` API when that
+  key is unset. No distributed trace context, since carrying one needs a tracing library.
+
+`publish-span` gates the relay's `TandemSpanRecorder` bean (`MicrometerTandemSpanRecorder`), which
+needs a `Propagator` bean; absent either, `KafkaRelay` falls back to `TandemSpanRecorder.NOOP` and only
+propagation mode is in force. It builds on the write side's capture — a row carrying no trace context
+gets no span (HLD-tracing.md §5).
+
+⚠️ An optional type must never appear in a `@Bean` method's **erased signature**. The conditions are
+read from ASM, so naming `Tracer`/`Propagator` in `@ConditionalOnClass`/`@ConditionalOnBean` is safe —
+but Spring reflects over every method of the configuration class to build its bean definitions, and a
+bare `Tracer` parameter then throws `NoClassDefFoundError` in any application without the library,
+before a condition can back the bean off. Both modules therefore take `ObjectProvider<Tracer>` /
+`ObjectProvider<Propagator>`, whose type argument erasure removes. The same reasoning is why the
+optional-Jackson bean takes `ObjectProvider<ObjectMapper>`.
+
+**No unit test in either module catches this**, and it is worth knowing why: `FilteredClassLoader`
+only makes the classpath *checks* fail while the configuration class stays loaded by the parent
+loader, so `@ConditionalOnClass` backs the bean off and the introspection never happens (verified by
+reintroducing the bug — the filtered-classloader tests stayed green). What catches it is a classpath
+genuinely without the library, i.e. `tandem-sample-spring`'s smoke integration test — one more reason
+that test earns its keep beyond covering producer and relay together (§1.2).
+
+⚠️ Both modules order their autoconfiguration **after the tracing autoconfigurations by name, listing
+both generations** — Boot 4 moved every one of them out of `spring-boot-actuator-autoconfigure` into
+`spring-boot-micrometer-tracing{,-brave,-opentelemetry}`. This is §1.1's rule, and the failure mode is
+the same silent one: evaluated too early, the `@ConditionalOnBean` sees no tracer and the feature
+quietly does nothing.
 
 ---
 
@@ -450,9 +486,11 @@ The write-side module contributes exactly the plain tier:
 2. contributes `OutboxRepository` = `new JdbcOutboxRepository(new TransactionAwareDataSourceProxy(dataSource), bucketCount, tracePropagator)`,
    where `tracePropagator` is whatever `TracePropagator` bean exists, or `TracePropagator.NOOP` when
    none does;
-3. contributes `TracePropagator` = `MdcCorrelationTracePropagator`, **only** when
-   `tandem.tracing.enabled=true` (§2.6) — a `@ConditionalOnProperty`, not a classpath check, so an
-   unrelated dependency landing SLF4J on the classpath cannot turn this on by itself.
+3. contributes `TracePropagator`, **only** when `tandem.tracing.enabled=true` (§2.6) — a
+   `@ConditionalOnProperty`, not a classpath check, so an unrelated dependency landing SLF4J or a
+   tracing library on the classpath cannot turn this on by itself. It is
+   `TracePropagator.composite(MicrometerTracePropagator, MdcCorrelationTracePropagator)` when the
+   application runs Micrometer Tracing, and `MdcCorrelationTracePropagator` alone otherwise.
 
 The `TransactionAwareDataSourceProxy` is load-bearing, not decoration: `JdbcOutboxRepository` inserts on
 whatever connection its `DataSource` hands it (its constructor does no I/O, LLD-jdbc), and the proxy hands
@@ -475,14 +513,18 @@ Conditional on `tandem.relay.enabled` (`@ConditionalOnProperty`, matchIfMissing 
 the relay module contributes the engine, each bean `@ConditionalOnMissingBean`:
 
 1. `TopicRouter` = `TopicRouter.kebabWithSuffix(tandem.kafka.topic-suffix)`;
-2. `OutboxDispatcher` = `new KafkaRelay(producerMap, topicRouter, kafkaRelayConfig)` — the constructor
-   is where the producer hardening runs and the effective `delivery.timeout.ms` is fixed;
+2. `OutboxDispatcher` = `new KafkaRelay(producerMap, topicRouter, kafkaRelayConfig, spanRecorder)` —
+   the constructor is where the producer hardening runs and the effective `delivery.timeout.ms` is
+   fixed; `spanRecorder` is whatever `TandemSpanRecorder` bean exists, or `TandemSpanRecorder.NOOP`;
 3. `OutboxStore` = `new JdbcOutboxStore(dataSource, tandem.relay.max-attempts)`;
 4. `TandemMetrics` = `TandemMetrics.NOOP` (a real Micrometer bean overrides it once `tandem-micrometer`
    exists — hence `@ConditionalOnMissingBean`);
 5. `BucketSource` = `BucketSource.forCoordination(relayConfig, dataSource)` — returns the in-process
    owner under `SINGLE`, the lease/member-backed one under `LEASE`, per `tandem.relay.coordination`;
-6. `WorkerPool` = the full-topology constructor
+6. `TandemSpanRecorder` = `MicrometerTandemSpanRecorder`, **only** when
+   `tandem.tracing.publish-span=true` and the application has a `Propagator` bean (§2.6); absent, the
+   relay emits no span and instrumented mode stays off;
+7. `WorkerPool` = the full-topology constructor
    `new WorkerPool(outboxStore, outboxDispatcher, relayConfig, tandemMetrics, Clock.systemUTC(), BackoffStrategy.fullJitter(), bucketSource)`.
 
 `tandem.relay.enabled=false` contributes none of these — the supported way to load the relay module

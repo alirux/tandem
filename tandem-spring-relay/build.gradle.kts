@@ -15,6 +15,9 @@ dependencies {
     // inherit it. The first optional dependency between two Tandem modules (LLD-micrometer §5, Q31).
     compileOnly(project(":tandem-micrometer"))
     compileOnly(libs.micrometer.core)
+    // Optional too: instrumented mode's span emitter is wired only when the application already runs
+    // Micrometer Tracing (HLD-tracing.md §6); never forced, hence compile-only.
+    compileOnly(libs.micrometer.tracing)
 
     // Generates META-INF/spring-configuration-metadata.json for IDE completion (LLD-spring-config §2.4).
     annotationProcessor(platform(libs.spring.boot.dependencies))
@@ -38,6 +41,12 @@ dependencies {
     // actually reaches MicrometerTandemMetrics needs a registry that renders one (mirrors the same
     // trade-off in tandem-micrometer's own test suite).
     testImplementation(libs.micrometer.registry.prometheus)
+    // A real tracer, propagator and in-memory span exporter, so the publish span is asserted as a real
+    // exported span with a real parent rather than through a hand-written stand-in.
+    testImplementation(libs.micrometer.tracing)
+    testImplementation(libs.micrometer.tracing.bridge.otel)
+    testImplementation(libs.opentelemetry.sdk)
+    testImplementation(libs.opentelemetry.sdk.testing)
     // The reference-configuration check shared with tandem-spring-producer (LLD-spring-config §2.4) —
     // internal-only, not published (see tandem-test/build.gradle.kts).
     testImplementation(testFixtures(project(":tandem-test")))
@@ -76,6 +85,10 @@ dependencies {
     bootLatestThreeTestRuntimeClasspath(project(":tandem-micrometer"))
     bootLatestThreeTestRuntimeClasspath(libs.micrometer.core)
     bootLatestThreeTestRuntimeClasspath(libs.micrometer.registry.prometheus)
+    bootLatestThreeTestRuntimeClasspath(libs.micrometer.tracing)
+    bootLatestThreeTestRuntimeClasspath(libs.micrometer.tracing.bridge.otel)
+    bootLatestThreeTestRuntimeClasspath(libs.opentelemetry.sdk)
+    bootLatestThreeTestRuntimeClasspath(libs.opentelemetry.sdk.testing)
     bootLatestThreeTestRuntimeClasspath(platform(libs.junit.bom))
     bootLatestThreeTestRuntimeClasspath(libs.junit.jupiter)
     bootLatestThreeTestRuntimeClasspath(libs.junit.platform.launcher)
@@ -91,6 +104,10 @@ dependencies {
     bootFourTestRuntimeClasspath(project(":tandem-micrometer"))
     bootFourTestRuntimeClasspath(libs.micrometer.core)
     bootFourTestRuntimeClasspath(libs.micrometer.registry.prometheus)
+    bootFourTestRuntimeClasspath(libs.micrometer.tracing)
+    bootFourTestRuntimeClasspath(libs.micrometer.tracing.bridge.otel)
+    bootFourTestRuntimeClasspath(libs.opentelemetry.sdk)
+    bootFourTestRuntimeClasspath(libs.opentelemetry.sdk.testing)
     bootFourTestRuntimeClasspath(platform(libs.junit.bom))
     bootFourTestRuntimeClasspath(libs.junit.jupiter)
     bootFourTestRuntimeClasspath(libs.junit.platform.launcher)

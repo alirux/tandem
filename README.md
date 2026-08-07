@@ -493,13 +493,17 @@ Not yet shipped, in no particular order:
 
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
-- **Optional, opt-in capabilities** — cross-aggregate causal ordering via Lamport clocks, and W3C
-  trace/correlation propagation. Each has a design document
-  ([causal-ordering.md](docs/causal-ordering.md), [HLD-tracing.md](docs/HLD-tracing.md)) and a
-  port already published in `tandem-core` (`TracePropagator`, `CausalContext`) that resolves to a
-  no-op today — visible in IDE autocomplete, but nothing references them yet. Treat them as
-  reserved API: off by default *by design*, so adopting one will stay a zero-cost,
-  per-capability opt-in.
+- **Cross-aggregate causal ordering** via Lamport clocks — designed
+  ([causal-ordering.md](docs/causal-ordering.md)), with a port already published in `tandem-core`
+  (`CausalContext`) that resolves to a no-op today: visible in IDE autocomplete, but nothing
+  references it yet. Treat it as reserved API — off by default *by design*, so adopting it will
+  stay a zero-cost opt-in.
+- **Trace propagation outside Spring.** W3C trace/correlation propagation
+  ([HLD-tracing.md](docs/HLD-tracing.md)) **ships for Spring applications**, in both modes:
+  `tandem.tracing.enabled` captures the trace context and correlation id onto the row at insert,
+  and `tandem.tracing.publish-span` additionally emits a relay publish span at the real send
+  instant. Both are off by default. A standalone `tandem-tracing-otel` adapter, for applications
+  that use OpenTelemetry without Spring, is not built yet.
 - **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
   supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
   obstacle — but until it lands, PostgreSQL is the only supported database.

@@ -6,16 +6,23 @@ import com.codingful.tandem.core.exception.TandemConfigurationException;
 import com.codingful.tandem.core.port.OutboxDispatcher;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.TandemMetrics;
+import com.codingful.tandem.core.port.TandemSpanRecorder;
 import com.codingful.tandem.core.port.TopicRouter;
 import com.codingful.tandem.jdbc.BucketSource;
 import com.codingful.tandem.jdbc.JdbcRelayControlSource;
 import com.codingful.tandem.jdbc.RelayConfig;
 import com.codingful.tandem.jdbc.RelayControlSource;
 import com.codingful.tandem.jdbc.WorkerPool;
+import io.micrometer.tracing.otel.bridge.OtelPropagator;
+import io.micrometer.tracing.propagation.Propagator;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import java.time.Duration;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -77,6 +84,51 @@ class TandemRelayAutoConfigurationTest {
                     // Unset keys keep RelayConfig's own defaults — the properties never shadow them.
                     assertThat(config.maxAttempts()).isEqualTo(RelayConfig.defaults().maxAttempts());
                 });
+    }
+
+    @Test
+    void GIVEN_an_application_running_a_tracer_WHEN_the_publish_span_is_asked_for_THEN_the_relay_emits_it() {
+        wiredRelay().withBean(Propagator.class, TandemRelayAutoConfigurationTest::w3cPropagator)
+                .withPropertyValues("tandem.tracing.publish-span=true")
+                .run(context -> assertThat(context.getBean(TandemSpanRecorder.class))
+                        .isInstanceOf(MicrometerTandemSpanRecorder.class));
+    }
+
+    @Test
+    void GIVEN_an_application_running_a_tracer_WHEN_the_publish_span_is_not_asked_for_THEN_no_span_is_emitted() {
+        wiredRelay().withBean(Propagator.class, TandemRelayAutoConfigurationTest::w3cPropagator)
+                .run(context -> assertThat(context).doesNotHaveBean(TandemSpanRecorder.class));
+    }
+
+    @Test
+    void GIVEN_no_tracing_at_all_WHEN_the_publish_span_is_asked_for_THEN_the_relay_still_starts() {
+        wiredRelay().withPropertyValues("tandem.tracing.publish-span=true")
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean(TandemSpanRecorder.class);
+                    assertThat(context).hasSingleBean(OutboxDispatcher.class);
+                });
+    }
+
+    /**
+     * With no tracing library available the relay must still start, simply without span emission. Same
+     * limit as the producer module's equivalent test: {@link FilteredClassLoader} only makes the classpath
+     * <i>checks</i> fail, so this pins the conditional back-off and not the erased-signature trap that
+     * breaks context creation outright — {@code tandem-sample-spring}'s smoke integration test, on a
+     * classpath genuinely without the library, is what catches that.
+     */
+    @Test
+    void GIVEN_an_application_without_any_tracing_library_WHEN_the_context_starts_THEN_the_relay_still_starts() {
+        wiredRelay().withClassLoader(new FilteredClassLoader(Propagator.class))
+                .withPropertyValues("tandem.tracing.publish-span=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(WorkerPool.class);
+                });
+    }
+
+    private static Propagator w3cPropagator() {
+        return new OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()),
+                SdkTracerProvider.builder().build().get("tandem-relay"));
     }
 
     @Test

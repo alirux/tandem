@@ -16,8 +16,11 @@ tandem:
     bucket-count: 256
   tracing:
     # tandem.tracing.enabled — capture trace/correlation context at insert time. Default: false.
-    # Off means no MDC lookup and no header added: a genuine opt-in, never auto-enabled just because
-    # a tracing adapter happens to be on the classpath (HLD-tracing.md §9).
+    # Off means no lookup and no header added: a genuine opt-in, never auto-enabled just because a
+    # tracing adapter happens to be on the classpath (HLD-tracing.md §9).
+    # On, an application running Micrometer Tracing captures both the distributed trace context (in
+    # whatever propagation format it configured) and the correlation id below; without a tracing
+    # library it captures the correlation id alone.
     enabled: false
     # tandem.tracing.correlation-id-mdc-key — the MDC key read for the correlation id when enabled.
     # Default: correlationId. Falls back to the explicit TandemContext API when this key is unset.
