@@ -21,7 +21,7 @@ micrometer = "1.13.15"
 # Not reachable through Kafka's compression usage, but tandem-kafka is published, so consumers
 # inherit the flagged coordinate on their runtime classpath. Constrained up in tandem-kafka/build.gradle.kts.
 lz4 = "1.11.1"
-cloudevents = "4.1.1"
+cloudevents = "5.0.0"
 testcontainers = "1.21.4"
 # Not a dependency Tandem declares — only a version floor for what Testcontainers drags in.
 # Testcontainers 1.21.4 (its newest release) still resolves commons-compress 1.24.0, which carries
