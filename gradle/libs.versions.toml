@@ -50,7 +50,7 @@ jakarta-servlet = "6.0.0"
 # javax.servlet/Spring 5 (checked against its POM) and cannot run on our Jakarta/Spring 6 baseline
 # regardless of version — behind a small hand-written Jakarta-based Request/Response adapter
 # (OpenApiConformance, test-only).
-openapi-request-validator = "2.46.1"
+openapi-request-validator = "3.0.0"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
