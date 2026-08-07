@@ -56,6 +56,22 @@ assertion cannot do. Run it when you change what the gauges report or how often 
 ./gradlew :tandem-benchmark:lagGaugeDemo
 ```
 
+Two more demos in the same module hold a live Grafana dashboard open instead of asserting on the
+signal in a test. Run `metricsDashboardDemo` when you change what the relay's Micrometer metrics
+report ([LLD-benchmark.md](docs/LLD-benchmark.md) §6.3):
+
+```bash
+./gradlew :tandem-benchmark:metricsDashboardDemo
+```
+
+Run `tracingDashboardDemo` when you change trace propagation or the relay's publish span — it
+exports one real trace, write through consume, to a Tempo container read on the same Grafana
+([LLD-benchmark.md](docs/LLD-benchmark.md) §6.4):
+
+```bash
+./gradlew :tandem-benchmark:tracingDashboardDemo
+```
+
 `tandem-cli` is entirely outside the Gradle build (its own `go.mod`, LLD-cli.md §2) — `./gradlew
 check` never touches it. Build and test it from `tandem-cli/`:
 
