@@ -14,7 +14,7 @@ spring-boot-v4 = "4.1.0"
 kafka = "3.9.2"
 # tandem-micrometer's own baseline — not tied to any Spring BOM (the module has no Spring dependency
 # at all). Matches what Boot 3.3.13 manages; Boot 4.1.0 manages 1.17.0, same major (LLD-micrometer §1).
-micrometer = "1.13.15"
+micrometer = "1.17.0"
 # Not a dependency Tandem declares — only a version floor for what kafka-clients drags in.
 # kafka-clients 3.9.2 resolves lz4-java 1.10.1, which carries a moderate advisory (the native
 # XXHash bindings can crash the JVM on out-of-range byte-array arguments), fixed in 1.11.1.
