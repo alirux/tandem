@@ -1,5 +1,7 @@
 package com.codingful.tandem.core.port;
 
+import com.codingful.tandem.core.TandemContext;
+import com.codingful.tandem.core.TandemHeaders;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,36 @@ public interface TracePropagator {
     /** Trace headers to attach to the outbox row; {@code {}} when disabled. */
     default Map<String, String> capture() {
         return Map.of();
+    }
+
+    /**
+     * The dependency-free correlation-id capture: reads whatever the caller set through
+     * {@link TandemContext}, so an application outside Spring gets the incident-time identifier of
+     * HLD-tracing.md §4.1 without adding a tracing library, a logging binding, or any other
+     * dependency to its write side (§1.3). Carries no distributed trace context — that needs a real
+     * tracing library, wired separately and merged in through {@link #composite}.
+     *
+     * <p>A Spring application uses {@code MdcCorrelationTracePropagator} instead, which reads the same
+     * id off the MDC key its logging already populates and falls back to {@link TandemContext} only
+     * where no MDC is active.
+     *
+     * @return a propagator capturing {@code correlation-id} from the current thread's
+     *         {@link TandemContext}, or nothing when none is set
+     */
+    static TracePropagator fromTandemContext() {
+        return new TracePropagator() {
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+
+            @Override
+            public Map<String, String> capture() {
+                String correlationId = TandemContext.currentCorrelationId();
+                return correlationId == null ? Map.of() : Map.of(TandemHeaders.CORRELATION_ID, correlationId);
+            }
+        };
     }
 
     /**

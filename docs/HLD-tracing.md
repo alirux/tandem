@@ -1,8 +1,9 @@
 # Tandem — Trace & Correlation Propagation (Design Note)
 
-**Version:** 1.2  
-**Status:** Implemented for Spring — propagation and instrumented mode both ship in the
-`tandem-spring-*` modules; the standalone OpenTelemetry adapter (§5) is the one piece still open  
+**Version:** 1.3  
+**Status:** Implemented — propagation and instrumented mode ship for Spring applications
+(`tandem-spring-*`) and for applications instrumenting themselves with the OpenTelemetry SDK
+directly (`tandem-tracing-otel`). Only the Tempo + Grafana demo (§9's verification item) remains.  
 **Companion to:** HLD §7.1 (Trace & Correlation Propagation)
 
 Propagate distributed-tracing and correlation identifiers across the asynchronous outbox
@@ -151,8 +152,20 @@ leaves it `NULL`, and an older reader never selects it.
     unconditionally would produce a header the application's own consumers do not read. A
     B3-configured application therefore gets propagation but no relay publish span, which reads
     `traceparent` to find its parent.
-  - **OpenTelemetry** (optional `tandem-tracing-otel` module): for non-Spring users; uses
-    the OTel `TextMapPropagator` to capture `Context.current()`. **Not yet built.**
+  - **OpenTelemetry** (`OtelTracePropagator`, in the optional `tandem-tracing-otel` module):
+    for applications that instrument themselves with the OpenTelemetry SDK directly rather than
+    through Spring. Capture works exactly like the Micrometer adapter above — delegates to the
+    application's own `OpenTelemetry` instance's configured `TextMapPropagator` rather than
+    formatting a `traceparent` directly, so a B3- or baggage-configured application still gets
+    the format its own consumers read, and returns no headers when no span is current. Only the
+    OTel *API* is redistributed; the SDK stays the application's own dependency. **Implemented.**
+  - **Correlation id without any tracing library** (`TracePropagator.fromTandemContext()`, in
+    `tandem-core`): reads whatever the caller set through `TandemContext`, so an application
+    outside Spring gets the incident-time identifier of §4.1 without adding a tracing library,
+    a logging binding, or any dependency at all to its write side (§1.3). The Spring equivalent,
+    `MdcCorrelationTracePropagator`, additionally reads a configured MDC key and falls back to
+    `TandemContext` — that MDC integration needs SLF4J, so it stays in `tandem-spring-producer`
+    rather than moving to core. **Implemented.**
 - **Relay-side span-emission port:** `TandemSpanRecorder` (in `tandem-core`): `startPublishSpan(...)`
   returns a `Span` handle ended from the dispatch completion callback (§6.2), never via a
   thread-local scope. Default `TandemSpanRecorder.NOOP`. Deliberately explicit parameters
@@ -171,8 +184,11 @@ leaves it `NULL`, and an older reader never selects it.
     otherwise become the root of a new trace holding one publish and nothing about the business
     operation behind it — the same orphan outcome §9 rejected when it ruled out force-sampling.
     Instrumented mode therefore builds on propagation mode.
-  - **OpenTelemetry** (optional `tandem-tracing-otel` module), for non-Spring users — **not yet
-    built**.
+  - **OpenTelemetry** (`OtelTandemSpanRecorder`, in the optional `tandem-tracing-otel` module):
+    the same span, built through the application's own `Tracer` and parented via its own
+    `TextMapPropagator`, for a relay running outside Spring. A row whose `traceparent` the
+    configured propagator cannot extract — absent, or in a format that propagator does not
+    read — gets no span, for the same orphan-trace reason. **Implemented.**
 - **Search side:** the captured `correlation-id` is also stored in its own indexed column and
   exposed as an Admin API search filter — §4.1, the incident-time lookup.
 - **Correlation id** needs no tracing library: read from an MDC key (default) or set via an
@@ -313,7 +329,7 @@ Admin API's replay endpoint reports the new trace id, with the original kept as 
 | Enablement | Explicit flag (`tandem.tracing.enabled`, default `false`) — never auto-enabled from a tracing adapter's mere presence on the classpath. A dependency pulled in transitively for an unrelated reason must not silently start capturing context and adding headers; opt-in means an explicit action. |
 | Correlation-id source | Both: an MDC key (default, e.g. `correlationId`) for zero-code propagation where one is already populated, and an explicit `TandemContext` API for call sites with no active MDC (batch jobs, Kafka listeners). |
 | Relay publish span | Off by default (propagation mode); instrumented mode requires its own explicit flag, for the same reason as enablement — the mere presence of a relay-side tracing adapter must not auto-enable span emission. |
-| OTel adapter module | Dedicated `tandem-tracing-otel`, for non-Spring users — same pattern as `tandem-micrometer`/`tandem-kafka`: an optional dependency stays isolated in its own module, never folded into one a client already depends on. |
+| OTel adapter module | Dedicated `tandem-tracing-otel`, for applications instrumenting themselves with the OpenTelemetry SDK directly — same pattern as `tandem-micrometer`/`tandem-kafka`: an optional dependency stays isolated in its own module, never folded into one a client already depends on. **Implemented** (§5): `OtelTracePropagator` + `OtelTandemSpanRecorder`. |
 | Sampling | Inherited unconditionally; no relay override (see above). |
 | Replay semantics | New trace + span link to the original (see above). |
 | Verification | Both: assert span structure in tests, and a runnable demo through a real tracing backend (Tempo + Grafana), mirroring `metricsDashboardDemo` (LLD-benchmark.md §6.3, backlog item 5). |

@@ -39,7 +39,7 @@ type-safe, best IDE support, and consistent with the `build.gradle.kts` assumed 
 | `tandem-kafka-streams` | `tandem-kafka-streams` | Optional — causal-ordering adapter (§9 HLD) |
 | `tandem-flink` | `tandem-flink` | Optional — causal-ordering adapter (§9 HLD) |
 | `tandem-micrometer` | `tandem-micrometer` | Optional — relay-side Micrometer adapter for the `TandemMetrics` port (§7 HLD) |
-| `tandem-tracing-otel` | `tandem-tracing-otel` | Optional — OpenTelemetry trace-capture adapter (§7.1 HLD) |
+| `tandem-tracing-otel` | `tandem-tracing-otel` | Optional — OpenTelemetry trace-capture and relay-span adapter, for applications outside Spring (§7.1 HLD, HLD-tracing.md §5) |
 | `tandem-admin` | `tandem-admin` | Optional — REST admin API, API-first (§7.2 HLD, admin-api.openapi.yaml) |
 | `tandem-benchmark` | *(not published)* | Internal — load/performance harness (see HLD-load-testing.md) |
 | `tandem-sample` | *(not published)* | Runnable end-to-end tutorial (plain Java, no Spring) |

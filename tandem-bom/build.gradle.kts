@@ -15,6 +15,7 @@ dependencies {
         api(project(":tandem-spring-producer"))
         api(project(":tandem-spring-relay"))
         api(project(":tandem-micrometer"))
+        api(project(":tandem-tracing-otel"))
         api(project(":tandem-admin"))
     }
 }

@@ -20,6 +20,13 @@ public interface TandemSpanRecorder {
     TandemSpanRecorder NOOP = new TandemSpanRecorder() {
     };
 
+    /**
+     * The span name every adapter emits, fixed so occurrences aggregate in the tracing backend and so
+     * two adapters over different tracing libraries produce the same trace to an operator. Its
+     * attribute vocabulary is {@link com.codingful.tandem.core.TandemSpanAttributes}.
+     */
+    String PUBLISH_SPAN_NAME = "tandem.relay.publish";
+
     /** {@code true} once a real adapter is wired; callers guard on this so the off-path costs nothing. */
     default boolean isEnabled() {
         return false;

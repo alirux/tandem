@@ -20,6 +20,7 @@ include(
     "tandem-spring-producer",
     "tandem-spring-relay",
     "tandem-micrometer",
+    "tandem-tracing-otel",
     "tandem-admin",
     "tandem-sample",
     "tandem-sample-spring",

@@ -207,16 +207,34 @@ public interface TandemMetrics {                       // §7
     void recordConfigInvalid(String check); // startup config invariant violated (e.g. rowLease ≤ delivery.timeout.ms); LLD-jdbc §3.5
 }
 
-public interface TracePropagator {                     // §7.1
+public interface TracePropagator {                     // §7.1, HLD-tracing.md §5
     default boolean isEnabled() { return false; }
     Map<String,String> capture();   // {} when disabled
     static TracePropagator composite(TracePropagator... delegates);  // merge; earlier wins on collision
+    static TracePropagator fromTandemContext();  // correlation id only, reads TandemContext, no library needed
+}
+
+public interface TandemSpanRecorder {                   // §7.1, HLD-tracing.md §5–§6 (relay-side, instrumented mode)
+    String PUBLISH_SPAN_NAME = "tandem.relay.publish";
+    default boolean isEnabled() { return false; }
+    Span startPublishSpan(long rowId, String aggregateType, String aggregateId, int attempts,
+            String topic, String traceparent, String tracestate, String correlationId);  // Span.NOOP when disabled
+
+    interface Span {
+        void end();
+        void end(Throwable failure);
+    }
 }
 
 public interface CausalContext {                       // §9
     OptionalLong inboundTimestamp();   // empty → mutation is a causal root
 }
 ```
+
+`TandemSpanAttributes` (also `tandem-core`) declares the `tandem.*` attribute names every
+`TandemSpanRecorder` adapter tags a span with — one declaration shared by the Micrometer
+(`tandem-spring-relay`) and OpenTelemetry (`tandem-tracing-otel`) adapters, so the two never drift
+apart on what an operator's saved dashboard query is written against.
 
 The **no-op defaults** make every capability zero-cost when off; callers also guard on
 `isEnabled()` before building any payload (HLD §7.1).

@@ -1,6 +1,7 @@
 package com.codingful.tandem.spring.relay;
 
 import com.codingful.tandem.core.TandemHeaders;
+import com.codingful.tandem.core.TandemSpanAttributes;
 import com.codingful.tandem.core.port.TandemSpanRecorder;
 import io.micrometer.tracing.propagation.Propagator;
 import java.util.HashMap;
@@ -25,13 +26,10 @@ import java.util.Objects;
  * force-sample. Instrumented mode therefore builds on propagation mode: with capture off at the write
  * side, or on a row whose trace was not sampled, this recorder is silent by design.
  *
- * <p>Attributes are structural identifiers only (§6.4) and are named uniformly under {@code tandem.*} —
- * never the payload, a header value, or an error body.
+ * <p>Attributes are the structural identifiers of {@link TandemSpanAttributes} only (§6.4) — never the
+ * payload, a header value, or an error body.
  */
 public final class MicrometerTandemSpanRecorder implements TandemSpanRecorder {
-
-    /** The span name, fixed so it aggregates across occurrences in the tracing backend. */
-    static final String PUBLISH_SPAN_NAME = "tandem.relay.publish";
 
     private final Propagator propagator;
 
@@ -66,13 +64,13 @@ public final class MicrometerTandemSpanRecorder implements TandemSpanRecorder {
         io.micrometer.tracing.Span.Builder builder = propagator.extract(carrier, Map::get)
                 .name(PUBLISH_SPAN_NAME)
                 .kind(io.micrometer.tracing.Span.Kind.PRODUCER)
-                .tag("tandem.outbox.row_id", rowId)
-                .tag("tandem.aggregate.type", aggregateType)
-                .tag("tandem.aggregate.id", aggregateId)
-                .tag("tandem.attempts", attempts)
-                .tag("tandem.topic", topic);
+                .tag(TandemSpanAttributes.OUTBOX_ROW_ID, rowId)
+                .tag(TandemSpanAttributes.AGGREGATE_TYPE, aggregateType)
+                .tag(TandemSpanAttributes.AGGREGATE_ID, aggregateId)
+                .tag(TandemSpanAttributes.ATTEMPTS, attempts)
+                .tag(TandemSpanAttributes.TOPIC, topic);
         if (correlationId != null) {
-            builder.tag("tandem.correlation_id", correlationId);
+            builder.tag(TandemSpanAttributes.CORRELATION_ID, correlationId);
         }
         io.micrometer.tracing.Span span = builder.start();
         return new TandemSpanRecorder.Span() {

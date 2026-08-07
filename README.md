@@ -86,6 +86,15 @@ If the relay crashes after publishing but before marking the row done, it republ
   and 4.x** alike — Spring is `compileOnly`, so your app's own version binds at runtime, and `./gradlew
   check` runs the autoconfiguration tests against both lines. Plain-Java wiring stays available (see
   [Usage](#usage)).
+- **Trace and correlation propagation across the outbox boundary** — off by default
+  (`tandem.tracing.enabled`), so a consumed event can be traced back to the domain transaction that
+  produced it. Propagation mode carries the trace context and correlation id onto the row at insert;
+  instrumented mode (`tandem.tracing.publish-span`) additionally emits a relay publish span at the
+  real send instant. Ships for Spring applications (bridged to Micrometer Tracing) and, via the
+  optional `tandem-tracing-otel` module, for any application instrumenting itself with the
+  OpenTelemetry SDK directly. The correlation id alone needs no tracing library at all — read from an
+  MDC key or the explicit `TandemContext` API — and is also searchable through the Admin API.
+  Design: [HLD-tracing.md](docs/HLD-tracing.md).
 
 ## Architecture at a glance
 
@@ -498,12 +507,6 @@ Not yet shipped, in no particular order:
   (`CausalContext`) that resolves to a no-op today: visible in IDE autocomplete, but nothing
   references it yet. Treat it as reserved API — off by default *by design*, so adopting it will
   stay a zero-cost opt-in.
-- **Trace propagation outside Spring.** W3C trace/correlation propagation
-  ([HLD-tracing.md](docs/HLD-tracing.md)) **ships for Spring applications**, in both modes:
-  `tandem.tracing.enabled` captures the trace context and correlation id onto the row at insert,
-  and `tandem.tracing.publish-span` additionally emits a relay publish span at the real send
-  instant. Both are off by default. A standalone `tandem-tracing-otel` adapter, for applications
-  that use OpenTelemetry without Spring, is not built yet.
 - **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
   supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
   obstacle — but until it lands, PostgreSQL is the only supported database.

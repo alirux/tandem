@@ -16,6 +16,7 @@ val coveredProjects = listOf(
     ":tandem-spring-producer",
     ":tandem-spring-relay",
     ":tandem-micrometer",
+    ":tandem-tracing-otel",
     ":tandem-admin",
 ).map { project(it) }
 
