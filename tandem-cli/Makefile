@@ -20,6 +20,11 @@ build:
 
 test:
 	go test ./... -race -coverprofile=coverage.out -covermode=atomic
+	# generated.go is oapi-codegen output (LLD-cli.md §8) exercised only indirectly through
+	# the HTTP client it wires up - its own lines carry no meaningful coverage signal, so
+	# strip them before the profile is read locally or uploaded to Codecov.
+	grep -v '/internal/client/generated.go:' coverage.out > coverage.out.tmp
+	mv coverage.out.tmp coverage.out
 
 # golangci-lint covers what `go vet` alone does not: dead code, unchecked errors,
 # staticcheck. Configured in .golangci.yml, and run identically by CI.
