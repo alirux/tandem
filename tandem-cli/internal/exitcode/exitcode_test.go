@@ -1,6 +1,7 @@
 package exitcode
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"testing"
@@ -118,5 +119,43 @@ func TestWrap_preservesTheUnderlyingErrorForUnwrapping(t *testing.T) {
 	}
 	if got := CodeOf(wrapped); got != ConnectionFailure {
 		t.Errorf("CodeOf(wrapped) = %d, want %d", got, ConnectionFailure)
+	}
+}
+
+func TestReport_nilErrorReturnsSuccessAndPrintsNothing(t *testing.T) {
+	var stderr bytes.Buffer
+
+	if got := Report(&stderr, nil); got != Success {
+		t.Errorf("Report(nil) = %d, want %d", got, Success)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestReport_nonSuccessErrorPrintsItAndReturnsItsCode(t *testing.T) {
+	var stderr bytes.Buffer
+	err := New(UsageError, "missing --base-url")
+
+	if got := Report(&stderr, err); got != UsageError {
+		t.Errorf("Report(err) = %d, want %d", got, UsageError)
+	}
+	want := "Error: missing --base-url\n"
+	if got := stderr.String(); got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestReport_successCodedErrorPrintsNothing(t *testing.T) {
+	var stderr bytes.Buffer
+	// A command may return a Success-coded *Error purely to short-circuit further
+	// execution after already printing its own message - Report must not double it.
+	err := New(Success, "already handled")
+
+	if got := Report(&stderr, err); got != Success {
+		t.Errorf("Report(err) = %d, want %d", got, Success)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }

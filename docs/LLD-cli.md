@@ -381,7 +381,12 @@ which *is* hand-written, exactly like `tandem-admin`'s handlers.
   analysis run does not report formatting) and `make test` (`go test ./... -race`), which also emits
   `coverage.out` (`-coverprofile=coverage.out -covermode=atomic`), uploaded to Codecov under the
   `cli` flag — separate from the Java modules' aggregated JaCoCo report (`java` flag), since the
-  two live in different CI jobs with no shared build.
+  two live in different CI jobs with no shared build. `make test` strips `generated.go` and
+  `cmd/gendocs` out of `coverage.out` before either is read: neither carries a meaningful
+  coverage signal (generated code exercised only indirectly; a dev-only tool never shipped),
+  so their lines would only dilute the number rather than flag a real gap. `cmd/tandem-cli`'s
+  `main()` stays in — it is the real entrypoint, and its one decision (`internal/exitcode.Report`)
+  is unit-tested directly.
 - **Forward compatibility applies to the client too** (§1.4, HLD.md): the generated types must
   tolerate unknown fields and unknown enum values in responses — `oapi-codegen`'s default struct
   generation already does this (unrecognized JSON object fields are simply dropped by

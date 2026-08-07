@@ -20,10 +20,13 @@ build:
 
 test:
 	go test ./... -race -coverprofile=coverage.out -covermode=atomic
-	# generated.go is oapi-codegen output (LLD-cli.md §8) exercised only indirectly through
-	# the HTTP client it wires up - its own lines carry no meaningful coverage signal, so
-	# strip them before the profile is read locally or uploaded to Codecov.
-	grep -v '/internal/client/generated.go:' coverage.out > coverage.out.tmp
+	# generated.go is oapi-codegen output (LLD-cli.md §8), exercised only indirectly through
+	# the HTTP client it wires up; cmd/gendocs is a dev-only doc-generation tool, not shipped
+	# (LLD-cli.md §8). Neither's lines carry a meaningful coverage signal, so strip both
+	# before the profile is read locally or uploaded to Codecov. cmd/tandem-cli's own main()
+	# stays in: it's the real entrypoint, and its one decision point is covered indirectly
+	# through internal/exitcode.Report's own tests.
+	grep -v -e '/internal/client/generated.go:' -e '/cmd/gendocs/' coverage.out > coverage.out.tmp
 	mv coverage.out.tmp coverage.out
 
 # golangci-lint covers what `go vet` alone does not: dead code, unchecked errors,

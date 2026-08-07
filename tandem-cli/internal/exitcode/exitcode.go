@@ -6,6 +6,7 @@ package exitcode
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -84,6 +85,18 @@ func CodeOf(err error) Code {
 		return e.Code
 	}
 	return UsageError
+}
+
+// Report writes err to stderr, unless err is nil or carries Success itself (a command
+// that already printed its own message before returning a Success-coded error purely to
+// short-circuit further execution), then returns the process exit code for err. The
+// single decision point main() delegates to, so it stays pure wiring around cobra.
+func Report(stderr io.Writer, err error) Code {
+	code := CodeOf(err)
+	if err != nil && code != Success {
+		_, _ = fmt.Fprintln(stderr, "Error:", err)
+	}
+	return code
 }
 
 // slugPrefix is the fixed, canonical problem-type namespace every Tandem RFC 9457

@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/alirux/tandem/tandem-cli/internal/cmd"
@@ -15,9 +14,5 @@ import (
 func main() {
 	root := cmd.NewRootCmd()
 	err := root.ExecuteContext(context.Background())
-	code := exitcode.CodeOf(err)
-	if err != nil && code != exitcode.Success {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-	}
-	os.Exit(int(code))
+	os.Exit(int(exitcode.Report(os.Stderr, err)))
 }
