@@ -198,7 +198,7 @@ resolved (or consciously deferred) to write correct per-module LLDs.
     adapter keeps the last value the relay pushed, never queries on scrape), and `recordUncoveredBuckets`
     — the one signal LLD-jdbc §4 defers here explicitly.
   - **Verified, not assumed:** Micrometer stays on the same major across both Spring Boot lines this
-    project supports — Boot 3.3.5 manages **1.13.6**, Boot 4.1.0 manages **1.17.0** (read from the real
+    project supports — Boot 3.3.13 manages **1.13.15**, Boot 4.1.0 manages **1.17.0** (read from the real
     `spring-boot-dependencies` POMs). Lower cross-generation risk than the Framework 6→7 jump, but per
     this repo's own 2026-07-27 lesson (a green single-version run doesn't prove compatibility with the
     other), that still wants a real dual-generation test once the module exists, not just this

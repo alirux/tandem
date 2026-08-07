@@ -168,10 +168,11 @@ version, and Tandem never appears in your dependency tree.
 
 | | Spring Boot |
 |---|---|
-| Compiled against (baseline) | 3.3.5 |
+| Compiled against (baseline) | 3.3.13 |
+| Verified via `bootLatestThreeTest` | 3.5.16 |
 | Verified via `bootFourTest` | 4.1.0 |
 
-Any Boot 3.x ≥ 3.3.5 or Boot 4.x ≥ 4.1.0 is expected to work; CI pins and tests exactly these two
+Any Boot 3.x ≥ 3.3.13 or Boot 4.x ≥ 4.1.0 is expected to work; CI pins and tests exactly these three
 versions, not every intermediate release.
 
 ## Usage

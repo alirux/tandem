@@ -3,14 +3,18 @@ junit = "6.1.1"
 assertj = "3.27.7"
 postgresql = "42.7.12"
 # Spring modules compile once against the lowest supported Boot 3.x line (LLD-spring-config §1.1);
-# the dual-generation matrix (§1.2) re-runs the unit tests against a Boot 4.x line too. Both keep Java 17.
-spring-boot = "3.3.5"
+# the three-line matrix (§1.2) re-runs the unit tests against the latest Boot 3.x patch (Framework
+# 6.2.x, otherwise never exercised between the 6.1.x baseline and the 7.x line) and a Boot 4.x line
+# too. All three keep Java 17. Dependabot is intentionally NOT wired to any of these three (see
+# .github/dependabot.yml) — each is a deliberate compatibility-contract decision, not a routine bump.
+spring-boot = "3.3.13"
+spring-boot-v3-latest = "3.5.16"
 spring-boot-v4 = "4.1.0"
 # kafka-clients aligned to the version cloudevents-kafka targets (binding compatibility).
 kafka = "3.9.2"
 # tandem-micrometer's own baseline — not tied to any Spring BOM (the module has no Spring dependency
-# at all). Matches what Boot 3.3.5 manages; Boot 4.1.0 manages 1.17.0, same major (LLD-micrometer §1).
-micrometer = "1.13.6"
+# at all). Matches what Boot 3.3.13 manages; Boot 4.1.0 manages 1.17.0, same major (LLD-micrometer §1).
+micrometer = "1.13.15"
 # Not a dependency Tandem declares — only a version floor for what kafka-clients drags in.
 # kafka-clients 3.9.2 resolves lz4-java 1.10.1, which carries a moderate advisory (the native
 # XXHash bindings can crash the JVM on out-of-range byte-array arguments), fixed in 1.11.1.
@@ -34,7 +38,7 @@ hikaricp = "5.1.0"
 slf4j = "2.0.16"
 # spring-web/spring-webmvc declare this as an optional/provided dependency (Gradle does not resolve
 # it transitively), yet MockMvc needs the real Servlet API classes on the test classpath. 6.0.x
-# matches the Servlet level Spring Framework 6.1.x (Boot 3.3.5's baseline) targets.
+# matches the Servlet level Spring Framework 6.1.x (Boot 3.3.13's baseline) targets.
 jakarta-servlet = "6.0.0"
 # OpenAPI conformance testing (HLD-admin-api §5). Pinned to the pre-rename artifact
 # (com.atlassian.oai:swagger-request-validator-core) at its last release under that name: the
@@ -72,8 +76,10 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic" }
 
 # Spring: the BOM aligns every module version; the individual coordinates carry no version of their own.
-# spring-boot-dependencies-v4 is the same BOM at the 4.x line, used only by the dual-generation test suite.
+# spring-boot-dependencies-v3-latest and -v4 are the same BOM at the latest-3.x and 4.x lines, each
+# used only by its own matrix test task (bootLatestThreeTest / bootFourTest).
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-dependencies-v3-latest = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot-v3-latest" }
 spring-boot-dependencies-v4 = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot-v4" }
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }

@@ -30,8 +30,8 @@ dependencies {
 }
 ```
 
-**Version:** pin to the project's own Spring Boot baseline generation — Micrometer **1.13.6**
-(what Boot 3.3.5 manages; verified against the real `spring-boot-dependencies` POM, not assumed).
+**Version:** pin to the project's own Spring Boot baseline generation — Micrometer **1.13.15**
+(what Boot 3.3.13 manages; verified against the real `spring-boot-dependencies` POM, not assumed).
 Micrometer has stayed on the same major (`1.x`) since, including through Boot's own 3→4 jump (Boot
 4.1.0 manages **1.17.0**), so the binary-compatibility risk this baseline carries is structurally
 lower than the Spring Framework 6→7 jump — but that comparison is not a substitute for a real test

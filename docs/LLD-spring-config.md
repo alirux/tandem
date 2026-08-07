@@ -1,7 +1,7 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
 **Version:** 1.4
-**Status:** Implemented and released — both modules built and tested against Boot 3.3.5 **and** 4.1.0
+**Status:** Implemented and released — both modules built and tested against Boot 3.3.13, **3.5.16**, **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
 Defines the **foundation** of the Spring Boot integration: which modules exist, the configuration
@@ -96,28 +96,35 @@ the two rules above **one jar does satisfy both lines**, with the residual gaps 
 incompatibility ever cannot be absorbed this way, the fallback is the version split (`-core` / `-boot3` /
 `-boot4`, §1), adopted only then.
 
-### 1.2 Verifying dual-generation compatibility
+### 1.2 Verifying compatibility across the three lines
 
-The dual-generation claim is only as good as the test that checks it. Realised as follows:
+The multi-generation claim is only as good as the test that checks it. Realised as follows:
 
-**The matrix lives in the build, not only in CI.** Each Spring module adds a `bootFourTest` task next to
-`test` and wires it into `check`, so a single `./gradlew check` runs the autoconfiguration tests against
-**both** generations, locally and in CI alike (consistent with the project convention that `check` is the
-single source of truth). Versions are pinned in the version catalog: baseline **Boot 3.3.5** (Framework
-6.1.x) and the latest **Boot 4.x** (4.1.0 at the time of writing, Framework 7.0.x) — the baseline stays
-the *lowest* supported 3.x line while the 4.x line tracks the newest patch, so the matrix pits the oldest
-jar Tandem compiles against against the newest runtime it claims to support. Both lines run on the same
-**Java 17** toolchain, which is not a coincidence to be rechecked by experiment: Boot 4.x officially
-requires "at least Java 17" (and supports up to 26), so Tandem's Java 17 baseline stays valid for both
-generations. Boot 4.1.0 also requires Framework 7.0.8 or above, which is what the 4.x classpath resolves.
+**The matrix lives in the build, not only in CI.** Each Spring module adds a `bootLatestThreeTest` task
+and a `bootFourTest` task next to `test`, and wires both into `check`, so a single `./gradlew check` runs
+the autoconfiguration tests against **all three lines**, locally and in CI alike (consistent with the
+project convention that `check` is the single source of truth). Versions are pinned in the version
+catalog: baseline **Boot 3.3.13** (Framework 6.1.x, `test`), the latest **Boot 3.x patch** (`3.5.16` at
+the time of writing, Framework 6.2.x, `bootLatestThreeTest`), and the latest **Boot 4.x**
+(`4.1.0` at the time of writing, Framework 7.0.x, `bootFourTest`). The baseline stays the *lowest*
+supported 3.x line, deliberately never auto-bumped (§1.2.1); the other two each track their own line's
+newest release. This closes a gap the two-line matrix left open: Framework 6.2.x sits *between* the two
+lines that were actually tested, and is not merely an untested midpoint — some upstream Spring Framework
+CVE fixes ship starting at 6.2.x and are never backported to 6.1.x, so 6.1.x-only testing cannot prove
+compatibility with the line most consumers who track CVEs will actually run in production. All three
+lines run on the same **Java 17** toolchain, which is not a coincidence to be rechecked by experiment:
+Boot 4.x officially requires "at least Java 17" (and supports up to 26), so Tandem's Java 17 baseline
+stays valid across all three. Boot 4.1.0 also requires Framework 7.0.8 or above, which is what the 4.x
+classpath resolves.
 
-`bootFourTest` reuses the **already-compiled** test and main classes and only swaps Spring for the 4.x line
-on its runtime classpath (a dedicated `bootFourTestRuntimeClasspath` configuration pinning the 4.x BOM). So
-both runs exercise the *same baseline-compiled bytecode* — which is precisely the binary compatibility
-under test — and neither recompiles the module's main jar. Running the in-memory tests twice adds seconds,
-not a doubled build.
+`bootLatestThreeTest` and `bootFourTest` each reuse the **already-compiled** test and main classes and only
+swap Spring on their own runtime classpath (dedicated `bootLatestThreeTestRuntimeClasspath` /
+`bootFourTestRuntimeClasspath` configurations, each pinning its own BOM). So all three runs exercise the
+*same baseline-compiled bytecode* — which is precisely the binary compatibility under test — and none
+recompiles the module's main jar. Running the in-memory tests three times adds seconds, not a doubled
+build.
 
-**The dual-run tests are lightweight `ApplicationContextRunner` tests** — no full context, no
+**The multi-run tests are lightweight `ApplicationContextRunner` tests** — no full context, no
 container. What they actually assert, per module:
 
 - `tandem-spring-producer`: the autoconfiguration applies and each tier's bean exists (the Jackson
@@ -137,6 +144,20 @@ One thing the matrix deliberately does **not** cover, so nobody reads more into 
 `OutboxRepository`, so the JDBC bean that runs the guard backs off; the relay's guard runs from the
 `RelayLifecycle` those tests neutralise). It is covered by `BucketCountGuardIT` and by each module's
 integration test.
+
+#### 1.2.1 Why Dependabot does not touch any of the three pins
+
+All three catalog entries (`spring-boot`, `spring-boot-v3-latest`, `spring-boot-v4`) resolve to the same
+Maven coordinate, `org.springframework.boot:spring-boot-dependencies` — only the pinned version differs.
+Dependabot's `ignore` matches by coordinate, not by version-catalog key, so there is no way to tell it
+"leave the frozen baseline alone but keep bumping the two trackers": a rule scoped to that coordinate
+silences all three identically. [.github/dependabot.yml](../.github/dependabot.yml) therefore ignores the
+coordinate outright, and all three numbers are moved by hand, in the same deliberate way as any other
+change to this file: `spring-boot` only moves when the project is intentionally raising its declared
+minimum supported version (a compatibility-contract change, not a routine bump); `spring-boot-v3-latest`
+and `spring-boot-v4` move whenever a newer patch exists on their line, checked periodically rather than
+on every upstream release. Whichever one changes, the accompanying doc references in this section, in
+[LLD-micrometer.md](LLD-micrometer.md), and in [README.md](../README.md) move with it in the same commit.
 
 **The matrix earns its keep, concretely.** Constructing the real Kafka producer under the 4.x line is
 what caught Kafka 4's change of the default `linger.ms`, which had made Tandem's fixed

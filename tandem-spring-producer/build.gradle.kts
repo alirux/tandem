@@ -47,18 +47,37 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Dual-generation matrix (LLD-spring-config §1.2)
+// Three-line compatibility matrix (LLD-spring-config §1.2)
 //
-// The module's main sources are compiled ONCE against the Boot 3.x baseline (compileOnly, above). This
-// task re-runs the very same compiled test AND main classes with Spring swapped to the 4.x line on the
+// The module's main sources are compiled ONCE against the Boot 3.x baseline (compileOnly, above). These
+// tasks re-run the very same compiled test AND main classes with Spring swapped to another line on the
 // test runtime classpath — which is exactly the binary compatibility the single-artifact strategy bets
-// on (§1.1). This module carries the matrix's real signal: its context-runner tests assert the
-// autoconfiguration actually applies and contributes each tier's beans, so a moved or re-signed Spring
-// symbol fails here loudly. The Docker-bound integration tests stay on the baseline.
+// on (§1.1). bootLatestThreeTest covers the latest Boot 3.x patch (Framework 6.2.x), otherwise never
+// exercised between the 6.1.x baseline and the 7.x line; bootFourTest covers the 4.x line. This module
+// carries the matrix's real signal: its context-runner tests assert the autoconfiguration actually
+// applies and contributes each tier's beans, so a moved or re-signed Spring symbol fails here loudly.
+// The Docker-bound integration tests stay on the baseline.
 // ---------------------------------------------------------------------------------------------------
+val bootLatestThreeTestRuntimeClasspath: Configuration by configurations.creating
 val bootFourTestRuntimeClasspath: Configuration by configurations.creating
 
 dependencies {
+    bootLatestThreeTestRuntimeClasspath(platform(libs.spring.boot.dependencies.v3.latest))
+    bootLatestThreeTestRuntimeClasspath(libs.spring.boot.autoconfigure)
+    bootLatestThreeTestRuntimeClasspath(libs.spring.boot.test)
+    bootLatestThreeTestRuntimeClasspath(libs.spring.tx)
+    bootLatestThreeTestRuntimeClasspath(libs.spring.aspects)
+    bootLatestThreeTestRuntimeClasspath(libs.spring.jdbc)
+    bootLatestThreeTestRuntimeClasspath(libs.jackson.databind)
+    bootLatestThreeTestRuntimeClasspath(libs.slf4j.api)
+    bootLatestThreeTestRuntimeClasspath(libs.logback.classic)
+    bootLatestThreeTestRuntimeClasspath(project(":tandem-test"))
+    bootLatestThreeTestRuntimeClasspath(testFixtures(project(":tandem-test")))
+    bootLatestThreeTestRuntimeClasspath(platform(libs.junit.bom))
+    bootLatestThreeTestRuntimeClasspath(libs.junit.jupiter)
+    bootLatestThreeTestRuntimeClasspath(libs.junit.platform.launcher)
+    bootLatestThreeTestRuntimeClasspath(libs.assertj.core)
+
     bootFourTestRuntimeClasspath(platform(libs.spring.boot.dependencies.v4))
     bootFourTestRuntimeClasspath(libs.spring.boot.autoconfigure)
     bootFourTestRuntimeClasspath(libs.spring.boot.test)
@@ -80,8 +99,17 @@ val sourceSets = the<SourceSetContainer>()
 val mainOutput = sourceSets["main"].output
 val testOutput = sourceSets["test"].output
 
+val bootLatestThreeTest = tasks.register<Test>("bootLatestThreeTest") {
+    description = "Re-runs the unit tests against the latest Spring Boot 3.x line (three-line matrix)."
+    group = "verification"
+    testClassesDirs = testOutput.classesDirs
+    classpath = files(testOutput, mainOutput, bootLatestThreeTestRuntimeClasspath)
+    useJUnitPlatform { excludeTags("integration") }
+    shouldRunAfter(tasks.named("test"))
+}
+
 val bootFourTest = tasks.register<Test>("bootFourTest") {
-    description = "Re-runs the unit tests against the Spring Boot 4.x line (dual-generation matrix)."
+    description = "Re-runs the unit tests against the Spring Boot 4.x line (three-line matrix)."
     group = "verification"
     testClassesDirs = testOutput.classesDirs
     classpath = files(testOutput, mainOutput, bootFourTestRuntimeClasspath)
@@ -90,5 +118,5 @@ val bootFourTest = tasks.register<Test>("bootFourTest") {
 }
 
 tasks.named("check") {
-    dependsOn(bootFourTest)
+    dependsOn(bootLatestThreeTest, bootFourTest)
 }
