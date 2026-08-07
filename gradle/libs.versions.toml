@@ -1,7 +1,7 @@
 [versions]
 junit = "6.1.1"
 assertj = "3.27.7"
-postgresql = "42.7.12"
+postgresql = "42.7.13"
 # Spring modules compile once against the lowest supported Boot 3.x line (LLD-spring-config §1.1);
 # the three-line matrix (§1.2) re-runs the unit tests against the latest Boot 3.x patch (Framework
 # 6.2.x, otherwise never exercised between the 6.1.x baseline and the 7.x line) and a Boot 4.x line
