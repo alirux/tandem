@@ -97,10 +97,9 @@ var b = CloudEventBuilder.v1()
     .withData(record.payload())                     // raw bytes
     .withExtension("seq", record.seq())             // always present
     .withExtension("partitionkey", record.aggregateId().value());  // always = key
-// optional extensions — added ONLY when their feature is on (guard against null):
-if (record.lamport() != null)                       // RESERVED: never true today (HLD-causal-ordering.md §0)
-    b.withExtension("logicalclock", record.lamport());  // → header ce_logicalclock
 // trace extensions (traceparent/tracestate) copied from stored headers when present (§7.1)
+// no `logicalclock` extension: causal ordering is unbuilt and gets no code on this path
+// (HLD-causal-ordering.md §0.3)
 CloudEvent ce = b.build();
 ProducerRecord<…> pr = KafkaMessageFactory.createWriter(topic, key=aggregateId)
     .writeBinary(ce);                               // binary mode (default); writeStructured for structured
@@ -108,7 +107,8 @@ ProducerRecord<…> pr = KafkaMessageFactory.createWriter(topic, key=aggregateId
 
 ### 3.1 Content modes
 - **Binary (default):** attributes → `ce_*` Kafka headers, `data` → body, `content-type` header =
-  `datacontenttype`. Tandem extensions become `ce_seq` / `ce_logicalclock` / `ce_partitionkey`.
+  `datacontenttype`. Tandem extensions become `ce_seq` / `ce_partitionkey` (and `ce_logicalclock`
+  if causal ordering is ever built — it emits nothing today, HLD-causal-ordering.md §0).
 - **Structured (opt):** the whole CloudEvent (JSON) → body, `content-type:
   application/cloudevents+json`.
 - **Raw (escape hatch):** no envelope — body = payload, key = `aggregate_id`, stored `headers` passed

@@ -32,32 +32,35 @@ There is **no way to turn causal ordering on.** No flag, no property, no DDL. A 
 |---|---|---|---|
 | 1 | `CausalContext` (port: `NONE` + `inboundTimestamp()`) | `tandem-core` | Zero references from any product code |
 | 2 | `LamportClock.merge(local, inbound)` | `tandem-core` | Zero references from any product code; unit-tested |
-| 3 | `OutboxRecord.lamport` (field + getter + builder setter) | `tandem-core` | Never set by product code; always `null` |
-| 4 | `CloudEventsHeaders.EXT_LOGICAL_CLOCK` / `CE_LOGICAL_CLOCK` | `tandem-core` | Read only by #6 |
-| 5 | `TandemHeaders.CAUSATION_ID` | `tandem-core` | Never written |
-| 6 | `if (record.lamport() != null)` in `CloudEventEncoder` | `tandem-kafka` | **Unreachable branch** — see §0.3 |
+| 3 | `OutboxRecord.lamport` (field + getter + builder setter) | `tandem-core` | Never set, never read; always `null` |
+| 4 | `CloudEventsHeaders.EXT_LOGICAL_CLOCK` / `CE_LOGICAL_CLOCK` | `tandem-core` | Declared names; zero readers |
+| 5 | `TandemHeaders.CAUSATION_ID` | `tandem-core` | Declared name; never written |
 
-Six elements, three of them ghosts with no caller at all. Any change to one of them should update
-this table in the same commit.
+Five elements, **all of them inert declarations in `tandem-core` — no executable code anywhere**.
+Any change to one of them should update this table in the same commit.
 
 ### 0.2 What is missing — the whole mechanism
 
-Everything that would make the six above do something:
+Everything that would make the five above do something:
 
 - the `lamport` column on `tandem_outbox` and the `tandem_aggregate_clock` table (§3.1) —
   neither is in `schema/postgres/tandem-baseline.sql`
 - the transactional advance-and-merge upsert on the write path (LLD-jdbc §2)
 - the enablement switch, wherever it would live
 - the consumer-side helper that populates `CausalContext` from the inbound header
+- the `ce_logicalclock` write in `CloudEventEncoder` (§0.3)
 - both engine adapters, `tandem-kafka-streams` and `tandem-flink` (§7b) — neither module exists
 
-### 0.3 The one leak into a live path
+### 0.3 Nothing touches a live path — deliberately
 
-Elements #1–#5 are inert declarations: nothing executes them. Element #6 is different — it is a
-real branch on the relay's encode path, evaluated for every published record, that can never be
-taken. It is kept deliberately (removing it would mean re-adding it verbatim the day the feature
-lands, and a null check per encode costs nothing measurable), but it is the single place the
-unbuilt feature touches running code, so it carries an explicit comment saying so.
+`CloudEventEncoder` used to carry `if (record.lamport() != null) …`, a real branch evaluated for
+every published record that could never be taken, since nothing populates `lamport`. It was
+**removed**: the relay's encode path now contains no trace of this feature. The cost of re-adding
+it is three lines against a `null` check on every publish forever, and the rule that decided it is
+worth keeping — **an unbuilt feature does not get to occupy the hot path**, not even cheaply.
+
+The consequence for the table above is that the reserved surface is now purely declarative: five
+names and one always-null field, all in `tandem-core`, none of them reachable from executing code.
 
 ### 0.4 Scope, if it is ever built
 

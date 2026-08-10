@@ -29,10 +29,11 @@ public final class CloudEventsHeaders {
      * Lamport / logical clock. Extension {@code logicalclock} → header {@code ce_logicalclock}.
      * ("lamport" is the design term; "logicalclock" is the on-the-wire name — LLD-kafka §3.3.)
      *
-     * <p><b>Reserved — no event carries this today.</b> The encoder writes it only when
-     * {@code OutboxRecord.lamport()} is non-null, which cannot happen: the cross-aggregate
-     * causal-ordering feature that would populate it (HLD §9) is designed but not implemented.
-     * Inventory: {@code docs/HLD-causal-ordering.md} §0.
+     * <p><b>Reserved — a name only.</b> Nothing reads or writes this constant: the cross-aggregate
+     * causal-ordering feature that would emit the extension (HLD §9) is designed but not
+     * implemented, and the publish path deliberately carries no code for it. Declared here so the
+     * on-the-wire name cannot drift if the feature is ever built. Inventory:
+     * {@code docs/HLD-causal-ordering.md} §0.
      */
     public static final String EXT_LOGICAL_CLOCK = "logicalclock";
     public static final String CE_LOGICAL_CLOCK = BINARY_PREFIX + EXT_LOGICAL_CLOCK;

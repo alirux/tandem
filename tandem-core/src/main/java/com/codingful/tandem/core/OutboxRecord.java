@@ -80,9 +80,10 @@ public final class OutboxRecord {
     /**
      * Lamport timestamp.
      *
-     * <p><b>Always {@code null} today.</b> Reserved for the cross-aggregate causal-ordering feature
-     * (HLD §9), which is designed but not implemented: there is no {@code lamport} column in the
-     * shipped DDL and no row mapper reads one. Inventory: {@code docs/HLD-causal-ordering.md} §0.
+     * <p><b>Always {@code null}, and read by nothing.</b> Reserved for the cross-aggregate
+     * causal-ordering feature (HLD §9), which is designed but not implemented: no {@code lamport}
+     * column exists in the shipped DDL, no row mapper populates this, and the publish path carries
+     * no code for it. Inventory: {@code docs/HLD-causal-ordering.md} §0.
      */
     public Long lamport() {
         return lamport;
