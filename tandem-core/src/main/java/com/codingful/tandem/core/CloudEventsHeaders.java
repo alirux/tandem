@@ -26,9 +26,13 @@ public final class CloudEventsHeaders {
     public static final String CE_PARTITION_KEY = BINARY_PREFIX + EXT_PARTITION_KEY;
 
     /**
-     * Lamport / logical clock — present only when causal ordering is enabled (HLD §9; off by default).
-     * Extension {@code logicalclock} → header {@code ce_logicalclock}. ("lamport" is the design term;
-     * "logicalclock" is the on-the-wire name — LLD-kafka §3.3.)
+     * Lamport / logical clock. Extension {@code logicalclock} → header {@code ce_logicalclock}.
+     * ("lamport" is the design term; "logicalclock" is the on-the-wire name — LLD-kafka §3.3.)
+     *
+     * <p><b>Reserved — no event carries this today.</b> The encoder writes it only when
+     * {@code OutboxRecord.lamport()} is non-null, which cannot happen: the cross-aggregate
+     * causal-ordering feature that would populate it (HLD §9) is designed but not implemented.
+     * Inventory: {@code docs/HLD-causal-ordering.md} §0.
      */
     public static final String EXT_LOGICAL_CLOCK = "logicalclock";
     public static final String CE_LOGICAL_CLOCK = BINARY_PREFIX + EXT_LOGICAL_CLOCK;

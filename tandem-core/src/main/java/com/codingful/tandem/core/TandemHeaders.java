@@ -22,7 +22,14 @@ public final class TandemHeaders {
     /** Correlation id, propagated as a passthrough header (LLD-kafka §3.3). */
     public static final String CORRELATION_ID = "correlation-id";
 
-    /** Causation id — carried only when the opt-in causal-ordering feature is on (HLD §9; off by default). */
+    /**
+     * Causation id — points at the specific event that caused this one (one causal hop), as opposed to
+     * {@link #CORRELATION_ID}, which groups related work.
+     *
+     * <p><b>Reserved — nothing writes this header today.</b> It belongs to the cross-aggregate
+     * causal-ordering surface (HLD §9), designed but not implemented. The name is declared here so
+     * that emitting it later cannot drift. Inventory: {@code docs/HLD-causal-ordering.md} §0.
+     */
     public static final String CAUSATION_ID = "causation_id";
 
     /** W3C Trace Context parent — carried only when tracing is enabled (HLD §7.2; off by default). */

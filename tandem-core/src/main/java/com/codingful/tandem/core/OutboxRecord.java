@@ -24,7 +24,7 @@ public final class OutboxRecord {
     private final String lastError;       // nullable
     private final Instant nextAttemptAt;  // nullable
     private final Instant createdAt;
-    private final Long lamport;           // nullable; only when causal ordering enabled (§9)
+    private final Long lamport;           // nullable; reserved — nothing writes it today (§9)
     private final String discardReason;   // nullable; set only by the Admin API's DiscardService, never the relay
 
     private OutboxRecord(Builder b) {
@@ -77,7 +77,13 @@ public final class OutboxRecord {
         return createdAt;
     }
 
-    /** Lamport timestamp; {@code null} unless causal ordering is enabled (§9). */
+    /**
+     * Lamport timestamp.
+     *
+     * <p><b>Always {@code null} today.</b> Reserved for the cross-aggregate causal-ordering feature
+     * (HLD §9), which is designed but not implemented: there is no {@code lamport} column in the
+     * shipped DDL and no row mapper reads one. Inventory: {@code docs/HLD-causal-ordering.md} §0.
+     */
     public Long lamport() {
         return lamport;
     }
@@ -208,6 +214,7 @@ public final class OutboxRecord {
             return this;
         }
 
+        /** Reserved for causal ordering (HLD §9) — no product code calls this; see {@link OutboxRecord#lamport()}. */
         public Builder lamport(Long lamport) {
             this.lamport = lamport;
             return this;

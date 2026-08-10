@@ -796,13 +796,11 @@ Tandem exposes a `ReplayService` API (in `tandem-core`) that wraps these queries
 
 ## 9. Cross-Aggregate Causal Ordering (Optional)
 
-> Full rationale, worked examples, and consumer-side reconstruction strategies are in the companion design note: [causal-ordering.md](causal-ordering.md).
+> **Status: designed, not implemented.** What ships today is a handful of published-but-inert declarations (a port, a pure merge function, a nullable field, two header names) and **no way to enable any of it** — no flag, no column, no clock table, no engine adapter. Full design, and the inventory of what exists versus what is missing: [HLD-causal-ordering.md](HLD-causal-ordering.md) (start at §0).
 
-By default Tandem orders events only within an aggregate (`seq`). Some consumers need to apply events from *different* aggregates in an order that never shows an effect before its cause — for example, a materialized view / projection that folds events from multiple aggregates into a single global timeline. For these, Tandem offers an **opt-in** per-aggregate **Lamport clock** that produces a total order *consistent with* cross-aggregate causality.
+By default Tandem orders events only within an aggregate (`seq`). Some consumers need to apply events from *different* aggregates in an order that never shows an effect before its cause — a materialized view folding several aggregates into one global timeline being the canonical case. For those, the design adds an **opt-in** per-aggregate **Lamport clock** producing a total order consistent with cross-aggregate causality.
 
-**What it guarantees:** if event A happened-before event B (across any aggregates), then `lamport(A) < lamport(B)`. The converse does **not** hold — Lamport values cannot *detect* concurrency, only impose a causally-consistent order. Strict global total ordering and vector-clock concurrency detection remain out of scope.
-
-**Disabled by default:** the feature adds a column, a clock store, and a consumer-side context API. Users who need only per-aggregate ordering pay nothing.
+**What it would guarantee:** if event A happened-before event B (across any aggregates), then `lamport(A) < lamport(B)`. The converse does **not** hold — Lamport values cannot *detect* concurrency, only impose a causally-consistent order. Strict global total ordering and vector-clock concurrency detection are out of scope.
 
 ### 9.1 `seq` vs `lamport`
 
@@ -814,123 +812,16 @@ By default Tandem orders events only within an aggregate (`seq`). Some consumers
 | Presence | Always | Only when causal ordering is enabled |
 | Comparable across aggregates? | No | Yes |
 
-The two coexist: `seq` continues to enforce per-aggregate order and the `UNIQUE(aggregate_id, seq)` safety net; `lamport` is an additional, optional ordering key.
+The two coexist: `seq` keeps enforcing per-aggregate order and the `UNIQUE(aggregate_id, seq)` safety net; `lamport` is an additional, optional ordering key.
 
-### 9.2 Mechanism
+### 9.2 The architectural decisions
 
-- **Per-aggregate clock.** Each aggregate carries a Lamport counter, advanced under the **same per-aggregate lock** that already serializes the aggregate's writes — so there is no new contention within an aggregate, and because no state is shared across aggregates, no global bottleneck.
-- **Advance + merge**, inside the domain transaction:
-  ```
-  new_lamport = max(local_clock, inbound_ts /* 0 if none */) + 1
-  ```
-  A purely local mutation advances by 1; a mutation caused by consuming an event with timestamp `t` merges via `max(., t) + 1`. The merge is what makes the clock causal rather than a plain counter.
-- **Inbound context.** Consuming code declares the causing event's timestamp via a `CausalContext` (`tandem-core`), auto-populated from the inbound Kafka header on the consumer side (a client-side helper in `tandem-spring-producer`). Without an inbound context, a mutation is treated as a causal root (local advance only).
-- **Propagation.** The relay writes the value into a Kafka header (`ce_logicalclock`); downstream consumers read it back into their `CausalContext`.
-- **Total order.** Consumers sort by `(lamport, aggregate_id)`; the tie-break makes the order deterministic across unrelated aggregates that share a Lamport value.
+Everything else — the merge mechanism, the consumer's buffering burden, the engine landscape, and the future `tandem-projection` inbox — is in [HLD-causal-ordering.md](HLD-causal-ordering.md). Only the decisions that bind the rest of this document are recorded here:
 
-### 9.3 Schema additions (only when enabled)
-
-```sql
--- Added to the outbox table only when causal ordering is enabled
-ALTER TABLE tandem_outbox ADD COLUMN lamport BIGINT;   -- event's logical timestamp
-```
-
-The per-aggregate clock lives in a **Tandem-managed `tandem_aggregate_clock(aggregate_id PK, lamport BIGINT)` table** (created only when causal ordering is enabled):
-
-```sql
-CREATE TABLE tandem_aggregate_clock (
-    aggregate_id VARCHAR(255) PRIMARY KEY,
-    lamport      BIGINT NOT NULL
-);
-```
-
-The clock is advanced at produce time with an atomic upsert whose row lock serializes the
-per-aggregate advance (working with both pessimistic and optimistic client locking), and the
-returned value is written to `outbox.lamport`:
-
-```sql
-INSERT INTO tandem_aggregate_clock (aggregate_id, lamport)
-VALUES (:aggregate_id, GREATEST(0, :inbound) + 1)
-ON CONFLICT (aggregate_id)
-DO UPDATE SET lamport = GREATEST(tandem_aggregate_clock.lamport, :inbound) + 1
-RETURNING lamport;
-```
-
-This keeps Tandem's boundary clean — it writes only its own tables (`outbox`, `tandem_aggregate_clock`,
-`tandem_bucket_lease`), never the client's domain tables. The alternative (a `lamport_clock` column on
-the client's aggregate row) was rejected: it would intrude on the client schema *and* force
-Tandem to write domain tables.
-
-### 9.4 Implemented scope — (a) clock + propagation, (b) engine adapters
-
-**(a) Clock and propagation** spans the existing modules:
-
-| Module | Responsibility |
-|---|---|
-| `tandem-core` | `CausalContext` abstraction + pure merge function + `ce_logicalclock` header constant |
-| `tandem-jdbc` | clock store (column or `tandem_aggregate_clock` table) + transactional read-merge-write |
-| `tandem-kafka` | write / read the `ce_logicalclock` header |
-| `tandem-spring-producer` | auto-populate `CausalContext` from inbound Kafka headers on the consumer side (client-side helper) |
-
-**(b) Engine adapters.** Tandem does not build a reordering engine; it ships thin adapters so existing stream processors order by `lamport`. The two differ in operational weight — Kafka Streams is an *embedded library* (no cluster; scales as a consumer group; state in changelog topics on the Kafka you already run), while Flink is a *cluster*. **Kafka Streams is the recommended default** since Kafka is already present:
-
-| Module | Nature | Adapter |
-|---|---|---|
-| `tandem-kafka-streams` | Embedded library (default) | `TimestampExtractor` reading `lamport` from the header, enabling Kafka Streams' cross-partition timestamp-synchronized merge to order by it |
-| `tandem-flink` | Cluster | `TimestampAssigner` / `WatermarkStrategy` reading `lamport`, enabling Flink's event-time buffering and late-data handling to order by it |
-
-> **Adapter caveat:** these inject a *logical* counter where the engine expects an *event-time* timestamp. This is correct for **ordering**, but breaks time-based semantics (windows, grace periods, retention) — the adapters are for causal ordering, not windowed time analytics.
-
-### 9.5 Consumer responsibilities (unchanged invariants)
-
-- Delivery remains **at-least-once**: consumers must still deduplicate on `(aggregate_id, seq)`.
-- The reordering engine (Kafka Streams by default, or Flink) owns the buffering, watermark, and late-data handling; Tandem only supplies the comparable key.
-- A **dependency-parking** strategy (hold an effect until its cause is applied) is an alternative to timestamp reordering; `lamport` still identifies cause vs. effect.
-
-### 9.6 Future development — `tandem-projection` (c)
-
-> **Default vs. niche.** Since Kafka is already in the architecture, the **default** consumer-side reorderer is the `tandem-kafka-streams` adapter (b): Kafka Streams is an *embedded library* (not a cluster), it scales elastically as a consumer group, and it keeps durable state in changelog topics on the Kafka you already run. The inbox reorderer below is **not** a way to "avoid a cluster" — Kafka Streams has no cluster. Its narrower, genuine niche is the case where the **projection target is a relational read model in the same database**: there the inbox keeps the buffer, the apply, and the view in *one* transactional store, whereas Kafka Streams keeps reorder state in RocksDB/changelog and must then write *out* to the relational DB as a separate sink (a second durable store, plus a consume-side write not covered by Kafka Streams' Kafka-to-Kafka exactly-once).
-
-For that relational-projection case, Tandem can provide an in-process reorderer backed by the consumer's own database — the mirror image of the producer-side outbox. **Not in the initial scope**, but specified here so the design is not reduced to a best-effort toy when built.
-
-**The inbox table (durability without checkpoints).** The consuming service already has a relational database. Rather than buffer in memory (lost on crash), incoming events are staged in an `inbox` table — the symmetric counterpart of the outbox:
-
-```
-Kafka ──▶ [INSERT into tandem_inbox]  ──commit tx──▶ [commit Kafka offset]
-                │  dedup on (aggregate_id, seq)
-                ▼
-        [drain in (lamport, aggregate_id) order]  ──▶ projection
-                │  apply + mark-applied in the SAME tx
-                ▼
-            idempotent, crash-safe
-```
-
-Crash-safety is exactly the outbox story mirrored: insert into the inbox **first**, commit the Kafka offset **after**; a crash in between is recovered by re-reading and deduplicating on `(aggregate_id, seq)`. The drain applies and marks each event in one transaction, so re-application after a crash is idempotent. No RocksDB, no distributed checkpoints — just a table and a poller, reusing the same primitives the outbox relay already needs.
-
-**Two ordering modes.** A durable, cheap buffer enables two distinct semantics rather than one generic "best-effort":
-
-| Mode | Guarantee | Cost | Requires |
-|---|---|---|---|
-| **Window** | Best-effort: drain in `lamport` order after a bounded wait `D` | Latency `D`; a late cause past the window is a straggler | `lamport` |
-| **Dependency** | Strict: apply an effect only once its cause is applied; otherwise park | May wait indefinitely → needs timeout / dead-letter | `causation_id` (see below) |
-
-**`lamport` vs `causation_id`.** `lamport` gives a global *order* but not the *identity* of the cause — it says "cause < effect," not "this specific event is the cause." Precise dependency-parking therefore needs an explicit **causation reference** (`causation_id`) pointing at the causing event, propagated in the header alongside `lamport`. The two are complementary: `lamport` powers window mode, `causation_id` powers precise dependency mode. Both are propagations Tandem already performs.
-
-**The scaling limit — and it is not unique to the inbox.** A *global* causal order across all aggregates needs a single serialization point in **any** engine. Kafka Streams reaches it only by funnelling all events through one key/task — a single writer, exactly like the inbox's single ordered drain. No engine escapes this for truly global ordering. The difference is in the **keyed** case (e.g. a per-customer timeline): there both can parallelize — Kafka Streams via `keyBy` across instances with automatic rebalancing, the inbox via one drain per shard (bounded by the shared DB). So Kafka Streams' real edge is *elastic* scaling of the keyed case and keeping state off the operational DB — not a magic escape from the global bottleneck.
-
-| | `tandem-projection` (inbox) | Kafka Streams (adapter b) | Flink |
-|---|---|---|---|
-| Nature | Embedded (library) | Embedded (library) | Cluster |
-| Infrastructure | Your DB only | Kafka (changelog topics) | Cluster + state backend |
-| Reorder-state store | Inbox table (your DB) | RocksDB + changelog | Distributed checkpoints |
-| Global ordering | Single drain (single-writer) | Single key/task (single-writer) | Single key/task (single-writer) |
-| Keyed-ordering scale | Per-shard drains (DB-bound) | Elastic via `keyBy` | Elastic via `keyBy` |
-| Relational projection in same DB | One transactional store | Sink write (second store + seam) | Sink write (second store + seam) |
-| Sweet spot | Relational read model, one store, one mental model | Default reorderer; keyed scale; Kafka-to-Kafka | Massive analytical fan-out |
-
-**Positioning:** the inbox is **not** the default — `tandem-kafka-streams` (b) is. The inbox earns its place specifically when the projection is a relational read model in the same DB and a single transactional store (matching the producer-side outbox model) is worth more than elastic scaling.
-
----
+- **The clock lives in a `tandem_*` table**, never on the client's aggregate row (design §3.1). A `lamport_clock` column on a domain table was rejected: it would intrude on the client's schema *and* force Tandem to write tables it does not own. The boundary holds — Tandem writes only `tandem_outbox`, `tandem_aggregate_clock`, `tandem_bucket_lease`, `tandem_meta`.
+- **Ship (a) clock + propagation and (b) the engine adapters together** (design §7). (a) alone writes a number into a Kafka header that no consumer can act on, so it delivers nothing on its own — "implement causal ordering" therefore includes two new modules, `tandem-kafka-streams` and `tandem-flink`.
+- **Tandem supplies the ordering key, never the reordering engine** (§1.1). No mainstream stream processor does *causal* reordering from an application clock; they do *event-time* reordering, and the adapters simply feed them the Lamport value in place of a timestamp. That is correct for ordering but breaks every time-based semantic of those engines — windows, grace periods, retention.
+- **Delivery semantics are unchanged.** At-least-once still holds and consumers must still deduplicate on `(aggregate_id, seq)`; a causal clock orders events, it does not deliver them.
 
 ## 10. Non-Functional Requirements
 
@@ -982,7 +873,7 @@ Tandem is positioned in the gap between a hand-rolled outbox (correct, but you b
 | Payload serialization | JSON default; Avro/Protobuf via pluggable `PayloadSerializer` | |
 | ~~`@TransactionalOutbox` event extraction~~ | **Resolved (Q22):** `TandemAggregate` — the aspect reads `pendingOutboxMessages()` off the returned aggregate (single or `Iterable`); the optional `aggregateType` attribute becomes a fail-fast guard (LLD-spring-producer §4) | |
 | ~~Spring-events tier event mapping~~ | **Resolved (Q22):** both — a published `OutboxMessage` is inserted directly, otherwise a registered `OutboxEventMapper<T>` SPI maps it; the synchronous listener is scoped to those types and fails fast without an active transaction (LLD-spring-producer §5) | |
-| ~~Lamport clock store~~ | **Resolved:** Tandem-managed `tandem_aggregate_clock` table (clean boundary — Tandem never writes domain tables); atomic upsert serializes the per-aggregate advance (§9.3) | |
+| ~~Lamport clock store~~ | **Resolved:** Tandem-managed `tandem_aggregate_clock` table (clean boundary — Tandem never writes domain tables); atomic upsert serializes the per-aggregate advance (HLD-causal-ordering.md §3.1) | |
 | ~~Spring Boot dual-version packaging~~ | **Resolved:** a **single artifact per module** on the common 6.x/7.x API, Spring `compileOnly`, validated by an in-build Boot 3.x/4.x test matrix; `-boot3`/`-boot4` split kept only as a fallback if a real incompatibility surfaces (§10.1, LLD-spring-config §1.1/§1.2) | |
 | ~~Trace propagation enablement~~ | **Resolved:** explicit flag (`tandem.tracing.enabled`, default `false`); never auto-enabled by a tracing adapter's mere classpath presence (HLD-tracing.md §9) | |
 | ~~Correlation-id source~~ | **Resolved:** both — an MDC key (default) and an explicit `TandemContext` API (HLD-tracing.md §9) | |

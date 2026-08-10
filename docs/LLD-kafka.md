@@ -98,7 +98,7 @@ var b = CloudEventBuilder.v1()
     .withExtension("seq", record.seq())             // always present
     .withExtension("partitionkey", record.aggregateId().value());  // always = key
 // optional extensions — added ONLY when their feature is on (guard against null):
-if (record.lamport() != null)                       // causal ordering enabled
+if (record.lamport() != null)                       // RESERVED: never true today (HLD-causal-ordering.md §0)
     b.withExtension("logicalclock", record.lamport());  // → header ce_logicalclock
 // trace extensions (traceparent/tracestate) copied from stored headers when present (§7.1)
 CloudEvent ce = b.build();
@@ -126,10 +126,12 @@ Event **versioning** lives in the `type` (`.v{n}` suffix), not in the topic — 
 ### 3.3 Header combination
 The Kafka record headers in binary mode = the `ce_*` attribute headers + `content-type` + the stored
 `headers` (e.g. `correlation-id`). Trace headers (`traceparent`/`tracestate`) from the stored
-`headers` are mapped to the CloudEvents Distributed-Tracing extension. The causal-ordering value is
-carried as the CloudEvents extension **`logicalclock`** → header **`ce_logicalclock`** in binary mode;
-the consumer-side adapters (`tandem-kafka-streams` / `tandem-flink`) read `ce_logicalclock`. (The design
-docs keep the technical term *lamport* for the concept; `logicalclock` is only the on-the-wire name.)
+`headers` are mapped to the CloudEvents Distributed-Tracing extension. The causal-ordering value
+*would be* carried as the CloudEvents extension **`logicalclock`** → header **`ce_logicalclock`** in
+binary mode, read by the consumer-side adapters (`tandem-kafka-streams` / `tandem-flink`). **None of
+that ships**: the feature is designed but not built, so no published event carries the header and
+neither adapter module exists ([HLD-causal-ordering.md](HLD-causal-ordering.md) §0). (The design docs keep the
+technical term *lamport* for the concept; `logicalclock` is only the on-the-wire name.)
 
 ### 3.4 Null `type` fallback (Q20)
 CloudEvents `type` is required but the `type` column is nullable. **`typeOf(record)` = `record.type()`

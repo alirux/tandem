@@ -1,13 +1,79 @@
 # Tandem — Cross-Aggregate Causal Ordering (Design Note)
 
-**Version:** 1.0  
-**Status:** Draft  
-**Companion to:** HLD §9 (Cross-Aggregate Causal Ordering)
+**Version:** 1.2  
+**Status:** Draft — **designed, not implemented** (see §0)  
+**Companion to:** [HLD.md](HLD.md) §9 (Cross-Aggregate Causal Ordering)
 
-This note is the long-form rationale behind the optional Lamport-clock capability
-summarised in HLD §9. It explains *why* per-aggregate ordering is insufficient for
-some consumers, what a Lamport clock adds, how it is wired into Tandem, the burden
-it places on consumers, and which tools do which part of the work.
+**This document is the design.** [HLD §9](HLD.md) carries only what the rest of the HLD needs
+inline — what the capability guarantees, `seq` vs `lamport`, and the decisions that bind other
+sections — and defers everything else here. Nothing is stated in both places: if a detail is
+missing from the HLD, it is because this is where it lives.
+
+It explains *why* per-aggregate ordering is insufficient for some consumers, what a Lamport clock
+adds, how it would be wired into Tandem, the burden it places on consumers, and which tools do
+which part of the work.
+
+---
+
+## 0. Implementation status — read this first
+
+**Nothing in this document is built.** Everything from §1 onward describes a design, in the
+present tense, as designs are written. What *ships* is a small set of published-but-inert
+declarations — types, constants and one field — kept so that building the feature later stays an
+**additive** change (HLD §1.4) rather than a breaking one.
+
+There is **no way to turn causal ordering on.** No flag, no property, no DDL. A javadoc saying
+"only when causal ordering is enabled" would therefore be misleading, and the code says
+"reserved" instead.
+
+### 0.1 The reserved surface — everything that exists today
+
+| # | Element | Module | State |
+|---|---|---|---|
+| 1 | `CausalContext` (port: `NONE` + `inboundTimestamp()`) | `tandem-core` | Zero references from any product code |
+| 2 | `LamportClock.merge(local, inbound)` | `tandem-core` | Zero references from any product code; unit-tested |
+| 3 | `OutboxRecord.lamport` (field + getter + builder setter) | `tandem-core` | Never set by product code; always `null` |
+| 4 | `CloudEventsHeaders.EXT_LOGICAL_CLOCK` / `CE_LOGICAL_CLOCK` | `tandem-core` | Read only by #6 |
+| 5 | `TandemHeaders.CAUSATION_ID` | `tandem-core` | Never written |
+| 6 | `if (record.lamport() != null)` in `CloudEventEncoder` | `tandem-kafka` | **Unreachable branch** — see §0.3 |
+
+Six elements, three of them ghosts with no caller at all. Any change to one of them should update
+this table in the same commit.
+
+### 0.2 What is missing — the whole mechanism
+
+Everything that would make the six above do something:
+
+- the `lamport` column on `tandem_outbox` and the `tandem_aggregate_clock` table (§3.1) —
+  neither is in `schema/postgres/tandem-baseline.sql`
+- the transactional advance-and-merge upsert on the write path (LLD-jdbc §2)
+- the enablement switch, wherever it would live
+- the consumer-side helper that populates `CausalContext` from the inbound header
+- both engine adapters, `tandem-kafka-streams` and `tandem-flink` (§7b) — neither module exists
+
+### 0.3 The one leak into a live path
+
+Elements #1–#5 are inert declarations: nothing executes them. Element #6 is different — it is a
+real branch on the relay's encode path, evaluated for every published record, that can never be
+taken. It is kept deliberately (removing it would mean re-adding it verbatim the day the feature
+lands, and a null check per encode costs nothing measurable), but it is the single place the
+unbuilt feature touches running code, so it carries an explicit comment saying so.
+
+### 0.4 Scope, if it is ever built
+
+§7 requires shipping **(a) clock + propagation and (b) the engine adapters together**. This
+is not a preference: (a) alone writes a number into a header that no consumer can act on, so it
+delivers nothing on its own. Treat "implement causal ordering" as including two new modules.
+
+Two properties of the design deserve to be re-read before committing to it, because both are easy
+to discover too late:
+
+- **It degrades silently.** The merge happens only if *every* consumer threads the
+  `CausalContext`. One that does not silently reduces the clock to a per-aggregate counter — no
+  error, no warning (§8).
+- **It taxes the consumer's pipeline.** The engine adapters inject a logical counter where Kafka
+  Streams and Flink expect an event-time timestamp, which is correct for ordering but breaks every
+  time-based semantic of those engines — windows, grace periods, retention (§6.2, §7b).
 
 ---
 
@@ -118,6 +184,43 @@ Order#42 ──emit──▶ outbox(lamport=5) ──▶ Kafka header ce_logical
 **5. Total order.** A total order comes from sorting by `(lamport, aggregate_id)` — the
 tiebreak is needed because two unrelated aggregates can land on the same `lamport`
 value.
+
+### 3.1 Where the clock lives — schema and the advance query
+
+Two schema additions, both created **only** when the feature is enabled (neither is in
+`schema/postgres/tandem-baseline.sql` today — §0):
+
+```sql
+-- the event's logical timestamp, on the outbox row
+ALTER TABLE tandem_outbox ADD COLUMN lamport BIGINT;
+
+-- the per-aggregate clock itself
+CREATE TABLE tandem_aggregate_clock (
+    aggregate_id VARCHAR(255) PRIMARY KEY,
+    lamport      BIGINT NOT NULL
+);
+```
+
+The clock is advanced at produce time with an atomic upsert whose **row lock serializes the
+per-aggregate advance** — which is what makes it work under pessimistic *and* optimistic client
+locking alike. The returned value is written to `tandem_outbox.lamport` in the same transaction:
+
+```sql
+INSERT INTO tandem_aggregate_clock (aggregate_id, lamport)
+VALUES (:aggregate_id, GREATEST(0, :inbound) + 1)
+ON CONFLICT (aggregate_id)
+DO UPDATE SET lamport = GREATEST(tandem_aggregate_clock.lamport, :inbound) + 1
+RETURNING lamport;
+```
+
+`:inbound` is the `CausalContext` timestamp, or 0 when the mutation is a causal root. When the
+feature is off the step is skipped entirely — no table, no upsert, no cost (HLD §1.3).
+
+**Rejected alternative: a `lamport_clock` column on the client's own aggregate row.** It would
+intrude on the client's schema *and* force Tandem to write domain tables. Keeping the clock in a
+`tandem_*` table preserves the boundary the whole library is built on — Tandem writes only its own
+tables (`tandem_outbox`, `tandem_aggregate_clock`, `tandem_bucket_lease`, `tandem_meta`), never
+yours.
 
 ---
 

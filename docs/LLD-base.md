@@ -65,10 +65,10 @@ from the client's own tables:
 |---|---|
 | Outbox table | `tandem_outbox` |
 | Attempt archive (designed, not built — HLD-attempt-archive §3) | `tandem_outbox_attempt` |
-| Lamport clock store (opt-in, §9.3) | `tandem_aggregate_clock` |
+| Lamport clock store (reserved, HLD-causal-ordering §3.1) | `tandem_aggregate_clock` |
 | Bucket ownership (standalone, §4.3) | `tandem_bucket_lease` |
 | Relay control flag (§4.1 admin) | `tandem_relay_control` |
-| Inbox reorderer (future, §9.6) | `tandem_inbox` |
+| Inbox reorderer (future, HLD-causal-ordering §7) | `tandem_inbox` |
 | Indexes | `idx_tandem_…` |
 
 Column names are **not** prefixed (they are already scoped by their table). The prefix is

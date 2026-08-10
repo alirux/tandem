@@ -394,7 +394,7 @@ consumer.
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
 | [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
-| [causal-ordering.md](docs/causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
+| [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
 | [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith |
 | [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
@@ -515,11 +515,13 @@ Not yet shipped, in no particular order:
 
 - **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
   process yourself (plain Java or Spring); see [Usage](#usage).
-- **Cross-aggregate causal ordering** via Lamport clocks — designed
-  ([causal-ordering.md](docs/causal-ordering.md)), with a port already published in `tandem-core`
-  (`CausalContext`) that resolves to a no-op today: visible in IDE autocomplete, but nothing
-  references it yet. Treat it as reserved API — off by default *by design*, so adopting it will
-  stay a zero-cost opt-in.
+- **Cross-aggregate causal ordering** via Lamport clocks — fully designed
+  ([HLD-causal-ordering.md](docs/HLD-causal-ordering.md)) but **not built**, and there is no way to switch it
+  on: no flag, no `lamport` column, no clock table, no consumer-side adapter. What ships is a small
+  **reserved surface** visible in IDE autocomplete and doing nothing — the `CausalContext` port,
+  `LamportClock`, a nullable `OutboxRecord.lamport`, and the `logicalclock`/`causation_id` header
+  names — published so that building the feature stays an additive change. The exact inventory of
+  what exists versus what is missing is [HLD-causal-ordering.md §0](docs/HLD-causal-ordering.md).
 - **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
   supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
   obstacle — but until it lands, PostgreSQL is the only supported database.

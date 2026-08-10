@@ -90,7 +90,7 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   *(tandem-jdbc)*
 - [x] **Q16 (P2)** — **Remaining SQL.** ✅ INSERT/claim/markDone/reclaim/cleanup in LLD-jdbc; the
   `tandem_bucket_lease` ↔ relay heartbeat/control reconciliation done (HLD-admin-api §4.1); Lamport store
-  resolved — **Tandem-managed `tandem_aggregate_clock` table** with an atomic upsert advance (HLD §9.3,
+  resolved — **Tandem-managed `tandem_aggregate_clock` table** with an atomic upsert advance (HLD-causal-ordering.md §3.1,
   LLD-jdbc §2; clean boundary, no domain-table writes). *(tandem-jdbc)*
 
 ## C. tandem-kafka
@@ -169,7 +169,7 @@ resolved (or consciously deferred) to write correct per-module LLDs.
 ## G. Optional adapters (kafka-streams, flink, tracing-otel, micrometer)
 
 - [ ] **Q27 (P3)** — **`lamport` (BIGINT) → engine timestamp (long ms).** Representation/overflow,
-  header naming (`ce_logicalclock` vs `ce_*`), concrete extractor/assigner classes. *(tandem-kafka-streams, tandem-flink; HLD §9.4)*
+  header naming (`ce_logicalclock` vs `ce_*`), concrete extractor/assigner classes. *(tandem-kafka-streams, tandem-flink; HLD-causal-ordering.md §7)*
 - [ ] **Q31 (P2)** — **`tandem-micrometer` design.** The module is reserved (`docs/LLD-base.md`:
   artifactId + package `com.codingful.tandem.micrometer`) but has no LLD, no dependency-catalog entry,
   and no wiring decision — it survived only as a trailing clause of the metrics work (HLD §7,

@@ -49,7 +49,10 @@ final class CloudEventEncoder {
 
         builder.withExtension(CloudEventsHeaders.EXT_SEQ, record.seq());            // always present → ce_seq
         builder.withExtension(CloudEventsHeaders.EXT_PARTITION_KEY, key);           // always = key → ce_partitionkey
-        if (record.lamport() != null) {                                            // only when causal ordering on
+        // Reserved: the causal-ordering feature (HLD §9) is designed but not built, so `lamport` is
+        // always null here — no lamport column in the DDL, no row mapper reading one. Kept so that
+        // building the feature needs no change on the publish path (docs/HLD-causal-ordering.md §0).
+        if (record.lamport() != null) {
             builder.withExtension(CloudEventsHeaders.EXT_LOGICAL_CLOCK, record.lamport());
         }
 

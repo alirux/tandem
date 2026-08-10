@@ -1,8 +1,12 @@
 package com.codingful.tandem.core;
 
 /**
- * Lamport-clock merge (HLD §9.2). Pure logic in the core; the causal-ordering feature that uses it is
- * opt-in and off by default (§9).
+ * Lamport-clock merge (HLD-causal-ordering.md §3) — pure logic in the core.
+ *
+ * <p><b>Reserved API — designed but not implemented.</b> One member of the cross-aggregate
+ * causal-ordering surface (HLD §9, {@code docs/HLD-causal-ordering.md}); <b>no product code calls
+ * this</b> — the write-side advance that would use it does not exist. Inventory and status:
+ * {@code docs/HLD-causal-ordering.md} §0.
  */
 public final class LamportClock {
 

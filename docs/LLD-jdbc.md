@@ -105,7 +105,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 - A `UNIQUE(aggregate_id, seq)` violation is translated to `DuplicateSeqException` (Q5).
 - `insertAll` batches multiple messages via JDBC batch in the same transaction.
 
-**Optional Lamport advance (only when causal ordering is enabled, §9.3).** Before the outbox
+**Optional Lamport advance — RESERVED, not implemented** ([HLD-causal-ordering.md](HLD-causal-ordering.md) §0;
+§3.1). No `tandem_aggregate_clock` table and no `lamport` column exist in the shipped DDL, and
+`JdbcOutboxRepository` contains none of the code below. It is specified here so that building the
+feature is an additive change. Were it built: before the outbox
 INSERT, advance the per-aggregate clock with an atomic upsert and write the result to
 `outbox.lamport` — all in the same domain transaction. The `tandem_aggregate_clock` row lock
 serializes the advance regardless of the client's locking strategy:
