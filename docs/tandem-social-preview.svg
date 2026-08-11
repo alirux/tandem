@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#080A0F"/>
+  <rect x="0" y="0" width="1280" height="6" fill="#12B412"/>
+
+  <!-- brand lockup: logo tile + wordmark, optically centred on each other -->
+  <image xlink:href="tandem-logo-blackbg-shade.png" x="96" y="152" width="169" height="100"/>
+
+  <text x="297" y="242" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="112" font-weight="700" fill="#FFFFFF" letter-spacing="-3">Tandem</text>
+
+  <text x="100" y="330" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="44" font-weight="500" fill="#C6D0E0">Reliable, strictly-ordered</text>
+  <text x="100" y="386" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="44" font-weight="500" fill="#C6D0E0">event delivery to Kafka</text>
+
+  <text x="100" y="520" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="30" font-weight="500" fill="#7E8CA8">Java library &#183; no CDC &#183; no Kafka Connect</text>
+  <text x="100" y="564" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="30" font-weight="500" fill="#7E8CA8">observability &#183; Admin API &#183; CLI &#183; CloudEvents</text>
+
+  <!-- right column: the outbox at a glance -->
+  <g font-family="Menlo, DejaVu Sans Mono, monospace" font-size="27" font-weight="700">
+    <text x="800" y="216" fill="#D8D000">PENDING</text>
+    <rect x="800" y="234" width="380" height="42" rx="4" fill="#161C28"/>
+    <rect x="800" y="234" width="260" height="42" rx="4" fill="#D8D000"/>
+
+    <text x="800" y="336" fill="#12B412">IN_FLIGHT</text>
+    <rect x="800" y="354" width="380" height="42" rx="4" fill="#161C28"/>
+    <rect x="800" y="354" width="367" height="42" rx="4" fill="#12B412"/>
+
+    <text x="800" y="456" fill="#E03A1A">FAILED</text>
+    <rect x="800" y="474" width="380" height="42" rx="4" fill="#161C28"/>
+    <rect x="800" y="474" width="80" height="42" rx="4" fill="#E03A1A"/>
+  </g>
+</svg>

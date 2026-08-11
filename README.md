@@ -23,6 +23,8 @@ write is atomic by your database's ACID guarantees, with no dual-write and no di
 transaction. A separate **relay** then polls the outbox and publishes to Kafka, at-least-once,
 preserving per-aggregate ordering.
 
+<img src="docs/tandem-architecture.png" alt="Tandem architecture: your application writes the domain change and the outbox row in one transaction to PostgreSQL; the Tandem relay polls tandem_outbox, publishes to Apache Kafka keyed by aggregate_id, and marks the row done — no CDC, no Kafka Connect, no extra infrastructure" width="100%" />
+
 It targets the gap between a **hand-rolled outbox** (correct, but every subtle trap is yours to
 get right) and **Debezium/CDC** (powerful, but a separate distributed system to operate):
 no extra infrastructure — just your relational database and Kafka — with the correctness traps
@@ -42,6 +44,132 @@ COMMIT TX                  ← both or neither, guaranteed by the DB
 
 If the relay crashes after publishing but before marking the row done, it republishes — a
 **duplicate** (manageable), never a **divergence**.
+
+## Try it
+
+`tandem-sample` is a self-contained tutorial you can run immediately — no Maven Central required.
+It starts real PostgreSQL and Kafka containers via Testcontainers, inserts 5 outbox events for two
+interleaved orders, and verifies that the relay delivers them in per-aggregate sequence order.
+
+Two of the things you end up looking at — both reproduced by a command below, neither a mockup:
+
+<p align="center"><img src="docs/tandem-cli-status-watch.png" alt="tandem-cli outbox summary --watch — a live terminal dashboard with color-coded bar charts for pending, in-flight, and failed message counts" width="700" /></p>
+
+<p align="center"><em><code>tandem-cli outbox summary --watch</code> — the outbox, redrawing in place.</em></p>
+
+<p align="center"><img src="docs/tandem-metrics-dashboard.png" alt="Tandem relay metrics — a live Grafana dashboard, showing the backlog and the blocked-vs-claimable split during a failing aggregate" width="800" /></p>
+
+<p align="center"><em><code>metricsDashboardDemo</code> — the relay's own signals on a live Grafana, during a failing aggregate.</em></p>
+
+**Prerequisites:** Java 17+, Docker (Docker Desktop or Colima).
+
+```bash
+# macOS / Linux
+git clone https://github.com/alirux/tandem.git
+cd tandem
+./tandem-sample/run.sh
+```
+
+```cmd
+:: Windows
+git clone https://github.com/alirux/tandem.git
+cd tandem
+tandem-sample\run.cmd
+```
+
+The script prints JDBC and Kafka connection details so you can connect external clients while the
+demo is running. Containers stay alive until you press ENTER.
+
+For the **Spring Boot** write-side experience, run the Spring sample instead — it boots a Spring
+application against a Testcontainers PostgreSQL, writes events through the `@TransactionalOutbox`,
+Template and Spring-events tiers, and delivers them to Kafka in per-aggregate order:
+
+```bash
+# macOS / Linux
+./tandem-sample-spring/run.sh
+```
+
+```cmd
+:: Windows
+tandem-sample-spring\run.cmd
+```
+
+The Spring sample also demonstrates the Admin API (`tandem.admin.enabled: true` in its
+`application.yml`) against the same outbox it just wrote to — reads, and replay/discard on a row
+the demo deliberately manufactures as `FAILED` for this purpose. Once the demo narration finishes,
+the app keeps running as a web server (Ctrl+C to stop) and prints the exact commands to try,
+including the real id of that row:
+
+```bash
+curl http://localhost:8080/tandem/admin/v1/outbox/summary
+curl http://localhost:8080/tandem/admin/v1/outbox/messages
+curl http://localhost:8080/tandem/admin/v1/outbox/messages/1
+
+# Replace 1 with the id the demo printed
+curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/replay
+curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/discard \
+     -H 'Content-Type: application/json' \
+     -d '{"acknowledgeOrderingBreak": true, "reason": "demo"}'
+
+# Relay control - works under this SINGLE coordination, the default:
+curl http://localhost:8080/tandem/admin/v1/relay/status
+curl -X POST http://localhost:8080/tandem/admin/v1/relay/pause
+curl -X POST http://localhost:8080/tandem/admin/v1/relay/resume
+```
+
+`GET /relay/buckets`, `GET /relay/buckets/{bucket}`, `GET /relay/workers`, and
+`POST /relay/buckets/{bucket}/release` need `LEASE` coordination — `SINGLE` refuses them (`409`)
+rather than answer with misleading data. Run the sample under `LEASE` instead to try those for real,
+against an actually-owned bucket:
+
+```bash
+./tandem-sample-spring/run-lease.sh
+```
+
+Prefer a CLI over hand-built `curl` calls? [`tandem-cli`](tandem-cli/) wraps the same Admin API
+endpoints in discoverable verbs and typed flags. Build it from source and point it at the sample
+(`--base-url` takes the same `.../tandem/admin/v1` prefix the `curl` commands above use):
+
+```bash
+cd tandem-cli && make build && cd ..
+./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 outbox summary
+./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 relay status
+```
+
+Add `--watch` to `outbox summary` for the live, redrawing-in-place dashboard shown at the top of
+this section — bar charts for `PENDING`/`IN_FLIGHT`/`FAILED`, refreshed on an interval, colored so
+a growing red `FAILED` bar catches the eye without reading the number.
+
+See [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md) for the full command reference.
+
+To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
+`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through eight
+scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
+joining, that instance's worker getting stuck without crashing, a crash with rows in flight,
+recovery — and holds the dashboard open so every signal `TandemMetrics` reports can be read on a
+live graph instead of asserted in a test:
+
+```bash
+./gradlew :tandem-benchmark:metricsDashboardDemo
+```
+
+Needs Docker; the first run pulls the Prometheus and Grafana images. Press Enter to shut the stack
+down, or pass `--args="--hold=<seconds>"` to close it automatically instead. See
+[LLD-benchmark.md §6.3](docs/LLD-benchmark.md) for what each panel means, including the alerting
+gap the first real runs found — the reason `blocked.count` exists.
+
+The same benchmark's `tracingDashboardDemo` does the same for traces: a real OpenTelemetry SDK
+exports through a real Tempo, read on the same Grafana over a second datasource, so one full trace
+— write, the outbox dwell, `tandem.relay.publish`, and the consumer — can be opened as a waterfall
+instead of taken on faith.
+
+```bash
+./gradlew :tandem-benchmark:tracingDashboardDemo
+```
+
+See [LLD-benchmark.md §6.4](docs/LLD-benchmark.md) for what stitches the trace together and which
+spans are the shipped product versus the demo's own stand-ins for a caller's domain span and a
+consumer.
 
 ## Key features
 
@@ -96,21 +224,18 @@ If the relay crashes after publishing but before marking the row done, it republ
   MDC key or the explicit `TandemContext` API — and is also searchable through the Admin API.
   Design: [HLD-tracing.md](docs/HLD-tracing.md).
 
-## Architecture at a glance
+## Architecture in detail
 
-```
-┌───────────────────── Client application ──────────────────────┐
-│  Domain TX --same TX--> INSERT outbox row (PostgreSQL)        │
-└───────────────────────────────┬───────────────────────────────┘
-                                │  the DB is the only coordination point
-                                ▼
-           ┌──── Relay (embedded or standalone) ────┐
-           │  sharded poll -> publish -> mark DONE  │
-           └────────────────────────────────────────┘
-                                │
-                                ▼
-              Apache Kafka (keyed by aggregate_id)
-```
+The four stages of the [diagram above](#what-is-tandem), and what each one buys you:
+
+1. **The write.** Your domain change and the outbox row are inserted in the *same* transaction, so
+   they commit together or not at all — no dual write, no distributed transaction.
+2. **The store.** The outbox row lands in `tandem_outbox`. The database is the **only** coordination
+   point: relay instances claim work, take leases and hand over there, and nowhere else.
+3. **The relay.** Workers poll their own shard of buckets with `SKIP LOCKED`, publish, and mark the
+   row done. A failure leaves the row for the next attempt rather than losing it.
+4. **The publish.** Messages reach Kafka as CloudEvents, keyed by `aggregate_id`, so a single
+   aggregate's events land on one partition in order while different aggregates run in parallel.
 
 Only the **write-side** must run in the client; the relay and housekeeping are DB-coordinated and
 can be deployed independently. See [HLD §3.2](docs/HLD.md).
@@ -256,126 +381,6 @@ troubleshooting a stalled relay — set on the `com.codingful.tandem.jdbc` and
 `com.codingful.tandem.kafka` logger names. Full policy, including a bridge-free alternative and
 what Tandem never logs: [HLD-logging.md](docs/HLD-logging.md).
 
-## Try it
-
-`tandem-sample` is a self-contained tutorial you can run immediately — no Maven Central required.
-It starts real PostgreSQL and Kafka containers via Testcontainers, inserts 5 outbox events for two
-interleaved orders, and verifies that the relay delivers them in per-aggregate sequence order.
-
-**Prerequisites:** Java 17+, Docker (Docker Desktop or Colima).
-
-```bash
-# macOS / Linux
-git clone https://github.com/alirux/tandem.git
-cd tandem
-./tandem-sample/run.sh
-```
-
-```cmd
-:: Windows
-git clone https://github.com/alirux/tandem.git
-cd tandem
-tandem-sample\run.cmd
-```
-
-The script prints JDBC and Kafka connection details so you can connect external clients while the
-demo is running. Containers stay alive until you press ENTER.
-
-For the **Spring Boot** write-side experience, run the Spring sample instead — it boots a Spring
-application against a Testcontainers PostgreSQL, writes events through the `@TransactionalOutbox`,
-Template and Spring-events tiers, and delivers them to Kafka in per-aggregate order:
-
-```bash
-# macOS / Linux
-./tandem-sample-spring/run.sh
-```
-
-```cmd
-:: Windows
-tandem-sample-spring\run.cmd
-```
-
-The Spring sample also demonstrates the Admin API (`tandem.admin.enabled: true` in its
-`application.yml`) against the same outbox it just wrote to — reads, and replay/discard on a row
-the demo deliberately manufactures as `FAILED` for this purpose. Once the demo narration finishes,
-the app keeps running as a web server (Ctrl+C to stop) and prints the exact commands to try,
-including the real id of that row:
-
-```bash
-curl http://localhost:8080/tandem/admin/v1/outbox/summary
-curl http://localhost:8080/tandem/admin/v1/outbox/messages
-curl http://localhost:8080/tandem/admin/v1/outbox/messages/1
-
-# Replace 1 with the id the demo printed
-curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/replay
-curl -X POST http://localhost:8080/tandem/admin/v1/outbox/messages/1/discard \
-     -H 'Content-Type: application/json' \
-     -d '{"acknowledgeOrderingBreak": true, "reason": "demo"}'
-
-# Relay control - works under this SINGLE coordination, the default:
-curl http://localhost:8080/tandem/admin/v1/relay/status
-curl -X POST http://localhost:8080/tandem/admin/v1/relay/pause
-curl -X POST http://localhost:8080/tandem/admin/v1/relay/resume
-```
-
-`GET /relay/buckets`, `GET /relay/buckets/{bucket}`, `GET /relay/workers`, and
-`POST /relay/buckets/{bucket}/release` need `LEASE` coordination — `SINGLE` refuses them (`409`)
-rather than answer with misleading data. Run the sample under `LEASE` instead to try those for real,
-against an actually-owned bucket:
-
-```bash
-./tandem-sample-spring/run-lease.sh
-```
-
-Prefer a CLI over hand-built `curl` calls? [`tandem-cli`](tandem-cli/) wraps the same Admin API
-endpoints in discoverable verbs and typed flags. Build it from source and point it at the sample
-(`--base-url` takes the same `.../tandem/admin/v1` prefix the `curl` commands above use):
-
-```bash
-cd tandem-cli && make build && cd ..
-./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 outbox summary
-./tandem-cli/bin/tandem-cli --base-url http://localhost:8080/tandem/admin/v1 relay status
-```
-
-Add `--watch` to `outbox summary` for a live, redrawing-in-place dashboard — bar charts for
-`PENDING`/`IN_FLIGHT`/`FAILED`, refreshed on an interval, colored so a growing red `FAILED` bar
-catches the eye without reading the number:
-
-<p align="center"><img src="docs/tandem-cli-status-watch.png" alt="tandem-cli outbox summary --watch — a live terminal dashboard with color-coded bar charts for pending, in-flight, and failed message counts" width="700" /></p>
-
-See [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md) for the full command reference.
-
-To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
-`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through eight
-scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
-joining, that instance's worker getting stuck without crashing, a crash with rows in flight,
-recovery — and holds the dashboard open so every signal `TandemMetrics` reports can be read on a
-live graph instead of asserted in a test:
-
-```bash
-./gradlew :tandem-benchmark:metricsDashboardDemo
-```
-
-<p align="center"><img src="docs/tandem-metrics-dashboard.png" alt="Tandem relay metrics — a live Grafana dashboard, showing the backlog and the blocked-vs-claimable split during a failing aggregate" width="800" /></p>
-
-Needs Docker; the first run pulls the Prometheus and Grafana images. Press Enter to shut the stack
-down, or pass `--args="--hold=<seconds>"` to close it automatically instead. See
-[LLD-benchmark.md §6.3](docs/LLD-benchmark.md) for what each panel means, including the alerting
-gap the first real runs found — the reason `blocked.count` exists.
-
-The same benchmark's `tracingDashboardDemo` does the same for traces: a real OpenTelemetry SDK
-exports through a real Tempo, read on the same Grafana over a second datasource, so one full trace
-— write, the outbox dwell, `tandem.relay.publish`, and the consumer — can be opened as a waterfall
-instead of taken on faith.
-
-```bash
-./gradlew :tandem-benchmark:tracingDashboardDemo
-```
-
-See [LLD-benchmark.md §6.4](docs/LLD-benchmark.md) for what stitches the trace together and which
-spans are the shipped product versus the demo's own stand-ins for a caller's domain span and a
-consumer.
-
 ## Documentation
 
 | Document | Contents |
@@ -393,6 +398,7 @@ consumer.
 | [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
 | [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
 | [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
+| [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
@@ -513,8 +519,9 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
 
 Not yet shipped, in no particular order:
 
-- **`tandem-relay`** — a prebuilt, standalone relay deployable. Today you assemble the relay
-  process yourself (plain Java or Spring); see [Usage](#usage).
+- **`tandem-relay`** — a prebuilt, standalone relay deployable. Fully designed
+  ([LLD-relay.md](docs/LLD-relay.md)) but **not built**: today you assemble the relay process
+  yourself (plain Java or Spring); see [Usage](#usage).
 - **Cross-aggregate causal ordering** via Lamport clocks — fully designed
   ([HLD-causal-ordering.md](docs/HLD-causal-ordering.md)) but **not built**, and there is no way to switch it
   on: no flag, no `lamport` column, no clock table, no consumer-side adapter. What ships is a small
@@ -522,9 +529,12 @@ Not yet shipped, in no particular order:
   `LamportClock`, a nullable `OutboxRecord.lamport`, and the `logicalclock`/`causation_id` header
   names — published so that building the feature stays an additive change. The exact inventory of
   what exists versus what is missing is [HLD-causal-ordering.md §0](docs/HLD-causal-ordering.md).
-- **MySQL support.** The claim strategy is already portable (`SELECT ... FOR UPDATE SKIP LOCKED`,
-  supported by MySQL 8.0+), so this is a deliberate roadmap item rather than an architectural
-  obstacle — but until it lands, PostgreSQL is the only supported database.
+- **MySQL support.** Fully specified and verified against MySQL 8.4
+  ([LLD-jdbc §5](docs/LLD-jdbc.md)), but **not built** — PostgreSQL remains the only supported
+  database. It is more than a dialect swap: MySQL has no `UPDATE ... RETURNING`, so the claim becomes
+  a two-step transaction, and the relay has to run at `READ COMMITTED` — under MySQL's
+  `REPEATABLE READ` default, four relay workers are measurably *slower* than one, with nothing in the
+  logs to say why.
 - **Attempt-level forensic history** — a timeline of every delivery attempt per message
   (when it ran, how long it took, which worker, which error), for forensic debugging. Fully
   designed in [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) but **not built**: no port,

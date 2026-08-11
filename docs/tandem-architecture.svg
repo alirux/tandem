@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="400" viewBox="0 0 1320 400">
+  <rect x="0" y="0" width="1320" height="400" rx="18" fill="#080A0F"/>
+
+  <!-- ── client application ───────────────────────────────────────────── -->
+  <rect x="40" y="80" width="360" height="190" rx="12" fill="#0D1119" stroke="#212B3B" stroke-width="2"/>
+  <text x="64" y="116" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="19" font-weight="600" fill="#7E8CA8" letter-spacing="1">YOUR APPLICATION</text>
+
+  <rect x="66" y="136" width="4" height="106" rx="2" fill="#12B412"/>
+
+  <rect x="84" y="136" width="292" height="46" rx="7" fill="#151D2B"/>
+  <text x="230" y="166" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="24" font-weight="500" fill="#E6EDF7">domain write</text>
+
+  <rect x="84" y="196" width="292" height="46" rx="7" fill="#151D2B"/>
+  <text x="230" y="226" text-anchor="middle" font-family="Menlo, DejaVu Sans Mono, monospace"
+        font-size="21" font-weight="600" fill="#E6EDF7">INSERT outbox row</text>
+
+  <text x="220" y="308" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="22" font-weight="500" fill="#12B412">one transaction &#8212; both or neither</text>
+
+  <!-- ── postgresql ───────────────────────────────────────────────────── -->
+  <rect x="450" y="80" width="240" height="190" rx="12" fill="#0D1119" stroke="#212B3B" stroke-width="2"/>
+  <text x="570" y="116" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="19" font-weight="600" fill="#7E8CA8" letter-spacing="1">POSTGRESQL</text>
+  <text x="570" y="192" text-anchor="middle" font-family="Menlo, DejaVu Sans Mono, monospace"
+        font-size="24" font-weight="700" fill="#E6EDF7">tandem_outbox</text>
+  <text x="570" y="308" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="22" font-weight="500" fill="#7E8CA8">the only coordination point</text>
+
+  <!-- ── relay ────────────────────────────────────────────────────────── -->
+  <rect x="740" y="80" width="240" height="190" rx="12" fill="#0D1119" stroke="#212B3B" stroke-width="2"/>
+  <text x="860" y="116" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="19" font-weight="600" fill="#7E8CA8" letter-spacing="1">TANDEM RELAY</text>
+  <g text-anchor="middle" font-family="Menlo, DejaVu Sans Mono, monospace" font-size="22" font-weight="600" fill="#E6EDF7">
+    <text x="860" y="163">poll</text>
+    <text x="860" y="200">publish</text>
+    <text x="860" y="237">mark done</text>
+  </g>
+  <text x="860" y="308" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="22" font-weight="500" fill="#7E8CA8">embedded or standalone</text>
+
+  <!-- ── kafka ────────────────────────────────────────────────────────── -->
+  <rect x="1030" y="80" width="250" height="190" rx="12" fill="#0D1119" stroke="#212B3B" stroke-width="2"/>
+  <text x="1155" y="116" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="19" font-weight="600" fill="#7E8CA8" letter-spacing="1">APACHE KAFKA</text>
+  <text x="1155" y="192" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="26" font-weight="600" fill="#E6EDF7">CloudEvents</text>
+  <text x="1155" y="308" text-anchor="middle" font-family="Menlo, DejaVu Sans Mono, monospace"
+        font-size="20" font-weight="500" fill="#7E8CA8">keyed by aggregate_id</text>
+
+  <!-- ── flow arrows ──────────────────────────────────────────────────── -->
+  <g stroke="#44536E" stroke-width="3" fill="#44536E">
+    <line x1="404" y1="175" x2="434" y2="175"/>
+    <polygon points="434,167 450,175 434,183"/>
+    <line x1="694" y1="175" x2="724" y2="175"/>
+    <polygon points="724,167 740,175 724,183"/>
+    <line x1="984" y1="175" x2="1014" y2="175"/>
+    <polygon points="1014,167 1030,175 1014,183"/>
+  </g>
+
+  <!-- ── footer ───────────────────────────────────────────────────────── -->
+  <text x="660" y="364" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="23" font-weight="500" fill="#5C6B87">no CDC &#183; no Kafka Connect &#183; no extra infrastructure</text>
+</svg>
