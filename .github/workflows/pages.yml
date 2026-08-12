@@ -1,0 +1,47 @@
+name: Site
+
+# Publishes tandem.codingful.com from site/. The images the page shows live in docs/ and are
+# copied in by site/build.sh, so a change to a diagram there must redeploy the site too.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'site/**'
+      - 'docs/tandem-logo-blackbg-shade.png'
+      - 'docs/tandem-architecture.svg'
+      - 'docs/tandem-cli-status-watch.png'
+      - 'docs/tandem-metrics-dashboard.png'
+      - 'docs/tandem-social-preview.png'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy in flight; queue behind it instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assemble the site
+        run: ./site/build.sh
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/_build
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

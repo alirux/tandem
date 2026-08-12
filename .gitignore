@@ -3,6 +3,9 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 
+# Site (assembled by site/build.sh from site/ + the images in docs/)
+site/_build/
+
 # IDE
 .idea/
 *.iml

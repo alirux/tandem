@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message is not in a replayable state — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type message-not-replayable (409): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">409</span></p>
+    <h1>Message is not in a replayable state</h1>
+    <p class="uri">https://tandem.codingful.com/problems/message-not-replayable</p>
+    <h2>What it means</h2>
+    <p>Replay was requested for a message that is not in a replayable state. Only
+      <code>DONE</code> and <code>FAILED</code> messages can be replayed.</p>
+    <p>A <code>PENDING</code> or <code>IN_FLIGHT</code> message is already on its way to the
+      broker: replaying it would queue a second delivery of an event the relay is about to publish
+      anyway, and — worse — would reorder it against the rest of its aggregate.</p>
+
+    <h2>What to do</h2>
+    <p>Nothing, usually. Re-read the message: if it is <code>IN_FLIGHT</code> the relay is working
+      on it, and if it fails it will land in <code>FAILED</code>, where replay applies. Retrying
+      the replay call immediately is not useful — this is a state conflict, not a transient
+      error.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/message-not-replayable",
+  "title": "Message is not in a replayable state",
+  "status": 409,
+  "detail": "Message 4711 is IN_FLIGHT; only DONE or FAILED can be replayed"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

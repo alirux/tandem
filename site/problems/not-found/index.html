@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resource not found — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type not-found (404): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">404</span></p>
+    <h1>Resource not found</h1>
+    <p class="uri">https://tandem.codingful.com/problems/not-found</p>
+    <h2>What it means</h2>
+    <p>The addressed resource does not exist: an outbox message id that was never written or has
+      already been retired, or a relay bucket outside the configured bucket count.</p>
+
+    <h2>What to do</h2>
+    <p>Re-read the id from a listing endpoint rather than constructing it. A message id that
+      worked before and now returns 404 usually means the row has been retired by housekeeping —
+      delivered messages do not stay in the outbox forever.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/not-found",
+  "title": "Resource not found",
+  "status": 404,
+  "detail": "No outbox message with id 4711"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

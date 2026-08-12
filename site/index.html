@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tandem — reliable, strictly-ordered event delivery to Kafka</title>
+<meta name="description" content="A Java library implementing the Transactional Outbox Pattern: reliable, causally-ordered event delivery from PostgreSQL or MySQL to Apache Kafka. No CDC, no Kafka Connect, no two-phase commit.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tandem — reliable, strictly-ordered event delivery to Kafka">
+<meta property="og:description" content="Transactional Outbox for Java. No CDC, no Kafka Connect, no two-phase commit.">
+<meta property="og:image" content="https://tandem.codingful.com/assets/social-preview.png">
+<meta property="og:url" content="https://tandem.codingful.com/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/logo.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD.md">Design</a>
+      <a href="https://javadoc.io/doc/com.codingful/tandem-core/latest/index.html">Javadoc</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Your database already committed it. Kafka should have it too.</h1>
+    <p class="lede">Tandem is a Java library implementing the <strong>Transactional Outbox
+      Pattern</strong>: reliable, strictly-ordered event delivery from PostgreSQL or MySQL to
+      Apache Kafka.</p>
+    <p class="sub">No CDC. No Kafka Connect. No two-phase commit. Just your relational database
+      and your broker — with the correctness traps already handled.</p>
+    <div class="cta">
+      <a class="btn primary" href="#quickstart">Run it in one command</a>
+      <a class="btn" href="https://github.com/alirux/tandem">View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section class="tight">
+  <div class="wrap">
+    <figure class="figure">
+      <img src="assets/architecture.svg" alt="Tandem architecture: your application writes the domain change and the outbox row in one transaction to PostgreSQL; the Tandem relay polls tandem_outbox, publishes to Apache Kafka keyed by aggregate_id, and marks the row done.">
+      <figcaption>The write and the outbox row commit together. A separate relay polls, publishes,
+        and marks the row done — at-least-once, in per-aggregate order.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="wrap two-col">
+    <div>
+      <p class="kicker">The whole idea</p>
+      <h2>One transaction, no dual write</h2>
+      <p>The classic double write — write to the database, then publish to Kafka as two
+        non-atomic steps — diverges permanently on partial failure. Tandem removes it: the
+        domain change and the event are one commit, guaranteed by the database you already
+        trust.</p>
+      <p>If the relay crashes after publishing but before marking the row done, it republishes:
+        a <strong>duplicate</strong>, which your consumer can handle — never a
+        <strong>divergence</strong>, which nobody can.</p>
+    </div>
+    <div>
+<pre><span class="k">BEGIN TX</span>
+  UPDATE aggregate SET version = version + 1 WHERE id = ? FOR UPDATE
+  INSERT INTO tandem_outbox (aggregate_id, type, seq, payload, ...)
+<span class="k">COMMIT TX</span>   <span class="c">← both or neither, guaranteed by the DB</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="quickstart">
+  <div class="wrap">
+    <p class="kicker">Quickstart</p>
+    <h2>See it work before you read another word</h2>
+    <div class="two-col">
+      <div>
+        <p><code>tandem-sample</code> is a self-contained tutorial. It starts a real PostgreSQL and
+          a real Kafka via Testcontainers, inserts five events for two interleaved orders, and
+          verifies that they arrive in per-aggregate sequence order.</p>
+        <p class="note">Requires Java 17+ and Docker. Nothing is fetched from Maven Central — it
+          builds and runs the modules in the repository. Containers stay up until you press ENTER,
+          and the script prints the JDBC and Kafka details so you can poke at them yourself.</p>
+      </div>
+      <div>
+<pre>git clone https://github.com/alirux/tandem.git
+cd tandem
+./tandem-sample/run.sh</pre>
+        <p style="font-size:15px;color:var(--muted)">On Spring Boot?
+          <code>./tandem-sample-spring/run.sh</code> boots an application that writes through the
+          <code>@TransactionalOutbox</code> tiers and leaves the Admin API running to curl.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Operating it</p>
+    <h2>A stuck outbox is visible, and actionable</h2>
+    <div class="shots">
+      <figure class="figure framed">
+        <img src="assets/cli-status-watch.png" alt="tandem-cli outbox summary --watch — a live terminal dashboard with colour-coded bar charts for pending, in-flight and failed message counts.">
+        <figcaption><code>tandem-cli outbox summary --watch</code> — the outbox, redrawing in
+          place. A Go binary over the same Admin API contract, never a second control path.</figcaption>
+      </figure>
+      <figure class="figure framed">
+        <img src="assets/metrics-dashboard.png" alt="Tandem relay metrics on a live Grafana dashboard, showing the backlog and the blocked-versus-claimable split during a failing aggregate.">
+        <figcaption>The relay's own signals on Grafana during a failing aggregate — including
+          how many events are <em>blocked</em> behind a poison message, reported separately from
+          a relay that is merely falling behind.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">What you get</p>
+    <h2>Built for the 80% case, on purpose</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Per-aggregate ordering</h3>
+        <p>Every aggregate hashes into one of a fixed set of buckets, and each bucket has exactly
+          one owning worker — ordering is <strong>structural</strong>, not a per-aggregate lock
+          that can be lost to a race. Full parallelism across aggregates, the Kafka partition-key
+          model, enforced end to end.</p>
+      </div>
+      <div class="card">
+        <h3>At-least-once relay</h3>
+        <p>Sharded <code>SKIP LOCKED</code> polling, lease-based failover, exponential backoff,
+          and poison-message isolation: a stuck event blocks only its own aggregate.</p>
+      </div>
+      <div class="card">
+        <h3>CloudEvents by default</h3>
+        <p>Messages are published in the CNCF CloudEvents envelope (binary mode), so the wider
+          ecosystem can consume them without a bespoke reader.</p>
+      </div>
+      <div class="card">
+        <h3>Metrics you can alert on</h3>
+        <p>Backlog depth, oldest-waiting age, permanently-failed count, blocked-behind-a-failure
+          count, live workers. A pluggable port with a Micrometer adapter — a no-op default costs
+          nothing.</p>
+      </div>
+      <div class="card">
+        <h3>Traces that survive the outbox</h3>
+        <p>A consumed event can be traced back to the domain transaction that produced it: the
+          trace context rides on the row at insert, and the relay emits a publish span at the real
+          send instant. Off by default; the correlation id alone needs no tracing library at
+          all.</p>
+      </div>
+      <div class="card">
+        <h3>Admin API and CLI</h3>
+        <p>An optional REST module (off by default) to search the outbox, replay, discard, and
+          pause or resume the relay — API-first, audit-logged, with a Go CLI over the same
+          contract.</p>
+      </div>
+      <div class="card">
+        <h3>Embedded or standalone</h3>
+        <p>The relay runs inside your application or in a process of its own, and coordinates one
+          or many instances through the database alone: <code>SINGLE</code> owns every bucket at
+          zero cost, <code>LEASE</code> partitions ownership across a horizontally-scaled
+          deployment.</p>
+      </div>
+      <div class="card">
+        <h3>A client that stays light</h3>
+        <p>The part your application imports is the outbox INSERT. <code>tandem-core</code> has
+          zero runtime dependencies; Kafka, CloudEvents and tracing live on the relay side.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <p class="kicker">Install</p>
+    <h2>Add it to your build</h2>
+    <div class="two-col">
+      <div>
+<pre>dependencies {
+    implementation(platform(<span class="k">"com.codingful:tandem-bom:x.y.z"</span>))
+    implementation(<span class="k">"com.codingful:tandem-jdbc"</span>)
+    implementation(<span class="k">"com.codingful:tandem-kafka"</span>)
+    testImplementation(<span class="k">"com.codingful:tandem-test"</span>)
+}</pre>
+      </div>
+      <div>
+        <p>Published to Maven Central under the <code>com.codingful</code> group. Import the BOM
+          and declare modules without a version; take the current one from
+          <a href="https://central.sonatype.com/artifact/com.codingful/tandem-core">Maven
+            Central</a>.</p>
+        <p>The write side (<code>tandem-jdbc</code>) pulls no Kafka dependency — add
+          <code>tandem-kafka</code> only where the relay runs. On Spring Boot, take
+          <code>tandem-spring-producer</code> where you write and
+          <code>tandem-spring-relay</code> where the relay runs; one artifact serves Boot 3.x and
+          4.x alike.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="tight">
+  <div class="wrap">
+    <p class="kicker">Read on</p>
+    <div class="cards">
+      <div class="card">
+        <h3><a href="https://github.com/alirux/tandem/blob/main/README.md">README</a></h3>
+        <p>Usage, configuration, Spring tiers, known limitations.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/alirux/tandem/blob/main/docs/HLD.md">Design documents</a></h3>
+        <p>The architecture, the data model, and why each decision went the way it did.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://javadoc.io/doc/com.codingful/tandem-core/latest/index.html">API reference</a></h3>
+        <p>Javadoc for every published module, straight from Maven Central.</p>
+      </div>
+      <div class="card">
+        <h3><a href="problems/">Problem types</a></h3>
+        <p>Every RFC 9457 error the Admin API can return, and what to do about it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+      <a href="https://central.sonatype.com/artifact/com.codingful/tandem-core">Maven Central</a>
+      <a href="https://github.com/alirux/tandem/releases">Releases</a>
+      <a href="https://github.com/alirux/tandem/blob/main/CONTRIBUTING.md">Contributing</a>
+      <a href="problems/">Problem types</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p><a href="https://github.com/alirux/tandem/blob/main/LICENSE">Apache License 2.0</a> · Java
+      17+ · currently 0.x, the API is still evolving ·
+      <a href="https://github.com/alirux/tandem/blob/main/THIRD-PARTY-NOTICES.md">third-party
+        notices</a></p>
+    <p>Maintained by
+      <a class="li-link" href="https://www.linkedin.com/in/alberto-lirussi/">
+        Alberto Lirussi
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect width="24" height="24" rx="5" fill="#0A66C2"/>
+          <path fill="#FFFFFF" d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.03-1.85-3.03-1.86 0-2.15 1.45-2.15 2.94v5.66H9.34V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45zM5.34 7.43a2.07 2.07 0 1 1 0-4.13 2.07 2.07 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56z"/>
+        </svg>
+      </a></p>
+  </div>
+</footer>
+
+</body>
+</html>

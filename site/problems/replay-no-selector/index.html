@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>At least one replay selector is required — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type replay-no-selector (400): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">400</span></p>
+    <h1>At least one replay selector is required</h1>
+    <p class="uri">https://tandem.codingful.com/problems/replay-no-selector</p>
+    <h2>What it means</h2>
+    <p>Bulk replay (<code>POST /outbox/replay</code>) was called with no selector — no aggregate,
+      no type, no time window, no status filter. Tandem refuses rather than interpreting an empty
+      body as "everything".</p>
+    <p>This is a deliberate guard, not a validation accident: an unbounded replay would
+      re-publish the entire retained history of every aggregate, and there is no undo.</p>
+
+    <h2>What to do</h2>
+    <p>Add at least one selector. If you genuinely want a very wide replay, run it with
+      <code>dryRun: true</code> first — the response reports how many messages would be matched,
+      and changes nothing.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/replay-no-selector",
+  "title": "At least one replay selector is required",
+  "status": 400
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

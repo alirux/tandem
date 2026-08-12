@@ -111,6 +111,7 @@ python3 tandem-cli/hack/fake-admin-api.py 8080
 | `tandem-sample-spring` | Example Spring Boot application, not published. Also hosts the end-to-end Spring smoke test. |
 | `tandem-benchmark` | Load-testing harness, not published. |
 | `tandem-coverage` | Aggregates JaCoCo coverage across modules for CI. |
+| [`site`](site/) | **Not a Gradle module** — the source of [tandem.codingful.com](https://tandem.codingful.com): the landing page and the dereferenceable RFC 9457 problem-type pages the Admin API's error `type` URLs resolve to. Plain HTML/CSS, assembled by `site/build.sh` and deployed by `.github/workflows/pages.yml`; see [site/README.md](site/README.md). |
 | [`tandem-cli`](tandem-cli/) | **Go**, not a Gradle module — a command-line frontend over the Admin API. Its own `go.mod`, own tests (`go test ./...`), own release cadence (`cli-v<semver>`, not the library's `v<semver>`); see [LLD-cli.md](docs/LLD-cli.md). |
 
 The Spring modules are compiled against Spring Boot 3.x with Spring `compileOnly`, and one artifact

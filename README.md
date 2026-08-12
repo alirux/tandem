@@ -13,6 +13,8 @@
 [![Maven Central](https://img.shields.io/maven-central/v/com.codingful/tandem-core.svg?label=maven)](https://central.sonatype.com/artifact/com.codingful/tandem-core)
 [![Status](https://img.shields.io/badge/status-0.x%20—%20API%20evolving-yellow.svg)](https://github.com/alirux/tandem/releases)
 
+**[tandem.codingful.com](https://tandem.codingful.com)**
+
 </div>
 
 ## What is Tandem?
@@ -419,7 +421,7 @@ of the version you actually depend on.
 | [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |
 | [LLD-spring-producer.md](docs/LLD-spring-producer.md) | Spring write-side ergonomics — the Template, `@TransactionalOutbox`, and Spring-events tiers, plus optional payload serialization |
 | [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
-| [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract |
+| [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract. Every error `type` it returns resolves to a [problem-type page](https://tandem.codingful.com/problems/). |
 | [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
 | [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |

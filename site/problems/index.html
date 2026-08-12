@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Problem types — Tandem Admin API</title>
+<meta name="description" content="Every RFC 9457 problem type the Tandem Admin API can return, with its stable slug, HTTP status, and what a caller should do about it.">
+<link rel="icon" href="../assets/logo.png">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="/#quickstart">Quickstart</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap">
+    <p class="kicker">Admin API</p>
+    <h1>Problem types</h1>
+    <div class="prose">
+      <p>Every error the Tandem Admin API returns is an
+        <a href="https://www.rfc-editor.org/rfc/rfc9457.html">RFC 9457</a> problem detail, served as
+        <code>application/problem+json</code>. The <code>type</code> is always a canonical URL under
+        <code>https://tandem.codingful.com/problems/</code> — never <code>about:blank</code>.</p>
+      <p>The kebab-case slug is the <strong>stable machine identifier</strong>: match on it, not on
+        <code>title</code> or <code>detail</code>, which are human-readable and may be reworded. A
+        published slug never changes its meaning; a new problem type gets a new slug.</p>
+    </div>
+
+    <table style="margin-top:32px">
+      <thead>
+      <tr><th>Type</th><th>Status</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+      <tr>
+        <td><a href="invalid-parameter/"><code>invalid-parameter</code></a></td>
+        <td><span class="status s4">400</span></td>
+        <td>A query or path parameter could not be parsed.</td>
+      </tr>
+      <tr>
+        <td><a href="replay-no-selector/"><code>replay-no-selector</code></a></td>
+        <td><span class="status s4">400</span></td>
+        <td>Bulk replay was called with no selector — it will not replay everything by default.</td>
+      </tr>
+      <tr>
+        <td><a href="ordering-break-not-acknowledged/"><code>ordering-break-not-acknowledged</code></a></td>
+        <td><span class="status s4">400</span></td>
+        <td>Discard requires acknowledging that skipping an event breaks ordering.</td>
+      </tr>
+      <tr>
+        <td><a href="unauthorized/"><code>unauthorized</code></a></td>
+        <td><span class="status s4">401</span></td>
+        <td>Missing or invalid credentials — produced by the host application, not by Tandem.</td>
+      </tr>
+      <tr>
+        <td><a href="not-found/"><code>not-found</code></a></td>
+        <td><span class="status s4">404</span></td>
+        <td>No such outbox message or relay bucket.</td>
+      </tr>
+      <tr>
+        <td><a href="message-not-replayable/"><code>message-not-replayable</code></a></td>
+        <td><span class="status s4">409</span></td>
+        <td>The message is still in flight; only <code>DONE</code> or <code>FAILED</code> can be replayed.</td>
+      </tr>
+      <tr>
+        <td><a href="message-not-discardable/"><code>message-not-discardable</code></a></td>
+        <td><span class="status s4">409</span></td>
+        <td>Only a <code>FAILED</code> message can be discarded.</td>
+      </tr>
+      <tr>
+        <td><a href="relay-coordination-unsupported/"><code>relay-coordination-unsupported</code></a></td>
+        <td><span class="status s4">409</span></td>
+        <td>The operation needs per-bucket state that only <code>LEASE</code> coordination keeps.</td>
+      </tr>
+      <tr>
+        <td><a href="internal-error/"><code>internal-error</code></a></td>
+        <td><span class="status s5">500</span></td>
+        <td>An unexpected failure; the detail is deliberately generic.</td>
+      </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/">tandem.codingful.com</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>The contract is the source of truth; these pages describe it in prose.</p>
+  </div>
+</footer>
+
+</body>
+</html>

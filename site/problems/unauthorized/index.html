@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Missing or invalid credentials — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type unauthorized (401): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">401</span></p>
+    <h1>Missing or invalid credentials</h1>
+    <p class="uri">https://tandem.codingful.com/problems/unauthorized</p>
+    <h2>What it means</h2>
+    <p>The request carried missing or invalid credentials.</p>
+    <p class="note"><strong>Tandem does not produce this response.</strong> The library ships the
+      endpoints, not the authentication — the Admin API is off by default and, when enabled, is
+      mounted inside your application, so your own security layer owns who may call it. This
+      problem type is published so that a host application securing those endpoints can return the
+      same shape every other Tandem error uses, and a client can match on one slug rather than on
+      whatever each deployment happens to emit.</p>
+
+    <h2>What to do</h2>
+    <p>As a caller: authenticate as the host application requires. As an operator: never expose
+      the Admin API unauthenticated — it can replay, discard, and pause the relay.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/unauthorized",
+  "title": "Missing or invalid credentials",
+  "status": 401
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

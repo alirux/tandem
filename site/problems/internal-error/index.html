@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unexpected internal error — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type internal-error (500): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s5">500</span></p>
+    <h1>Unexpected internal error</h1>
+    <p class="uri">https://tandem.codingful.com/problems/internal-error</p>
+    <h2>What it means</h2>
+    <p>Something failed that the Admin API did not anticipate — most often the database being
+      unreachable underneath it.</p>
+    <p>The <code>detail</code> is deliberately generic and always the same string. An error
+      response is not a debugging channel: the specifics, including the stack trace, go to the
+      application's logs, where they are not exposed to whoever can reach the endpoint.</p>
+
+    <h2>What to do</h2>
+    <p>Read the application logs for the real cause. Before retrying a write operation — replay,
+      discard, pause — re-read the message or relay state: the call may have applied before the
+      failure, and these operations are not idempotent in the sense of being safe to fire blindly
+      twice.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/internal-error",
+  "title": "Unexpected internal error",
+  "status": 500,
+  "detail": "An unexpected error occurred; see server logs for detail"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

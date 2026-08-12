@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invalid request parameter — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type invalid-parameter (400): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">400</span></p>
+    <h1>Invalid request parameter</h1>
+    <p class="uri">https://tandem.codingful.com/problems/invalid-parameter</p>
+    <h2>What it means</h2>
+    <p>A query or path parameter could not be parsed into the type the contract declares — an
+      unknown status name, a non-numeric message id, or a malformed pagination cursor. The request
+      never reached the outbox; nothing changed.</p>
+    <p>The <code>detail</code> names the offending parameter and the value that failed to bind.</p>
+
+    <h2>What to do</h2>
+    <p>Fix the request. The valid outbox statuses are <code>PENDING</code>,
+      <code>IN_FLIGHT</code>, <code>DONE</code>, <code>FAILED</code> and <code>DISCARDED</code>,
+      spelled exactly that way.</p>
+    <p class="note">If you are writing a client, note that the reverse does not hold: a
+      <em>response</em> may carry a status value your version does not know about, because the
+      schema is open and evolves additively. Tolerate unknown enum values on read rather than
+      failing on them.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/invalid-parameter",
+  "title": "Invalid request parameter",
+  "status": 400,
+  "detail": "Failed to convert value 'PENDNIG' to type OutboxStatus"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

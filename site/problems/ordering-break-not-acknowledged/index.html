@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ordering-break acknowledgement is required to discard — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type ordering-break-not-acknowledged (400): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">400</span></p>
+    <h1>Ordering-break acknowledgement is required to discard</h1>
+    <p class="uri">https://tandem.codingful.com/problems/ordering-break-not-acknowledged</p>
+    <h2>What it means</h2>
+    <p>A discard was requested without <code>acknowledgeOrderingBreak: true</code> in the body.</p>
+    <p>Discarding abandons an event permanently so the relay stops blocking its aggregate. That
+      unblocks delivery, but it also means the events after it are published <em>without</em> the
+      one you skipped — the per-aggregate happens-before guarantee, the core promise of the
+      library, is broken for that aggregate from then on. Consumers that rely on it may already
+      have processed a prefix that no longer leads to the state they are about to see.</p>
+
+    <h2>What to do</h2>
+    <p>Decide whether that is acceptable for this aggregate. If it is, repeat the request with the
+      flag set and a <code>reason</code> — both are recorded in the audit log alongside the
+      caller's identity when the host application authenticates requests.</p>
+    <p class="note">If it is not acceptable, the alternative is to fix the cause of the failure and
+      replay instead: a message that keeps failing usually points at a broken payload, an
+      unreachable broker, or a topic that does not exist.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/ordering-break-not-acknowledged",
+  "title": "Ordering-break acknowledgement is required to discard",
+  "status": 400
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

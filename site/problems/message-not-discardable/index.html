@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message is not in a discardable state — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type message-not-discardable (409): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">409</span></p>
+    <h1>Message is not in a discardable state</h1>
+    <p class="uri">https://tandem.codingful.com/problems/message-not-discardable</p>
+    <h2>What it means</h2>
+    <p>Discard was requested for a message that is not <code>FAILED</code>.</p>
+    <p>Discard exists for one situation: a message that has exhausted its retries and is now
+      blocking every later event of its aggregate. A message that has not failed is not blocking
+      anything, so there is nothing to abandon.</p>
+
+    <h2>What to do</h2>
+    <p>Check the message's status first. If it is <code>PENDING</code> or <code>IN_FLIGHT</code>,
+      let the relay finish; if it is <code>DONE</code>, it was already delivered; if it is
+      <code>DISCARDED</code>, someone got there first — the audit log records who and why.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/message-not-discardable",
+  "title": "Message is not in a discardable state",
+  "status": 409,
+  "detail": "Message 4711 is PENDING; only FAILED can be discarded"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Not available under this relay coordination mode — Tandem problem types</title>
+<meta name="description" content="Tandem Admin API problem type relay-coordination-unsupported (409): what it means and what to do about it.">
+<link rel="icon" href="../../assets/logo.png">
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="../../assets/logo.png" alt="">Tandem</a>
+    <nav>
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI</a>
+      <a href="https://github.com/alirux/tandem">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="problem">
+  <div class="wrap prose">
+    <p class="kicker"><a href="../">Problem types</a></p>
+    <p><span class="status s4">409</span></p>
+    <h1>Not available under this relay coordination mode</h1>
+    <p class="uri">https://tandem.codingful.com/problems/relay-coordination-unsupported</p>
+    <h2>What it means</h2>
+    <p>The operation needs per-bucket coordination state — bucket ownership, lease holders,
+      per-bucket pause — and that state only exists under <code>LEASE</code> coordination. The
+      relay serving this database runs <code>SINGLE</code>, where one instance owns every bucket
+      and no ownership is recorded because none is needed.</p>
+    <p>This is not a failure and not a transient condition: the operation is inapplicable to how
+      this deployment is configured. The <code>detail</code> names the mode that was detected.</p>
+
+    <h2>What to do</h2>
+    <p>Do not retry — the answer will not change until the deployment does. Use the whole-relay
+      equivalents instead (<code>/relay/status</code>, <code>/relay/pause</code>,
+      <code>/relay/resume</code>), which work under both modes. If you need per-bucket control,
+      that is a deployment decision: set <code>tandem.relay.coordination</code> to
+      <code>LEASE</code>, which is what you want anyway once more than one relay instance runs
+      against the same outbox.</p>
+
+    <h2>Example</h2>
+<pre>{
+  "type": "https://tandem.codingful.com/problems/relay-coordination-unsupported",
+  "title": "Not available under this relay coordination mode",
+  "status": 409,
+  "detail": "Per-bucket relay control requires LEASE coordination; this relay runs SINGLE"
+}</pre>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../">All problem types</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/admin-api.openapi.yaml">OpenAPI contract</a>
+      <a href="https://github.com/alirux/tandem/blob/main/docs/HLD-admin-api.md">Admin API design</a>
+      <a href="/privacy/">Privacy</a>
+    </div>
+    <p>Match on the slug, never on the title or detail text.</p>
+  </div>
+</footer>
+
+</body>
+</html>

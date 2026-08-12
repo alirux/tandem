@@ -61,8 +61,10 @@ contract grows.**
 external API Tandem exposes — `type` / `title` / `status` / `detail` / `instance`, extensions
 allowed. Not a bespoke error shape. The `type` is always a canonical
 `https://tandem.codingful.com/problems/{slug}` URL (never `about:blank`); the kebab-case
-`{slug}` is the stable identifier and must never change once published (dereferenceable docs
-are optional — adding them later is not a contract change).
+`{slug}` is the stable identifier and must never change once published. **Those URLs are
+dereferenceable and must stay that way**: each one resolves to a page under [`site/problems/`](site/),
+published to `tandem.codingful.com`. Adding a problem type to the contract therefore means adding
+its page in the same change — a `type` URL that 404s is a broken contract, not a missing nicety.
 
 **Contract testing is provider-side spec conformance, never consumer-driven.** Tandem
 publishes its API contract (OpenAPI) to unknown/external consumers, so the provider stays

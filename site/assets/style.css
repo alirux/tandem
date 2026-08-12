@@ -1,0 +1,446 @@
+/*
+ * Tandem site — one stylesheet for the landing page and the problem-type pages.
+ * Palette taken from the brand assets (docs/tandem-architecture.svg,
+ * docs/tandem-social-preview.svg), which are dark-background by construction:
+ * the site commits to the dark look rather than theming, so the diagram and the
+ * screenshots sit on the same ground they were drawn on.
+ */
+
+:root {
+    --bg: #080a0f;
+    --panel: #0d1119;
+    --panel-raised: #161c28;
+    --border: #212b3b;
+    --text: #ffffff;
+    --text-soft: #c6d0e0;
+    --muted: #7e8ca8;
+    --green: #12b412;
+    --yellow: #d8d000;
+    --red: #e03a1a;
+
+    --sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    --mono: Menlo, "DejaVu Sans Mono", "SF Mono", Consolas, monospace;
+
+    --page: 1120px;
+    --prose: 760px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text-soft);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+    max-width: var(--page);
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+.prose {
+    max-width: var(--prose);
+}
+
+/*
+ * A page whose whole body is prose (the problem-type pages) still keeps the page gutter, so its
+ * text starts under the brand in the top bar instead of floating in a centred column of its own.
+ */
+.wrap.prose {
+    max-width: var(--page);
+}
+
+.wrap.prose > * {
+    max-width: var(--prose);
+}
+
+a {
+    color: var(--green);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+h1, h2, h3 {
+    color: var(--text);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
+
+h2 {
+    font-size: 30px;
+    margin: 0 0 16px;
+}
+
+h3 {
+    font-size: 19px;
+    margin: 0 0 8px;
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    color: var(--text);
+}
+
+/* A slug rendered as code inside a link must still read as a link. */
+a code {
+    color: inherit;
+}
+
+pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--text-soft);
+}
+
+pre .c {
+    color: var(--muted);
+}
+
+pre .k {
+    color: var(--green);
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────────── */
+
+.topbar {
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: rgba(8, 10, 15, 0.92);
+    backdrop-filter: blur(8px);
+    z-index: 10;
+}
+
+.topbar .wrap {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    height: 62px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    font-weight: 700;
+    font-size: 19px;
+    letter-spacing: -0.02em;
+    margin-right: auto;
+    /* The bar is a non-wrapping flex row: without these the wordmark is squeezed under the nav
+       instead of pushing it to the next line. */
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.brand:hover {
+    text-decoration: none;
+}
+
+.brand img {
+    height: 26px;
+    width: auto;
+}
+
+.topbar nav {
+    display: flex;
+    gap: 20px;
+    font-size: 15px;
+}
+
+.topbar nav a {
+    color: var(--text-soft);
+}
+
+.topbar nav a:hover {
+    color: var(--green);
+}
+
+/* ── hero ────────────────────────────────────────────────────────────── */
+
+.hero {
+    padding: 76px 0 8px;
+}
+
+.hero h1 {
+    font-size: clamp(38px, 6vw, 60px);
+    margin: 0 0 20px;
+    max-width: 20ch;
+}
+
+.hero .lede {
+    font-size: clamp(19px, 2.4vw, 23px);
+    color: var(--text-soft);
+    max-width: 60ch;
+    margin: 0 0 12px;
+}
+
+.hero .sub {
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 32px;
+}
+
+.cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+
+.btn {
+    display: inline-block;
+    padding: 11px 22px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 16px;
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+
+.btn:hover {
+    text-decoration: none;
+    border-color: var(--green);
+}
+
+.btn.primary {
+    background: var(--green);
+    border-color: var(--green);
+    color: #042504;
+}
+
+.btn.primary:hover {
+    filter: brightness(1.12);
+}
+
+/* ── sections ────────────────────────────────────────────────────────── */
+
+section {
+    padding: 56px 0;
+}
+
+section.tight {
+    padding: 32px 0;
+}
+
+.kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 10px;
+}
+
+.figure {
+    margin: 0;
+}
+
+.figure img {
+    border-radius: 12px;
+    display: block;
+    width: 100%;
+}
+
+.figure.framed img {
+    border: 1px solid var(--border);
+}
+
+.figure figcaption {
+    color: var(--muted);
+    font-size: 14.5px;
+    margin-top: 12px;
+}
+
+.two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+}
+
+/* Grid items default to min-width: auto, so a wide <pre> inside them would otherwise push the
+   column — and the whole page — wider instead of scrolling within its own overflow-x. */
+.two-col > *, .shots > * {
+    min-width: 0;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+}
+
+.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+}
+
+.card p {
+    margin: 0;
+    font-size: 15.5px;
+    color: var(--text-soft);
+}
+
+.shots {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+    align-items: start;
+}
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15.5px;
+}
+
+th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+td code {
+    white-space: nowrap;
+}
+
+/* ── problem pages ───────────────────────────────────────────────────── */
+
+.problem {
+    padding: 52px 0 0;
+}
+
+.problem h1 {
+    font-size: clamp(28px, 4.4vw, 40px);
+    margin: 12px 0 18px;
+}
+
+.uri {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--muted);
+    word-break: break-all;
+}
+
+.status {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    vertical-align: middle;
+}
+
+.status.s4 {
+    color: var(--yellow);
+}
+
+.status.s5 {
+    color: var(--red);
+}
+
+.note {
+    border-left: 3px solid var(--border);
+    padding: 2px 0 2px 18px;
+    color: var(--muted);
+    font-size: 15.5px;
+}
+
+/*
+ * Deliberately not display:flex: flexbox turns the whole link into a box that gets centred
+ * against the surrounding line via vertical-align, which drags the "Alberto Lirussi" text off
+ * the baseline of the "Maintained by" text next to it. Keeping the link as normal inline content
+ * means its text shares that baseline automatically; only the icon needs its own alignment.
+ */
+.li-link svg {
+    width: 15px;
+    height: 15px;
+    vertical-align: middle;
+    /* A solid badge shape reads as vertically lower than text even when its bounding box is
+       mathematically centred on it — an optical-alignment nudge, not a measurement error. */
+    position: relative;
+    top: -2px;
+}
+
+/* ── footer ──────────────────────────────────────────────────────────── */
+
+footer {
+    border-top: 1px solid var(--border);
+    margin-top: 48px;
+    padding: 32px 0 56px;
+    color: var(--muted);
+    font-size: 14.5px;
+}
+
+footer .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 14px;
+}
+
+@media (max-width: 820px) {
+    .two-col, .shots {
+        grid-template-columns: 1fr;
+    }
+
+    .hero {
+        padding-top: 48px;
+    }
+
+    /* Below this width the bar's links no longer fit on the brand's line — let it grow to two
+       rows rather than overflow the viewport and put a horizontal scrollbar on the whole page. */
+    .topbar .wrap {
+        height: auto;
+        min-height: 62px;
+        flex-wrap: wrap;
+        align-items: center;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        row-gap: 4px;
+    }
+
+    .topbar nav {
+        gap: 14px;
+        font-size: 14px;
+        flex-wrap: wrap;
+    }
+}
