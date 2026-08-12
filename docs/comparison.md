@@ -1,6 +1,6 @@
 # Tandem — Comparison with Alternatives
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Draft  
 **Companion to:** HLD (High-Level Design)
 
@@ -14,13 +14,19 @@ from a relational database to Apache Kafka. It expands the summary in HLD §11 w
 per-alternative analysis, the trade-offs behind each row, and guidance on when *not* to
 choose Tandem.
 
-The contenders:
+The contenders — mechanisms that get an event from a database transaction onto Kafka:
 
 - **Debezium** — log-based Change Data Capture (CDC) via Kafka Connect.
 - **Eventuate Tram** — a transactional-messaging library with its own CDC/polling relay.
 - **Spring Modulith** — application-event publication with an event-publication registry.
 - **Plain outbox (hand-rolled)** — a bespoke outbox table + polling loop.
 - **Tandem** — this project.
+
+And two **stream processors** that this note also names, in a different category — they
+consume from Kafka rather than deliver to it, so they are compared separately in §6:
+
+- **Kafka Streams** — an embedded stream-processing library.
+- **Flink** — a distributed stream-processing cluster.
 
 ---
 
@@ -30,21 +36,21 @@ The contenders:
 |---|---|---|---|---|---|
 | Write-side ordering | App code | App code | App code | App code | App code **+ in-library contract** (`seq`, `UNIQUE`) |
 | Relay ordering | Strong (CDC log) | Good | Weak | DIY | **Strong (hash routing)** |
-| Cross-aggregate causal order | No | No | No | No | **Opt-in (Lamport)** |
 | Monitoring | Connector metrics | Minimal | Spring Actuator | DIY | **Micrometer native** |
 | Targeted replay (per aggregate) | No (offset rewind) | Manual | No | DIY | **Yes, first-class** |
 | Operational admin API | Connect REST (connector-level) | No | No | DIY | **Opt-in REST (API-first)** |
-| Forensic attempt history | Logs / DLQ | No | No | DIY | Designed, not built |
 | Trace / correlation propagation | Headers (CDC) | Partial | No | DIY | **Opt-in (W3C `traceparent`)** |
 | Message envelope | CloudEvents (converter) | Custom | Spring event | DIY | **CloudEvents by default** |
 | Extra infrastructure | Kafka Connect + CDC | CDC/polling service | None | None | **None** |
-| DB coupling | Per-connector (WAL/binlog) | Supported DBs | JPA/relational | Yours | **PostgreSQL / MySQL** |
+| DB coupling | Per-connector (WAL/binlog) | Supported DBs | JPA/relational | Yours | **PostgreSQL** |
 | Spring required | No | Optional | **Yes** | No | Optional |
 | Ordering granularity | Per-table/partition | Per-aggregate | Weak | DIY | **Per-aggregate** |
 | Operational burden | High | Medium | Low | Medium | **Low** |
 | License | Apache 2.0 | Apache 2.0 | Apache 2.0 | — | Apache 2.0 |
 
-The rest of this note explains each column.
+The rest of this note explains each column. Kafka Streams and Flink are deliberately
+**not** columns here — this matrix scores database-to-Kafka delivery, which is not what a
+stream processor does; §6 compares them on their own axes.
 
 ---
 
@@ -117,8 +123,8 @@ depth + minimalism.** It keeps the per-aggregate ordering idea but:
 - **Operations as a first-class deliverable** — Micrometer-native monitoring, first-class
   per-aggregate replay, and an opt-in admin API, where Eventuate's monitoring is modest and
   replay is build-your-own.
-- **No mandatory relay service** — in-process sharded polling by default, or standalone by
-  choice; and a modern **CloudEvents** envelope by default.
+- **No mandatory relay service** — in-process sharded polling by default, or in a separate
+  process you assemble yourself; and a modern **CloudEvents** envelope by default.
 
 **The trade-off, in Eventuate's favour:** Eventuate provides **sagas / orchestration**;
 Tandem deliberately does **not**. If you need orchestration, choose Eventuate.
@@ -192,7 +198,63 @@ cost of a small, focused dependency.
 
 ---
 
-## 6. Where Tandem is positioned
+## 6. Stream processors — Kafka Streams and Flink
+
+**Why they are in this note.** Both are named in §8 as the answer to a requirement Tandem
+sends elsewhere — heavy keyed-ordering fan-out, and any reordering or aggregation on the
+consumer side. They come up in the same conversations as Tandem, so they deserve a
+straight answer, but the answer is *different category*, not *better* or *worse*.
+
+**What they are.**
+
+- **Kafka Streams** is an embedded Java library: it runs inside your application's JVM,
+  scales by starting more instances of that application as a consumer group, and keeps
+  durable state in changelog topics on the Kafka you already operate. Its sources and
+  sinks are **Kafka topics** — it cannot read a database table at all.
+- **Flink** is a separate cluster (JobManager, TaskManagers, a state backend) with
+  checkpointed state, event-time watermarks, and exactly-once sinks. Through its **CDC
+  connectors** it *can* read a PostgreSQL WAL or MySQL binlog and write to Kafka, so
+  unlike Kafka Streams it can technically stand in for a relay.
+
+**Why neither is an outbox alternative.**
+
+- Kafka Streams cannot solve the double write, because the problem is upstream of it:
+  something must already have put the event in Kafka atomically with the database
+  transaction. Using it *as* the delivery mechanism means running Connect/Debezium in
+  front of it — you have not replaced the relay, you have added a stage after it.
+- Flink can solve it, but its CDC connectors embed the Debezium engine, so you inherit
+  every Debezium cost (§2: replication-slot/binlog privileges, offset-based rather than
+  aggregate-targeted replay) **and** add a cluster to operate. If CDC is the answer for
+  you, plain Debezium is the cheaper way to get it; Flink earns its weight when you also
+  need its processing, not just its delivery.
+- Neither offers what the matrix in §1 scores: an outbox contract in the write path, an
+  aggregate-targeted replay API, or outbox-specific operational metrics and admin.
+
+| | Kafka Streams | Flink | **Tandem** |
+|---|---|---|---|
+| Position in the pipeline | Consumer side | Consumer side (can also ingest via CDC) | Producer side |
+| Reads from your database | No — Kafka topics only | Yes, via CDC connectors (embedded Debezium) | Yes — the outbox table |
+| Solves the double write | No | Yes, with CDC's costs | **Yes** |
+| Extra infrastructure | None (a library) | A cluster | **None** |
+| Ordering it provides | Buffered merge across input partitions | Event-time buffering + watermarks | **Per-aggregate, at delivery** |
+| Durable state | Changelog topics | Checkpoints / state backend | The outbox table itself |
+| Outbox operations (replay, admin, metrics) | No | No | **Yes** |
+
+**How Tandem relates to them.** Complement, not competitor, and the two sit on opposite
+ends of the same pipeline: Tandem gets each aggregate's events onto the topic in order and
+keyed by aggregate id, which is precisely the input a stream processor needs to keep
+per-key order through its own partitioning. Tandem stops at the topic — it does no joins,
+windowing, or state, and its stated rule is to **integrate with the specialised engine
+rather than reimplement it** (HLD §1.1). Running both is the normal arrangement, not a
+compromise.
+
+**Choose a stream processor when:** the work is *downstream* of delivery — joins,
+aggregations, windowed analytics, or elastically-scaled keyed reordering across many
+partitions. That is orthogonal to Tandem, which still handles the producer side.
+
+---
+
+## 7. Where Tandem is positioned
 
 Tandem targets the gap between **"hand-rolled outbox"** (correct but you build and
 maintain everything) and **"Debezium/CDC"** (powerful but a separate distributed system
@@ -206,8 +268,6 @@ to operate):
   alternatives offer natively.
 - **Micrometer-native monitoring** — lag-age, per-shard lag, failure and retry metrics
   out of the box.
-- **Optional cross-aggregate causal ordering** — the Lamport-clock capability (HLD §9)
-  that none of the alternatives provide.
 - **Operational suite, all opt-in** — an API-first REST admin API (HLD §7.2) and W3C
   trace/correlation propagation (§7.1). Each is off by default (Pareto), so they add nothing
   to the common case but are there when ops needs them — a depth none of the alternatives
@@ -217,7 +277,7 @@ to operate):
 
 ---
 
-## 7. When *not* to choose Tandem
+## 8. When *not* to choose Tandem
 
 Honesty about the boundaries:
 
@@ -228,11 +288,11 @@ Honesty about the boundaries:
   ecosystem is purpose-built; Tandem deliberately omits sagas.
 - **You only need to decouple modules inside a Spring monolith** with no strict ordering
   to an external broker → **Spring Modulith** is lighter and more idiomatic.
-- **Your target is not PostgreSQL or MySQL** (e.g. Oracle, SQL Server, a non-relational
-  store) → Tandem's initial DB support does not cover you; Debezium's connector breadth
-  might.
+- **Your target is not PostgreSQL** (e.g. MySQL, Oracle, SQL Server, a non-relational
+  store) → the shipped schema and claim SQL are PostgreSQL-only, so Tandem does not cover
+  you; Debezium's connector breadth might.
 - **You need heavy, elastically-scaled keyed-ordering fan-out on the consumer side** → a
-  stream processor owns the reordering: Kafka Streams (an embedded library, the default)
-  or Flink (a cluster, for the extreme cases). Tandem supplies the ordering key and the
-  adapters but does not replace the engine (HLD §9). Note this is a *consumer-side* point —
-  Tandem still handles the producer side regardless.
+  stream processor owns the reordering: **Kafka Streams** (an embedded library) or
+  **Flink** (a cluster, for the extreme cases). Tandem delivers the events in order and
+  keyed by aggregate, but does not replace the engine (§6). Note this is a *consumer-side*
+  point — Tandem still handles the producer side regardless.

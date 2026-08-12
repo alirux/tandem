@@ -427,7 +427,7 @@ of the version you actually depend on.
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
-| [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith |
+| [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith, a hand-rolled outbox, and the stream processors (Kafka Streams, Flink) |
 | [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
 | [IMPLEMENTATION-PLAN-basic-round.md](docs/IMPLEMENTATION-PLAN-basic-round.md) | Execution plan, scope fence, and per-module done-ness for the first milestone |
 | [IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) | Plan for the `LEASE` multi-instance coordination opt-in (embedded-multi-replica or standalone) |

@@ -856,7 +856,7 @@ The Spring modules (`tandem-spring-producer`, `tandem-spring-relay`) must suppor
 
 ## 11. Comparison with Alternatives
 
-Tandem is positioned in the gap between a hand-rolled outbox (correct, but you build and maintain everything) and Debezium/CDC (powerful, but a separate distributed system to operate). The full per-alternative analysis — Debezium, Eventuate Tram, Spring Modulith, hand-rolled outbox — including trade-offs and a "when *not* to choose Tandem" section, is in the companion note: [comparison.md](comparison.md).
+Tandem is positioned in the gap between a hand-rolled outbox (correct, but you build and maintain everything) and Debezium/CDC (powerful, but a separate distributed system to operate). The full per-alternative analysis — Debezium, Eventuate Tram, Spring Modulith, hand-rolled outbox, plus the stream processors Kafka Streams and Flink as complements rather than alternatives — including trade-offs and a "when *not* to choose Tandem" section, is in the companion note: [comparison.md](comparison.md).
 
 ---
 
