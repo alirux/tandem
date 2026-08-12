@@ -291,8 +291,8 @@ The write-side alone (`tandem-jdbc`) pulls no Kafka dependency; add `tandem-kafk
 relay runs. On Spring Boot, take `tandem-spring-producer` where you write and `tandem-spring-relay`
 where the relay runs — each brings its own tier of the stack and leaves Spring itself to your
 application's versions. See [CONTRIBUTING.md](CONTRIBUTING.md#project-layout) for the full module
-list. What changed between versions, breaking changes included, is on the
-[Releases](https://github.com/alirux/tandem/releases) page.
+list, and [API reference](#api-reference) for each module's javadoc. What changed between versions,
+breaking changes included, is on the [Releases](https://github.com/alirux/tandem/releases) page.
 
 ### Spring Boot compatibility
 
@@ -382,6 +382,29 @@ troubleshooting a stalled relay — set on the `com.codingful.tandem.jdbc` and
 what Tandem never logs: [HLD-logging.md](docs/HLD-logging.md).
 
 ## Documentation
+
+### API reference
+
+Javadoc for every published module, served from the artifacts on Maven Central. `latest` follows
+the newest release; replace it with a version (`.../tandem-core/0.6.0/index.html`) to read the API
+of the version you actually depend on.
+
+| Module | Contents |
+|---|---|
+| [tandem-core](https://javadoc.io/doc/com.codingful/tandem-core/latest/index.html) | Models, ports, exceptions and pure logic (zero runtime dependencies) |
+| [tandem-jdbc](https://javadoc.io/doc/com.codingful/tandem-jdbc/latest/index.html) | Write-side insert and the relay engine (PostgreSQL baseline) |
+| [tandem-kafka](https://javadoc.io/doc/com.codingful/tandem-kafka/latest/index.html) | `OutboxDispatcher` over the Kafka producer (CloudEvents binary binding) |
+| [tandem-test](https://javadoc.io/doc/com.codingful/tandem-test/latest/index.html) | In-memory collaborators and the Testcontainers helper |
+| [tandem-spring-producer](https://javadoc.io/doc/com.codingful/tandem-spring-producer/latest/index.html) | Spring Boot autoconfiguration — write-side (outbox INSERT + the convenience tiers) |
+| [tandem-spring-relay](https://javadoc.io/doc/com.codingful/tandem-spring-relay/latest/index.html) | Spring Boot autoconfiguration — relay engine + CloudEvents publishing |
+| [tandem-micrometer](https://javadoc.io/doc/com.codingful/tandem-micrometer/latest/index.html) | `TandemMetrics` backed by a Micrometer `MeterRegistry` |
+| [tandem-tracing-otel](https://javadoc.io/doc/com.codingful/tandem-tracing-otel/latest/index.html) | Trace capture and relay publish spans without Spring |
+| [tandem-admin](https://javadoc.io/doc/com.codingful/tandem-admin/latest/index.html) | Optional REST operations layer over the outbox and the relay |
+
+`tandem-bom` is a version platform and carries no javadoc; `tandem-cli` is a Go module with its own
+[command reference](tandem-cli/docs/cli/tandem-cli.md).
+
+### Design documents
 
 | Document | Contents |
 |---|---|
