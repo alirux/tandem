@@ -254,6 +254,12 @@ programmatic builder never drift:
 | `tandem.relay.metrics-interval` | Duration | `10s` |
 | `tandem.relay.log-every-rows` | long | `10000` |
 
+Two of these carry a second role the key name does not reveal, both from the relay loop's sleep
+timing (LLD-jdbc §3.1): `poll-interval` is also the *first* wait after a worker cycle throws, and
+`reclaim-interval` is the **cap** that failure backoff grows to. Lowering `reclaim-interval` to
+recover faster from expired leases therefore also shortens the longest a failing worker will wait
+before retrying a database that is down — the same direction, but worth knowing before tuning it.
+
 `tandem.relay.enabled=false` is the supported way to deploy the relay module without running a relay
 — for example when the same application image is deployed both as a write-side service and as a
 dedicated relay process, selected by configuration.

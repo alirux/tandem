@@ -211,6 +211,9 @@ public final class WorkerPool {
 
     private void runWorker(int index) {
         RelayWorker worker = workers[index];
+        // A local, so the failure counter is this thread's by construction — never shared, never
+        // contended, and reset with the thread when a supervised restart replaces it (§3.1).
+        PollBackoff backoff = new PollBackoff(cfg.pollInterval(), cfg.reclaimInterval());
         while (running) {
             try {
                 int claimed = worker.claimAndDispatch();
@@ -220,6 +223,7 @@ public final class WorkerPool {
                 // worker whose every iteration fails is not making progress, and status() must say so
                 // (§3.8). Claiming nothing is still progress — an idle relay is a working relay.
                 lastCycleAtMillis.set(index, clock.millis());
+                backoff.onCycleCompleted();
                 if (!running) {
                     break;
                 }
@@ -229,12 +233,14 @@ public final class WorkerPool {
                 if (claimed == 0) {
                     // No work claimed: idle-backoff when nothing is in flight, else a brief pause so
                     // async completions can land before we re-flush (§3.1 — pollInterval is idle backoff).
-                    sleep(worker.inFlight() == 0 ? cfg.pollInterval().toMillis() : 5);
+                    sleep(worker.inFlight() == 0 ? backoff.idleSleepMillis() : 5);
                 }
             } catch (Exception perIteration) {
                 LOG.log(Level.ERROR, "Relay worker iteration failed workerIndex:" + index
                         + ", instanceId:" + instanceId, perIteration);
-                sleep(cfg.pollInterval().toMillis());
+                // Growing wait, not a fixed pollInterval: a database that is down would otherwise have
+                // every worker re-querying and logging a stack trace ten times a second (§3.1).
+                sleep(backoff.failedCycleSleepMillis());
             }
         }
         worker.flushDone();       // best-effort drain of any acked ids on shutdown

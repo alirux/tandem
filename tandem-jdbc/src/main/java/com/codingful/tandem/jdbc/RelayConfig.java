@@ -293,7 +293,11 @@ public final class RelayConfig {
             return this;
         }
 
-        /** Idle-backoff between claim attempts when nothing was claimed. Default 100ms. */
+        /**
+         * Idle-backoff between claim attempts when nothing was claimed, applied with ±20% jitter so
+         * concurrent workers do not poll in lockstep. Also the first delay after a failed cycle, from
+         * which the relay backs off exponentially up to {@link #reclaimInterval}. Default 100ms.
+         */
         public Builder pollInterval(Duration pollInterval) {
             this.pollInterval = Objects.requireNonNull(pollInterval, "pollInterval");
             return this;
@@ -333,7 +337,10 @@ public final class RelayConfig {
             return this;
         }
 
-        /** How often the maintenance job reclaims expired leases. Default 5s. */
+        /**
+         * How often the maintenance job reclaims expired leases — and the cap of a worker's backoff
+         * after a failing cycle, which grows from {@link #pollInterval}. Default 5s.
+         */
         public Builder reclaimInterval(Duration reclaimInterval) {
             this.reclaimInterval = Objects.requireNonNull(reclaimInterval, "reclaimInterval");
             return this;

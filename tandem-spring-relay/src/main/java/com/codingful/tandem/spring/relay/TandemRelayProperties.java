@@ -16,13 +16,14 @@ import java.time.Duration;
  * @param instanceId         unique instance id; unset → a derived {@code tandem-<host>-<pid>-<rand>}
  * @param bucketLease        LEASE bucket-lease duration; default {@code 30s}
  * @param workersPerInstance worker threads; default {@code availableProcessors() * 2}
- * @param pollInterval       idle backoff between empty claims; default {@code 100ms}
+ * @param pollInterval       idle backoff between empty claims (±20% jitter); default {@code 100ms}
  * @param batchSize          per-shard in-flight window; default {@code 100}
  * @param rowLease           per-row claim lease; default {@code 60s} (must exceed the delivery timeout)
  * @param maxAttempts        delivery attempts before a row is quarantined; default {@code 10}
  * @param retention          how long DONE rows are kept before cleanup; default {@code 14d}
  * @param cleanupBatchSize   rows deleted per cleanup pass; default {@code 1000}
- * @param reclaimInterval    how often expired row leases are reclaimed; default {@code 5s}
+ * @param reclaimInterval    how often expired row leases are reclaimed, and the cap of the relay's
+ *                           backoff after a failing cycle; default {@code 5s}
  * @param cleanupInterval    how often DONE rows are cleaned up; default {@code 15m}
  * @param metricsInterval    how often the relay reports backlog, backlog age and live workers; default {@code 10s}
  * @param logEveryRows       per-worker INFO progress log every N dispatch outcomes (ok + ko); default {@code 10000}

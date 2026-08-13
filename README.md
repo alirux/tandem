@@ -516,7 +516,7 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
 
 - **Idle latency is bounded by `pollInterval`, not by the commit.** There is no post-commit wakeup
   yet: a bucket that was drained waits on average `pollInterval / 2` (≈ 50 ms at the 100 ms default,
-  100 ms worst case) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
+  120 ms worst case — the idle sleep carries ±20% jitter) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
   worker loop only sleeps when a claim comes back empty. Lowering `pollInterval` trades this against
   idle query load across all instances and workers; the full analysis, and the wakeup options, are in
   [dispatch-latency.md](docs/dispatch-latency.md).

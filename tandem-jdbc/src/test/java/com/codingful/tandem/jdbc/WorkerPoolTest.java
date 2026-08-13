@@ -507,6 +507,38 @@ class WorkerPoolTest {
     }
 
     @Test
+    void GIVEN_a_database_that_keeps_failing_WHEN_the_relay_retries_THEN_it_slows_down_instead_of_hammering_it()
+            throws InterruptedException {
+        // Without a growing backoff a worker retries at pollInterval forever — here ~100 times a
+        // second, each writing an ERROR with a stack trace, so an outage becomes a log flood on top
+        // of itself (§3.1). The bound is deliberately loose: this pins the order of magnitude, not a
+        // schedule, so it cannot go flaky on a slow machine.
+        AlwaysFailingStore store = new AlwaysFailingStore(new InMemoryOutbox());
+        RelayConfig cfg = RelayConfig.builder()
+                .bucketCount(BUCKETS).workersPerInstance(1).pollInterval(Duration.ofMillis(10))
+                .reclaimInterval(Duration.ofMillis(500)).build();
+        WorkerPool pool = new WorkerPool(store, new RecordingDispatcher(), cfg);
+
+        pool.start();
+        try {
+            awaitUpTo(Duration.ofSeconds(20), () -> "the worker to have tried at least once",
+                    () -> store.claimAttempts() >= 1);
+            Thread.sleep(1_000);
+
+            // A fixed 10 ms retry would be ~100 attempts here; the backoff reaches its 500 ms cap
+            // (reclaimInterval) after six doublings, so a handful is what a second buys.
+            assertThat(store.claimAttempts()).isLessThan(20);
+            // ...and it must still be retrying: backing off is not the same as giving up, or the
+            // relay would never notice the database coming back.
+            int soFar = store.claimAttempts();
+            awaitUpTo(Duration.ofSeconds(20), () -> "the worker to keep retrying after backing off",
+                    () -> store.claimAttempts() > soFar);
+        } finally {
+            pool.stop();
+        }
+    }
+
+    @Test
     void GIVEN_a_shutdown_in_progress_WHEN_its_status_is_read_THEN_it_is_reported_as_draining_not_stopped() {
         // Deliberately latch-driven, not timing-driven: a worker is parked inside claimBatch() until
         // released, so the window in which stop() is mid-join is fully under the test's control —
@@ -803,6 +835,25 @@ class WorkerPoolTest {
 
         int lagQueries() {
             return lagQueries.get();
+        }
+    }
+
+    /** A database that is down: every claim throws, and the attempts are counted. */
+    private static final class AlwaysFailingStore extends DelegatingStore {
+        private final AtomicInteger claimAttempts = new AtomicInteger();
+
+        AlwaysFailingStore(InMemoryOutbox delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public List<OutboxRecord> claimBatch(Set<Integer> buckets, String workerId, Duration lease, int batchSize) {
+            claimAttempts.incrementAndGet();
+            throw new RuntimeException("simulated database outage");
+        }
+
+        int claimAttempts() {
+            return claimAttempts.get();
         }
     }
 

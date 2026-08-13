@@ -151,6 +151,19 @@ column stays `NULL` when no correlation id is present, which is every row when t
   fixed per-cycle sleep would cap a shard at `batch_size / pollInterval` (e.g. 1 000/s), an order of
   magnitude under the throughput target (HLD §10); the continuous claim-while-busy loop removes that
   ceiling.
+- **The idle sleep carries ±20% jitter** (`PollBackoff`). The mean is exactly `pollInterval`, so
+  discovery latency is what the operator configured (dispatch-latency.md §1); the jitter only stops
+  workers that started in the same instant from polling in lockstep for the life of the relay,
+  which would concentrate `instances × workersPerInstance` queries into periodic bursts. The narrow
+  band is deliberate: an idle wait must never collapse towards zero and turn the loop into a spin.
+- **A cycle that *throws* backs off exponentially instead**, from `pollInterval`, doubling, capped
+  at `reclaimInterval` (5 s by default) and reset by the first cycle that completes. This is a
+  per-worker counter held in the loop's own frame — never shared state. Under a database outage the
+  fixed `pollInterval` retry meant every worker re-querying and logging a stack trace ten times a
+  second, turning an outage into a log flood on top of itself; recovery stays bounded by
+  `reclaimInterval`, the cadence the relay already uses for its own coordination work, so this
+  introduces **no new configuration knob** (HLD §1.1). The cap is a hard ceiling — jitter is applied
+  before the clamp, so a saturated worker waits within 20% *below* it, never past it.
 - **Supervised threads (coverage must not be silently lost).** Each worker's poll loop runs inside a
   `try/catch` that never lets an uncaught exception kill the thread silently: a per-iteration error is
   logged and the loop continues (after a short idle backoff); a fatal/unexpected death **restarts the
@@ -721,7 +734,7 @@ The defaults the basic round needs (the full property reference is the `tandem.*
 | `instanceId` | derived `host-pid-<rand>` | `LEASE` only: unique lease owner (≤ 64 chars); operator may override for stability across restarts |
 | `bucketLease` | 30 s | `LEASE` only: bucket-ownership lease, renewed each `reclaimInterval`; **independent** of `rowLease` (§3.2/§3.5) |
 | `workersPerInstance` | `cores × 2` | per-process worker threads |
-| `pollInterval` | 100 ms | **idle backoff** when a claim returns empty; not a per-batch sleep (§3.1) |
+| `pollInterval` | 100 ms | **idle backoff** when a claim returns empty, ±20% jitter; not a per-batch sleep (§3.1). A cycle that *throws* backs off from here exponentially, capped at `reclaimInterval` |
 | `batchSize` | 100 | claim batch = **per-shard in-flight concurrency window** (§3.4) |
 | `rowLease` | 60 s | row IN_FLIGHT lease; **hard invariant `rowLease > delivery.timeout.ms`** (default = 2×); relay fail-fasts otherwise (§3.5) |
 | backoff | base 1 s, ×2, cap ~5 min, max 10 attempts | full jitter (§3.6) |

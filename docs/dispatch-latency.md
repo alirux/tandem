@@ -37,7 +37,7 @@ delay, and `T_discover` splits into two regimes:
 | Regime | `T_discover` | Notes |
 |---|---|---|
 | **Busy** — the worker's bucket already has pending rows | ≈ 0 | The worker is mid-cycle; the new row is picked up by the next claim of a loop that never slept. |
-| **Idle** — the worker's bucket was drained and the worker is sleeping | uniform in `[0, pollInterval]`, mean `pollInterval / 2` | With the 100 ms default: mean ≈ 50 ms, worst case 100 ms. |
+| **Idle** — the worker's bucket was drained and the worker is sleeping | uniform in `[0, pollInterval]`, mean `pollInterval / 2` | With the 100 ms default: mean ≈ 50 ms, worst case 100 ms. The sleep carries ±20% jitter (§3.1), which leaves the mean untouched and widens the worst case to 120 ms. |
 
 Two consequences follow, and both matter more than the raw number:
 
@@ -103,6 +103,13 @@ rather than as *the* solution.
 
 Setting `pollInterval` to 20 ms brings the mean idle `T_discover` to 10 ms with no new
 mechanism, no new failure mode, on every supported engine and in every topology.
+
+The idle sleep is jittered by ±20% (LLD-jdbc §3.1). That is not a latency measure — the
+mean is unchanged — but a load-shape one: workers started in the same instant otherwise
+poll in lockstep, concentrating the `instances × workersPerInstance` queries above into
+periodic bursts instead of spreading them. Widening the jitter further would start trading
+worst-case latency for smoothing, which is the wrong side of the trade for a knob whose
+whole purpose is latency.
 
 This is the honest baseline every other option must beat, and it is a real answer rather
 than a placeholder: for a single relay with a handful of workers, the added query load is
