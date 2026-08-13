@@ -326,7 +326,11 @@ INSERT INTO tandem_outbox (aggregate_id, seq = version + 1, ...)
 -- UNIQUE(aggregate_id, seq) constraint is the safety net
 ```
 
+> **With an ORM, the `version` must be the *flushed* one.** `seq = version + 1` is correct only if the version has actually advanced by the time the outbox row is built. Hibernate increments `@Version` at **flush**, and a Tandem write-side tier runs inside the caller's transaction — which is the whole point — so by default it observes the *pre-increment* value. Two mutations in one transaction then produce the **same** `seq` and the business transaction aborts on `UNIQUE(aggregate_id, seq)`; a mutation that dirties no persistent field advances no version at all, so the *next* transaction reuses the `seq`. This is a property of the ORM's flush timing, not of any one tier — it holds identically for the annotation, Template, application-events and plain-repository paths, so no choice of tier avoids it. Either build the outbox row after an explicit flush, or take `seq` from a source that advances per *event*: [HLD-managed-seq.md](HLD-managed-seq.md) §3.2 has the measurements, §4 the latter option.
+
 > **Hard precondition (not optional).** The per-aggregate write lock above must serialize writes so that, within an aggregate, **commit order = `seq` order = `id` order**. Without it, a lower-`seq` row can become *durable* after a higher-`seq` one (the relay polls committed rows, so it would publish them out of order — and no relay model can repair an ordering defect baked into the data). See [q8-worker-model-decision.md](q8-worker-model-decision.md) (E1).
+
+> **And a violation is silent.** Measured, and pinned by `CommitOrderReorderIT` (`tandem-jdbc`): two concurrent writers on one aggregate, the lower-`seq` row inserted first but committed second, publish as `[2, 1]`. Neither guard fires — `UNIQUE(aggregate_id, seq)` sees two *different* values, and the head-of-chain `NOT EXISTS` cannot see an uncommitted row at all. The result is **identical at `bucketCount` 1 and 256**: a single bucket serializes the *relay*, not the *writes*, and one aggregate always hashes to one bucket (§4.3), so `B` is structurally irrelevant here. Tandem emits no metric, log or counter for it today — see [HLD-managed-seq.md](HLD-managed-seq.md) §6.
 
 ### 4.3 Bucket-Sharded Relay Preserves Ordering
 
