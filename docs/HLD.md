@@ -518,7 +518,9 @@ the aggregate. It is otherwise immutable (subject to the same cleanup/retention 
 
 ### 5.4 MySQL Considerations
 
-MySQL 8 supports `SKIP LOCKED`. The `bucket` is computed in Java (§4.3), so it is identical on MySQL with no DB-specific hash function. Other adjustments: `GENERATED ALWAYS AS IDENTITY` → `BIGINT AUTO_INCREMENT`, `JSONB` → `JSON`, `TIMESTAMPTZ` → `TIMESTAMP`/`DATETIME`, and partial indexes are unsupported (use a full index or a filtered equivalent) — full details in Q28 / LLD-jdbc.
+MySQL 8 supports `SKIP LOCKED`, and the `bucket` is computed in Java (§4.3), so it is identical on MySQL with no DB-specific hash function. The type mappings are mechanical: `GENERATED ALWAYS AS IDENTITY` → `BIGINT AUTO_INCREMENT`, `JSONB` → `JSON`, `TIMESTAMPTZ` → `DATETIME(3)`/`TIMESTAMP(3)`, and partial indexes are unsupported (replaced by a full index with `status` as the leading column).
+
+Two differences are architectural rather than mechanical. Both were established by experiment against MySQL 8.4; [LLD-jdbc §5](LLD-jdbc.md) specifies the port in full, including the measurements. First, MySQL has no `UPDATE … RETURNING`, so the claim cannot remain the single atomic statement it is on PostgreSQL — it becomes a locking `SELECT` plus an `UPDATE` inside one explicit transaction, the only operation in the design that spans more than one statement (Q9). Second, **the relay must run at `READ COMMITTED`**: under MySQL's `REPEATABLE READ` default the claim's head-of-chain check takes a lock on every row it examines, across all buckets rather than the worker's own, and four workers measured **37% slower than one** — negative scaling, with no deadlock, no timeout and no error to reveal it. PostgreSQL defaults to `READ COMMITTED`, which is why this requirement has been invisible so far: it is a property Tandem has always relied on, not a concession made for MySQL.
 
 ---
 

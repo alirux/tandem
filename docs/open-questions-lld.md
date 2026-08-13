@@ -92,6 +92,22 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   `tandem_bucket_lease` ↔ relay heartbeat/control reconciliation done (HLD-admin-api §4.1); Lamport store
   resolved — **Tandem-managed `tandem_aggregate_clock` table** with an atomic upsert advance (HLD-causal-ordering.md §3.1,
   LLD-jdbc §2; clean boundary, no domain-table writes). *(tandem-jdbc)*
+- [ ] **Q28 (P2)** — **The MySQL port.** Specified and **verified by experiment** (MySQL 8.4) in
+  [LLD-jdbc.md](LLD-jdbc.md) §5; what remains undecided is listed in §5.5 — adapter structure
+  (a `SqlDialect` seam inside `tandem-jdbc` vs a separate module), the test matrix, and gap-lock
+  behaviour under `LEASE` with several instances. **Not a type-mapping exercise**: MySQL has no
+  `UPDATE … RETURNING`, so the claim becomes a two-step transaction — the only operation in the
+  design spanning more than one statement, against Q9 (§5.3) — and the relay **must run at
+  `READ COMMITTED`**: under MySQL's `REPEATABLE READ` default the head-of-chain claim locks every row
+  it examines, across all buckets rather than the worker's own, and four workers measure **37% slower
+  than one**, with no deadlock, timeout or error to reveal it (§5.2). *(tandem-jdbc; HLD §5.4)*
+  > **Reclassified 2026-08-13.** This sat under *H. Minor inconsistencies / cleanup* at **P3**, as
+  > "MySQL DDL incomplete — no `TIMESTAMPTZ`, `JSONB`→`JSON`, partial indexes unsupported". Those
+  > mappings were right as far as they went, but the framing was wrong on both axes: the blocking
+  > issues are the claim's shape and the transaction isolation level, neither of which is a DDL
+  > concern, and neither of which is minor. The error was inherited — LLD-jdbc §5 itself asserted the
+  > claim strategy was "already portable", which held up until it was measured. *Lesson: a
+  > compatibility claim that names only the syntax it checked has not been checked.*
 
 ## C. tandem-kafka
 
@@ -207,9 +223,6 @@ resolved (or consciously deferred) to write correct per-module LLDs.
 
 ## H. Minor inconsistencies / cleanup
 
-- [ ] **Q28 (P3)** — **MySQL DDL incomplete (§5.4).** No `TIMESTAMPTZ` in MySQL
-  (`DATETIME`/`TIMESTAMP`), `JSONB`→`JSON`, partial indexes unsupported (need a workaround).
-  *(tandem-jdbc; HLD §5.4)*
 - [ ] **Q29 (P3)** — **`headers` naming sweep.** Confirm `traceparent`/`correlation-id` everywhere;
   no stale `trace-id`. *(docs)*
 

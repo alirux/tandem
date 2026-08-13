@@ -577,13 +577,136 @@ all**, so their queries never run. The `config.invalid` fail-fast metric
 
 ## 5. PostgreSQL vs MySQL
 
+The MySQL port is **not built** (Q28). This section is the specification it must follow. Everything
+below was **verified by experiment against MySQL 8.4.11 and `postgres:16-alpine`**, not derived from
+documentation — an earlier draft of this section claimed the claim strategy was "already portable",
+and §5.2 is the measurement that disproved it.
+
+### 5.1 What actually differs
+
 | Concern | PostgreSQL | MySQL 8 |
 |---|---|---|
 | Bucket function | computed in Java (`BucketHash`, LLD-core §4) — engine-independent | same Java value (no DB hash function) |
-| `SKIP LOCKED` | yes | yes (8.0+) |
-| `RETURNING` in the claim | yes (single CTE + `RETURNING`) | not supported → **`SELECT … FOR UPDATE SKIP LOCKED LIMIT n`** (returns the row data *and* locks the rows), collect the selected ids, then **`UPDATE … WHERE id IN (:selected_ids)`** in the **same tx**. (Do *not* re-`SELECT … WHERE locked_by=:me AND status=1`: it also returns prior-cycle rows still IN_FLIGHT, causing double dispatch.) |
-| Types | `JSONB`, `TIMESTAMPTZ`, `BIGINT GENERATED … IDENTITY` | `JSON`, `TIMESTAMP`/`DATETIME`, `BIGINT AUTO_INCREMENT` |
-| Partial indexes | yes | not supported → full index or generated-column workaround |
+| `SKIP LOCKED` | yes | yes (8.0+), but see §5.2 — the locking clause alone does not carry the semantics over |
+| Transaction isolation | `READ COMMITTED` (engine default) | `REPEATABLE READ` (engine default) — **must be overridden**, §5.2 |
+| `RETURNING` | yes (single CTE + `RETURNING`) | not supported → two-step claim, §5.3 |
+| Array bind (`= ANY(?)`) | yes (`Connection.createArrayOf`) | not supported by Connector/J → generated `IN (?,?,…)` |
+| `LIMIT` inside `IN (subquery)` | yes | `ERROR 1235` → wrap in a derived table |
+| Subquery over the table being updated | yes | `ERROR 1093` → same derived-table wrapping |
+| Locking-clause order | `… FOR UPDATE SKIP LOCKED LIMIT n` | **reversed**: `… LIMIT n FOR UPDATE SKIP LOCKED`; the PostgreSQL order is a syntax error |
+| Unique-violation detection | `SQLSTATE 23505` | `SQLSTATE 23000` + **vendor errno 1062** (23000 alone is any integrity violation) |
+| `key` as a column name | legal unquoted | **reserved word** → backticks, or the statement fails to parse |
+| Types | `JSONB`, `TIMESTAMPTZ`, `BIGINT GENERATED … IDENTITY` | `JSON`, `DATETIME(3)`/`TIMESTAMP(3)`, `BIGINT AUTO_INCREMENT` |
+| Sub-second clock | `now()` | `now()` is **second-precision** — every lease expression needs `now(3)` |
+| Partial indexes | yes | not supported → full index with `status` as the leading column |
+| JSON round-trip | `jsonb`, keys normalised | `JSON`, keys normalised — payload/headers port unchanged |
+
+### 5.2 The claim: isolation level is load-bearing
+
+**Tandem has always run at `READ COMMITTED`.** It never had to say so, because that is PostgreSQL's
+default and the code never sets a level. MySQL defaults to `REPEATABLE READ`, and under that default
+the relay **scales negatively**.
+
+The head-of-chain claim (§3.3) makes the optimiser choose **`PRIMARY`** as the access path — not
+`idx_tandem_outbox_dispatch` — in order to satisfy `ORDER BY id LIMIT n`. Under `REPEATABLE READ`
+every row *examined* takes a next-key lock, whether or not it matches the `WHERE`. Measured with
+one worker of four claiming a batch of 10 from buckets `{0,4}`, over 200 000 rows across 400
+aggregates and B = 8:
+
+| Isolation | Rows returned | Locks taken | Spread |
+|---|---|---|---|
+| `REPEATABLE READ` | 10 | **37** | **all 8 buckets** — 27 of them on rows owned by other workers |
+| `READ COMMITTED` | 10 | **10** | buckets 0 and 4 only |
+
+So under the default, bucket granularity — the property the entire worker/instance isolation rests
+on — **disappears**. Throughput, same workload, 15 s per run, batch 10:
+
+| Configuration | 1 worker | 4 workers | Scaling | Mean claim latency, 1 → 4 |
+|---|---|---|---|---|
+| MySQL, `REPEATABLE READ` | 345 rows/s | **216 rows/s** | **0.63× — negative** | 25.9 ms → 138.8 ms (peak 1.79 s) |
+| MySQL, `READ COMMITTED` | 307 rows/s | **1 073 rows/s** | **3.49×** (87%) | 29.5 ms → 32.8 ms |
+| PostgreSQL (the committed CTE claim) | 693 rows/s | **2 467 rows/s** | 3.56× (89%) | 13.8 ms → 15.2 ms |
+
+Four workers under `REPEATABLE READ` are **37% slower than one**. `READ COMMITTED` restores
+PostgreSQL-class scaling.
+
+**The failure mode is silent.** No deadlock, no lock-wait timeout, and effectively no empty batches
+(12 out of 353 cycles) — the loss is pure lock *waiting*. A functional integration suite passes green
+while production throughput collapses, so **the MySQL test matrix must assert concurrent throughput**,
+not just correctness; nothing else detects a regression of this shape.
+
+`READ COMMITTED` is also the semantically correct level here, not merely the faster one: the
+head-of-chain `NOT EXISTS` must see the latest committed state of the aggregate's chain, not a
+transaction-start snapshot. Weakening the level costs nothing Tandem relies on — exclusivity during
+publish is carried by `status = IN_FLIGHT` plus the `locked_until` lease, never by an open
+transaction (Q9).
+
+**Recommended mechanism (pending decision):** set the level on the relay's own claim transaction in
+the adapter — `Connection.setTransactionIsolation(TRANSACTION_READ_COMMITTED)`, restored in a
+`finally`, since the `DataSource` belongs to the application and is normally pooled. Requiring the
+operator to configure `transaction_isolation` server-side is the alternative, and is worse: a
+deployment that misses it does not fail, it silently loses ~4× throughput (§1.1 — sensible defaults
+over configuration). Either way the client write-side is untouched; only relay connections are
+affected.
+
+**The disjoint-bucket invariant is now load-bearing and must be stated as such.** Concurrent claims
+never overlap: `WorkerPool.sliceFor` shards by `bucket % workerCount == index` within an instance,
+and `LEASE` gives each instance exclusive bucket ownership across instances (§3.2). Under
+`READ COMMITTED` that is what keeps workers off each other's rows. It was an implicit consequence of
+the design before; on MySQL it is a precondition for throughput, and a change to worker sharding
+that broke it would degrade silently.
+
+### 5.3 Statement-level rewrites
+
+The claim (§3.3) becomes two statements in **one explicit transaction** — a real change from the
+PostgreSQL path, where every operation runs on autocommit (Q9): `SELECT … ORDER BY id LIMIT n FOR
+UPDATE SKIP LOCKED`, collect the ids, then `UPDATE … WHERE id IN (:selected_ids)`. Do *not* re-`SELECT
+… WHERE locked_by=:me AND status=1` instead: it also returns prior-cycle rows still `IN_FLIGHT`,
+causing double dispatch. The locking read returns the row data *before* the update, so the adapter
+synthesises the post-claim state (`status`, `locked_by`, `locked_until`) onto the returned
+`OutboxRecord` rather than reading it back.
+
+`BucketLeaseManager` (§3.2) is the other substantial rewrite: **four** of its statements depend on
+`UPDATE … RETURNING bucket` (claim-deficit, release-excess, release-all, member prune), and two also
+hit `ERROR 1235`/`ERROR 1093`. Each becomes a locking `SELECT` followed by an `UPDATE`/`DELETE` in the
+same transaction.
+
+Ten of the eleven SQL-carrying classes need dialect-specific statements — `JdbcDiscardService` is the
+only one already portable. The `tandem_meta` upserts (`JdbcBucketCountStore`, `JdbcRelayControl`,
+`JdbcRelayControlSource`) map `ON CONFLICT … DO UPDATE/DO NOTHING` to
+`ON DUPLICATE KEY UPDATE` / `INSERT IGNORE`, and every reference to the `key` column needs backticks.
+
+### 5.4 Schema mapping
+
+The MySQL baseline (`schema/mysql/tandem-baseline.sql`, still to be written) keeps the same table and
+column names — it is the same long-lived contract, evolving additively (§1.4). The four partial
+indexes have no MySQL equivalent and become full indexes with **`status` as the leading column**
+(`(status, bucket, id)`, `(aggregate_id, status, id)`, …). A generated-column workaround buys nothing:
+MySQL indexes `NULL`s, so the "partial" index would not actually be sparser. The trade-off is real and
+should be stated to operators: these indexes cover `DONE` rows too, so they grow with the whole table
+between cleanup passes, unlike their PostgreSQL counterparts.
+
+Timestamps need a decision at the schema level: `DATETIME(3)` with the session pinned to UTC, or
+`TIMESTAMP(3)` with `connectionTimeZone=UTC`. `rs.getObject(col, OffsetDateTime.class)` behaves
+differently across the two, and every lease is compared against the DB clock — this is the easiest
+correctness trap in the port to miss.
+
+Bucket seeding replaces `generate_series` with a recursive CTE (verified: seeds B = 256 rows).
+
+### 5.5 Still open (Q28)
+
+- **Adapter structure** — a `SqlDialect` seam inside `tandem-jdbc` with the engine detected from
+  `DatabaseMetaData`, versus a separate module. Roughly 2 400 of the module's 3 400 lines
+  (`WorkerPool`, `RelayWorker`, `BucketLeaseManager`, backoff, config) are engine-neutral
+  orchestration that a second module would duplicate.
+- **Test matrix** — which suites run against both engines, and where the concurrent-throughput
+  assertion called for in §5.2 lives.
+- **Gap locks at scale** — §5.2's measurements are single-node, B = 8, with a stored-procedure
+  harness in which *neither* engine pays a JDBC round-trip. The real two-step claim pays one more
+  than PostgreSQL's single CTE, so the measured MySQL/PostgreSQL throughput gap is a **lower bound**.
+  Behaviour under `LEASE` with several instances is not yet measured.
+- `mysql-connector-j` is GPLv2-with-FOSS-exception and must stay **test-only**, never a redistributed
+  dependency (THIRD-PARTY-NOTICES stays unchanged).
 
 ---
 
@@ -616,8 +739,9 @@ their tables only when enabled.
 that the operator applies; the library does not run migrations itself. The PostgreSQL baseline is
 committed at [`schema/postgres/tandem-baseline.sql`](../schema/postgres/tandem-baseline.sql) (core
 `tandem_outbox` + indexes, plus the `LEASE`-mode `tandem_bucket_lease` seeded for the default
-`B=256`). The MySQL script (`schema/mysql/…`) is **pending Q28** (partial-index workaround, type
-mappings; the `bucket` is computed in Java so there is no DB bucket function to port). Wrapping the
+`B=256`). The MySQL script (`schema/mysql/…`) is **pending Q28** — the schema mapping it must follow
+(status-prefixed indexes, timestamp precision, bucket seeding) is specified in §5.4; the `bucket` is
+computed in Java so there is no DB bucket function to port. Wrapping the
 scripts in a migration tool (Liquibase/Flyway) is **deferred**.
 The scripts must stay **additive** across versions (§1.4).
 
@@ -671,7 +795,9 @@ a sample payload to bytes and asserts the CloudEvent body on the topic (LLD-test
 ## 8. Open items touching this module (post basic round)
 
 - **Q6** — full property reference (the `tandem.*` contract in `tandem-spring-producer` / `tandem-spring-relay`, LLD-spring-config §2); the basic-round defaults are in §6.
-- **Q28** — full MySQL DDL (partial-index workaround, partitioning).
+- **Q28** — the MySQL port. Specified in §5 (verified by experiment); what remains undecided is
+  listed in §5.5. Note §5.2: the claim is **not** portable as-is — `READ COMMITTED` is a requirement,
+  not a tuning option.
 - ~~The `tandem_bucket_lease` table doubles as / aligns with the relay heartbeat-status the Admin API
   needs~~ — **done**: `JdbcRelayQuery`/`JdbcRelayControl` (`tandem-admin`) read/write the same
   `tandem_bucket_lease`/`tandem_relay_member`/`tandem_meta` tables the relay engine already
