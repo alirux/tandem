@@ -15,8 +15,6 @@ import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.test.InMemoryOutbox;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -37,7 +35,7 @@ class OutboxAdminServiceTest {
 
     private final InMemoryOutbox outbox = new InMemoryOutbox();
     private final OutboxAdminService service = new OutboxAdminService(
-            outbox, outbox, outbox, outbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+            outbox, outbox, outbox, outbox, Clock.fixed(NOW, ZoneOffset.UTC));
 
     private void insert(String aggregateId, long seq, String payload) {
         outbox.insert(OutboxMessage.builder()
@@ -121,26 +119,28 @@ class OutboxAdminServiceTest {
     }
 
     @Test
-    void GIVEN_an_existing_row_WHEN_found_by_id_THEN_the_detail_carries_the_parsed_payload_and_headers() {
-        insert("order-1", 1, "{\"amount\":42}");
+    void GIVEN_an_existing_row_WHEN_found_by_id_THEN_the_detail_carries_the_stored_payload_and_headers() {
+        String storedPayload = "{\"amount\":42}";
+        insert("order-1", 1, storedPayload);
         long id = outbox.all().get(0).id();
 
         Optional<OutboxEntryResponse> detail = service.findById(id);
 
         assertThat(detail).isPresent();
-        assertThat(detail.get().payload()).isInstanceOf(ObjectNode.class);
-        assertThat(((ObjectNode) detail.get().payload()).get("amount").asInt()).isEqualTo(42);
+        // The payload travels as a JSON text fragment, embedded verbatim in the response body — so a
+        // stored JSON value must come back byte-for-byte, never re-serialized.
+        assertThat(detail.get().payload()).isEqualTo(storedPayload);
         assertThat(detail.get().headers()).containsEntry("correlation-id", "abc");
     }
 
     @Test
-    void GIVEN_a_non_json_payload_WHEN_found_by_id_THEN_it_falls_back_to_a_raw_string() {
+    void GIVEN_a_non_json_payload_WHEN_found_by_id_THEN_it_falls_back_to_a_json_string() {
         insert("order-1", 1, "not-json-at-all");
         long id = outbox.all().get(0).id();
 
         Optional<OutboxEntryResponse> detail = service.findById(id);
 
-        assertThat(detail.get().payload()).isEqualTo("not-json-at-all");
+        assertThat(detail.get().payload()).isEqualTo("\"not-json-at-all\"");
     }
 
     @Test
@@ -151,7 +151,7 @@ class OutboxAdminServiceTest {
     @Test
     void GIVEN_a_store_that_reports_no_lag_WHEN_summarized_THEN_it_falls_back_to_zero() {
         OutboxAdminService serviceOverNoLagStore = new OutboxAdminService(
-                outbox, new NoLagOutboxStore(), outbox, outbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+                outbox, new NoLagOutboxStore(), outbox, outbox, Clock.fixed(NOW, ZoneOffset.UTC));
 
         OutboxSummaryResponse summary = serviceOverNoLagStore.summary();
 
@@ -164,7 +164,7 @@ class OutboxAdminServiceTest {
         Clock start = Clock.fixed(NOW.minus(Duration.ofSeconds(30)), ZoneOffset.UTC);
         InMemoryOutbox lateOutbox = new InMemoryOutbox(256, 10, start);
         OutboxAdminService lateService = new OutboxAdminService(
-                lateOutbox, lateOutbox, lateOutbox, lateOutbox, new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+                lateOutbox, lateOutbox, lateOutbox, lateOutbox, Clock.fixed(NOW, ZoneOffset.UTC));
         lateOutbox.insert(OutboxMessage.builder()
                 .aggregateId("order-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
 

@@ -40,6 +40,9 @@ final class MiniJson {
         return sb.toString();
     }
 
+    // Byte-for-byte identical to PayloadJson.quote in tandem-admin (different module, so it can't
+    // share this method) — keep them in sync if you touch either. Not worth a shared published type
+    // for 18 lines of a closed, unchanging algorithm (RFC 8259 string escaping).
     private static void writeString(StringBuilder sb, String s) {
         sb.append('"');
         for (int i = 0; i < s.length(); i++) {

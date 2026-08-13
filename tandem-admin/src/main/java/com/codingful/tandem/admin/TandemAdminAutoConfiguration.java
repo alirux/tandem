@@ -7,7 +7,6 @@ import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.jdbc.JdbcOutboxQuery;
 import com.codingful.tandem.jdbc.JdbcOutboxStore;
 import com.codingful.tandem.jdbc.RelayConfig;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -24,8 +23,8 @@ import org.springframework.context.annotation.Import;
  * already supplies them) or run as a fully standalone service pointed at the outbox datasource — every
  * bean is {@link ConditionalOnMissingBean}, so an embedded deployment's own beans win.
  *
- * <p>Owns only cross-cutting infrastructure — the DB-derived adapters and the JSON config more than one
- * feature package needs — plus generic error handling. Each REST feature's own use cases/controller/
+ * <p>Owns only cross-cutting infrastructure — the DB-derived adapters more than one feature package
+ * needs — plus generic error handling. Each REST feature's own use cases/controller/
  * problem-slug mapping live in their own package ({@code outbox}, {@code relay}), {@code @Import}ed
  * here so they inherit this class's gating: a {@code @Configuration} imported from a class whose own
  * conditions fail is never processed, so an imported feature's beans never register either.
@@ -59,13 +58,4 @@ public class TandemAdminAutoConfiguration {
         return new JdbcOutboxStore(dataSource, RelayConfig.builder().build().maxAttempts());
     }
 
-    /**
-     * This bean only exists for the unlikely case no {@code ObjectMapper} is configured yet — a real
-     * Spring Boot web application's own autoconfigured one already behaves the same way.
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    ObjectMapper tandemAdminObjectMapper() {
-        return TandemAdminObjectMappers.newDefault();
-    }
 }

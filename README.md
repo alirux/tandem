@@ -312,6 +312,12 @@ Any Boot 3.x ≥ the baseline or Boot 4.x ≥ the verified 4.x line is expected 
 exactly these three versions (see [gradle/libs.versions.toml](gradle/libs.versions.toml) for the exact
 pins), not every intermediate release.
 
+`tandem-admin` follows the same rule and adds one of its own, because it renders JSON: Boot 4 changed
+the default JSON binding to **Jackson 3** starting at **4.0.0**, so the module compiles against
+Jackson's *annotations* only and works on either binding. Verified with Jackson 3 on 4.1.x (automated)
+and 4.0.x (checked by hand), and with Jackson 2 on 4.x for applications that opt back into it via
+`spring-boot-jackson2`.
+
 ## Usage
 
 **Write-side** — insert the event inside your own transaction (the relay never runs here):

@@ -2,7 +2,6 @@ package com.codingful.tandem.admin.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.codingful.tandem.admin.TandemAdminObjectMappers;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxRowDetail;
 import com.codingful.tandem.core.OutboxRowView;
@@ -16,7 +15,6 @@ import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.ReplayService;
 import com.codingful.tandem.jdbc.JdbcDiscardService;
 import com.codingful.tandem.jdbc.JdbcReplayService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.time.Clock;
 import java.time.Duration;
@@ -49,8 +47,7 @@ class OutboxAdminConfigurationTest {
                 .withBean(OutboxQuery.class, PlainOutboxQuery::new)
                 .withBean(OutboxStore.class, PlainOutboxStore::new)
                 .withBean(ReplayService.class, PlainReplayService::new)
-                .withBean(DiscardService.class, PlainDiscardService::new)
-                .withBean(ObjectMapper.class, TandemAdminObjectMappers::newDefault);
+                .withBean(DiscardService.class, PlainDiscardService::new);
     }
 
     @Test
@@ -67,7 +64,6 @@ class OutboxAdminConfigurationTest {
         runner.withBean(OutboxStore.class, PlainOutboxStore::new)
                 .withBean(ReplayService.class, PlainReplayService::new)
                 .withBean(DiscardService.class, PlainDiscardService::new)
-                .withBean(ObjectMapper.class, TandemAdminObjectMappers::newDefault)
                 .run(context -> assertThat(context).hasFailed());
     }
 
@@ -75,7 +71,6 @@ class OutboxAdminConfigurationTest {
     void GIVEN_a_data_source_but_no_explicit_replay_or_discard_beans_WHEN_the_context_starts_THEN_jdbc_backed_ones_are_wired() {
         runner.withBean(OutboxQuery.class, PlainOutboxQuery::new)
                 .withBean(OutboxStore.class, PlainOutboxStore::new)
-                .withBean(ObjectMapper.class, TandemAdminObjectMappers::newDefault)
                 .withBean(DataSource.class, NoopDataSource::new)
                 .run(context -> {
                     assertThat(context).hasSingleBean(ReplayService.class);
@@ -89,7 +84,7 @@ class OutboxAdminConfigurationTest {
     void GIVEN_an_existing_outbox_admin_service_bean_WHEN_the_context_starts_THEN_the_configuration_reuses_it() {
         OutboxAdminService custom = new OutboxAdminService(
                 new PlainOutboxQuery(), new PlainOutboxStore(), new PlainReplayService(), new PlainDiscardService(),
-                TandemAdminObjectMappers.newDefault(), Clock.systemUTC());
+                Clock.systemUTC());
         withInfraBeans().withBean(OutboxAdminService.class, () -> custom)
                 .run(context -> assertThat(context.getBean(OutboxAdminService.class)).isSameAs(custom));
     }

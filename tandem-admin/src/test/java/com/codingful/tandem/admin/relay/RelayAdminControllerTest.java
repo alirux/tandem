@@ -8,18 +8,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.codingful.tandem.admin.OpenApiConformance;
 import com.codingful.tandem.admin.TandemAdminExceptionHandler;
-import com.codingful.tandem.admin.TandemAdminObjectMappers;
 import com.codingful.tandem.core.RelayCoordinationMode;
 import com.codingful.tandem.test.InMemoryOutbox;
 import com.codingful.tandem.test.InMemoryRelayControl;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -41,11 +38,9 @@ class RelayAdminControllerTest {
     @BeforeEach
     void setUp() {
         control = new InMemoryRelayControl(new InMemoryOutbox(BUCKETS, 10, Clock.systemUTC()), BUCKETS);
-        ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         RelayAdminService service = new RelayAdminService(control, control);
         mockMvc = MockMvcBuilders.standaloneSetup(new RelayAdminController(service))
                 .setControllerAdvice(new RelayExceptionHandler(), new TandemAdminExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
     }
 

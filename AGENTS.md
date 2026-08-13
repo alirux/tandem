@@ -242,6 +242,19 @@ CI. Two rules keep one jar valid on both lines, and neither fails loudly if brok
 §1.1: order autoconfigurations by **name** (`afterName`), never by class literal, and put class conditions
 on **`@Bean` methods**, never on a nested `@Configuration`.
 
+**A module that renders JSON has a second axis, and it is not the Boot line.** Since Boot **4.0.0** a
+stock `spring-boot-starter-web` brings **Jackson 3** (`tools.jackson`) and no Jackson 2 databind; a Boot 4
+application may also opt back into Jackson 2 (`spring-boot-jackson2`), so which binding is present is a
+property of the host's classpath, not of its Boot version. The rule: such a module may name Jackson's
+**annotations** (`com.fasterxml.jackson.annotation.*`, shared by both generations) and **neither
+generation's databind** — render raw JSON text through `@JsonRawValue` rather than a parsed tree, and pin
+timestamps with `@JsonFormat` rather than a mapper you configure. `tandem-admin` enforces this with two
+gates you must keep passing: `JacksonFootprintTest` (reads the compiled classes, fails on any databind
+reference — the original defect lived in a `@Bean` *signature*, where a source read does not see it) and
+the **`jacksonThreeTest` source set**, run on both 4.x lines with Jackson 2 excluded. Note that
+`bootFourTest` deliberately keeps Jackson 2 on its classpath — it covers the opt-in cell, not a stock Boot
+4 application. Full detail and the measurements: LLD-spring-config §1.3.
+
 ## Adding a module — the registration checklist
 
 A module is not wired in by existing there: several **explicit lists** must name it, and each omission

@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.codingful.tandem.admin.OpenApiConformance;
 import com.codingful.tandem.admin.TandemAdminExceptionHandler;
-import com.codingful.tandem.admin.TandemAdminObjectMappers;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRowDetail;
 import com.codingful.tandem.core.OutboxRowView;
@@ -16,7 +15,6 @@ import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.port.OutboxQuery;
 import com.codingful.tandem.test.InMemoryOutbox;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +23,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -56,9 +53,8 @@ class OutboxAdminControllerTest {
     @BeforeEach
     void setUp() {
         outbox = new InMemoryOutbox();
-        ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         OutboxAdminService service =
-                new OutboxAdminService(outbox, outbox, outbox, outbox, objectMapper, Clock.systemUTC());
+                new OutboxAdminService(outbox, outbox, outbox, outbox, Clock.systemUTC());
         mockMvc = MockMvcBuilders.standaloneSetup(new OutboxAdminController(service))
                 // Order matters here, unlike in a real ApplicationContext: standalone setup does not
                 // honour @Order across manually-supplied advice instances, so the generic catch-all
@@ -66,9 +62,6 @@ class OutboxAdminControllerTest {
                 // last, or it shadows OutboxExceptionHandler's more specific 404 mapping. In production
                 // (a real Spring context, @Order(LOWEST_PRECEDENCE) on the class) this is unambiguous.
                 .setControllerAdvice(new OutboxExceptionHandler(), new TandemAdminExceptionHandler())
-                // Same ObjectMapper the service renders payloads with — otherwise MockMvc's own default
-                // converter builds an unconfigured mapper and createdAt etc. serialize as epoch numbers.
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
     }
 
@@ -332,12 +325,10 @@ class OutboxAdminControllerTest {
 
     @Test
     void GIVEN_an_unexpected_failure_WHEN_summary_is_requested_THEN_a_problem_json_500_is_returned() throws Exception {
-        ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         OutboxAdminService brokenService =
-                new OutboxAdminService(new BrokenOutboxQuery(), outbox, outbox, outbox, objectMapper, Clock.systemUTC());
+                new OutboxAdminService(new BrokenOutboxQuery(), outbox, outbox, outbox, Clock.systemUTC());
         MockMvc brokenMockMvc = MockMvcBuilders.standaloneSetup(new OutboxAdminController(brokenService))
                 .setControllerAdvice(new OutboxExceptionHandler(), new TandemAdminExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
 
         brokenMockMvc.perform(get("/tandem/admin/v1/outbox/summary"))

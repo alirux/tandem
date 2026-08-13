@@ -1,6 +1,6 @@
 # Tandem — LLD: Spring modules & configuration contract (`tandem-spring-producer`, `tandem-spring-relay`)
 
-**Version:** 1.5
+**Version:** 1.6
 **Status:** Implemented and released — both modules built and tested against Boot 3.3.13, **3.5.16**, **and** 4.1.0
 **Companion to:** [HLD.md](HLD.md) §3.1, §3.2, §10.1; [LLD-jdbc.md](LLD-jdbc.md); [LLD-kafka.md](LLD-kafka.md); [LLD-bucket-count-guard.md](LLD-bucket-count-guard.md)
 
@@ -101,7 +101,8 @@ incompatibility ever cannot be absorbed this way, the fallback is the version sp
 The multi-generation claim is only as good as the test that checks it. Realised as follows:
 
 **The matrix lives in the build, not only in CI.** Each Spring module adds a `bootLatestThreeTest` task
-and a `bootFourTest` task next to `test`, and wires both into `check`, so a single `./gradlew check` runs
+and a `bootFourTest` task next to `test`, and wires both into `check` (`tandem-admin` adds two more for
+the JSON-binding axis of §1.3), so a single `./gradlew check` runs
 the autoconfiguration tests against **all three lines**, locally and in CI alike (consistent with the
 project convention that `check` is the single source of truth). Versions are pinned in the version
 catalog: baseline **Boot 3.3.13** (Framework 6.1.x, `test`), the latest **Boot 3.x patch** (`3.5.16` at
@@ -204,6 +205,70 @@ transactional resource and a broker, so they are exercised on the baseline only.
 starting the pool is likewise baseline-only, and the `afterName` ordering of §1.1 is *declared* for 4.x
 with nothing asserting it takes effect there. Closing these means running the container-backed tests on
 both lines, which the trade-off above deliberately declines.
+
+### 1.3 The JSON binding is a second axis — Jackson 2 vs Jackson 3
+
+The three-line matrix above varies **Spring**. A module that renders JSON has a second thing varying
+underneath it, and it does not move with the Boot line the way one would assume.
+
+**Measured, not assumed** (resolved from Maven Central; the same check is worth repeating before
+trusting any statement here). `spring-boot-starter-web` → `spring-boot-starter-json` →
+`spring-boot-jackson` → **`tools.jackson.core:jackson-databind`** on *every* 4.x line:
+
+| Boot line | JSON binding it brings | Jackson 2 present? |
+|---|---|---|
+| 3.3.13 / 3.5.16 | `com.fasterxml.jackson.core:jackson-databind` 2.x | yes, it *is* the binding |
+| 4.0.0 / 4.0.2 | `tools.jackson.core:jackson-databind` **3.0.x** | **no** — only `jackson-annotations` 2.20 |
+| 4.1.0 | `tools.jackson.core:jackson-databind` **3.1.x** | **no** — only `jackson-annotations` 2.21 |
+
+Two consequences that are easy to get wrong:
+
+1. **The switch happened at 4.0.0, not 4.1.** Both 4.x BOMs still *manage* a `jackson-2-bom` version
+   and both publish the opt-in `spring-boot-jackson2` module, which makes it look like 4.0.x still
+   carries Jackson 2. It does not, transitively.
+2. **The axis is the host application's classpath, not the Boot line.** A Boot 4 application may add
+   `spring-boot-jackson2` and run Jackson 2 deliberately. So the real matrix has four cells, and a
+   per-line artifact (`-boot3` / `-boot4`) would still be wrong for one of them:
+
+|  | Jackson 2 | Jackson 3 |
+|---|---|---|
+| **Boot 3.x** | the normal case | does not arise |
+| **Boot 4.x** | `spring-boot-jackson2`, opt-in | the normal case |
+
+**The rule this produces:** a module rendering JSON may name Jackson's **annotations**
+(`com.fasterxml.jackson.annotation.*`, the one artifact both generations share) and **neither
+generation's databind**. `tandem-admin` therefore renders its payload as a JSON *text fragment*
+through `@JsonRawValue` rather than as a parsed tree, and pins its timestamps with
+`@JsonFormat(shape = STRING)` instead of relying on a mapper it configures. Both annotations were
+verified to behave identically on Jackson 2.17.3 and Jackson 3.1.4, producing byte-identical output.
+
+**Two gates, because neither covers the other:**
+
+- **The footprint gate** (`JacksonFootprintTest`, runs with every `test`) reads the module's compiled
+  classes and fails on any reference to `com.fasterxml.jackson.databind` or `tools.jackson`. It reads
+  bytecode rather than sources because the reference that broke Boot 4 lived in a `@Bean` method's
+  *signature* — invisible to a passing read, and resolved by Spring while introspecting the whole
+  configuration class, which is why one such reference took down every bean in that file.
+- **The stock-Boot-4 gate** (`jacksonThreeTest`, a minimal source set of its own) compiles and runs
+  against the latest 4.x line with Jackson 2's databind excluded from its classpath — and asserts that
+  exclusion, so "this is a stock Boot 4 classpath" is verified rather than claimed. It covers what the
+  footprint gate cannot: that the rendering is actually right, through Spring's own Jackson 3
+  converter. **Its own classpath, not a swap of `bootFourTest`'s or the shared test source set's**,
+  because those carry `openapi-request-validator-core` — a library needed for other tests, not this
+  gate, whose own Jackson-2-internal transitives (`jackson-datatype-jsr310`, `jackson-dataformat-yaml`)
+  survive excluding `jackson-databind` and end up *orphaned*: their bytecode still references databind
+  types that are now absent. Spring's standalone `MockMvc` scans for Jackson modules and trips over
+  those broken jars with the same `NoClassDefFoundError` shape as the original defect, for a reason
+  that has nothing to do with this module's own code — reusing the heavier, already-tangled classpath
+  surfaced more complexity than a fresh, minimal one avoids. One 4.x line, not two: the defect and its
+  fix are sensitive to which Jackson *generation* is present, not which Jackson 3 *minor* — 4.0.0 and
+  4.0.2 were checked by hand instead (backlog item 23), the same "track the newest of a line" trade-off
+  `bootLatestThreeTest` already makes for Boot 3.x above.
+
+**`bootFourTest` keeps Jackson 2 on its classpath on purpose.** It represents the opt-in cell of the
+table above, which is a real deployment — not a stock one. Reading it as "Boot 4 is covered" is
+exactly the mistake that let a defect ship: `tandem-admin` 0.6.0 could not start on *any* 4.x line,
+and every task on the build was green.
 
 ---
 

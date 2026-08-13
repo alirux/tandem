@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.codingful.tandem.admin.OpenApiConformance;
 import com.codingful.tandem.admin.TandemAdminExceptionHandler;
-import com.codingful.tandem.admin.TandemAdminObjectMappers;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.jdbc.JdbcDiscardService;
 import com.codingful.tandem.jdbc.JdbcOutboxQuery;
@@ -15,7 +14,6 @@ import com.codingful.tandem.jdbc.JdbcOutboxRepository;
 import com.codingful.tandem.jdbc.JdbcOutboxStore;
 import com.codingful.tandem.jdbc.JdbcReplayService;
 import com.codingful.tandem.test.TandemTestContainer;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -28,7 +26,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -69,12 +66,10 @@ class OutboxAdminIT {
         JdbcOutboxStore store = container.newStore(10);
         JdbcReplayService replayService = new JdbcReplayService(container.dataSource());
         JdbcDiscardService discardService = new JdbcDiscardService(container.dataSource());
-        ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         OutboxAdminService service =
-                new OutboxAdminService(query, store, replayService, discardService, objectMapper, Clock.systemUTC());
+                new OutboxAdminService(query, store, replayService, discardService, Clock.systemUTC());
         mockMvc = MockMvcBuilders.standaloneSetup(new OutboxAdminController(service))
                 .setControllerAdvice(new OutboxExceptionHandler(), new TandemAdminExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
     }
 

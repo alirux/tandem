@@ -17,7 +17,6 @@ import com.codingful.tandem.core.port.DiscardService;
 import com.codingful.tandem.core.port.OutboxQuery;
 import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.ReplayService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -53,7 +52,6 @@ final class OutboxAdminService {
     private final OutboxStore outboxStore;
     private final ReplayService replayService;
     private final DiscardService discardService;
-    private final ObjectMapper objectMapper;
     private final Clock clock;
 
     /**
@@ -61,17 +59,15 @@ final class OutboxAdminService {
      * @param outboxStore     only {@link OutboxStore#lag()} is called, for the summary's backlog reading
      * @param replayService   resets a matching selection of {@code DONE}/{@code FAILED} rows to {@code PENDING}
      * @param discardService  transitions one {@code FAILED} row to {@code DISCARDED}
-     * @param objectMapper    used to render a row's payload as parsed JSON rather than raw bytes
      * @param clock           the time {@link #summary()} measures backlog age against; inject a fixed
      *                        clock in tests for a deterministic reading
      */
     OutboxAdminService(OutboxQuery outboxQuery, OutboxStore outboxStore, ReplayService replayService,
-            DiscardService discardService, ObjectMapper objectMapper, Clock clock) {
+            DiscardService discardService, Clock clock) {
         this.outboxQuery = Objects.requireNonNull(outboxQuery, "outboxQuery");
         this.outboxStore = Objects.requireNonNull(outboxStore, "outboxStore");
         this.replayService = Objects.requireNonNull(replayService, "replayService");
         this.discardService = Objects.requireNonNull(discardService, "discardService");
-        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -106,7 +102,7 @@ final class OutboxAdminService {
 
     /** {@code GET /outbox/messages/{id}}: the full detail of one row, or empty if it does not exist. */
     Optional<OutboxEntryResponse> findById(long id) {
-        return outboxQuery.findById(id).map(detail -> OutboxEntryResponse.fromDetail(detail, objectMapper));
+        return outboxQuery.findById(id).map(OutboxEntryResponse::fromDetail);
     }
 
     /**

@@ -6,7 +6,6 @@ import com.codingful.tandem.core.port.OutboxStore;
 import com.codingful.tandem.core.port.ReplayService;
 import com.codingful.tandem.jdbc.JdbcDiscardService;
 import com.codingful.tandem.jdbc.JdbcReplayService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -21,8 +20,8 @@ import org.springframework.context.annotation.Import;
  * class's gating ({@code tandem.admin.enabled} + a single {@code DataSource} candidate): a
  * {@code @Configuration} class {@code @Import}ed from a class whose own conditions fail is never
  * processed, so none of these beans are registered either. Takes {@link OutboxQuery}/
- * {@link OutboxStore}/{@link ObjectMapper} as inputs — the root autoconfiguration owns those, since
- * a future feature package (e.g. relay control) may need to share them too. {@link ReplayService}/
+ * {@link OutboxStore} as inputs — the root autoconfiguration owns those, since a future feature
+ * package (e.g. relay control) may need to share them too. {@link ReplayService}/
  * {@link DiscardService} are wired here instead, feature-local, since no other feature package
  * needs them (IMPLEMENTATION-PLAN-admin-api.md §8.3).
  */
@@ -45,8 +44,8 @@ public class OutboxAdminConfiguration {
     @Bean
     @ConditionalOnMissingBean
     OutboxAdminService outboxAdminService(OutboxQuery outboxQuery, OutboxStore outboxStore,
-            ReplayService replayService, DiscardService discardService, ObjectMapper objectMapper) {
-        return new OutboxAdminService(outboxQuery, outboxStore, replayService, discardService, objectMapper, Clock.systemUTC());
+            ReplayService replayService, DiscardService discardService) {
+        return new OutboxAdminService(outboxQuery, outboxStore, replayService, discardService, Clock.systemUTC());
     }
 
     @Bean

@@ -169,6 +169,18 @@ The contract's names are kept **deliberately distinct** from the library's for t
 the API schema is `OutboxEntry` (paginated as `OutboxEntryPage`), not `OutboxMessage`, which is
 the core's *write* model. Sharing a name would make two independently-evolving types read as one.
 
+**The DTOs name no JSON binding at all.** Spring Boot 3 carries Jackson 2 and Spring Boot 4 — from
+4.0.0, not 4.1 — carries Jackson 3 under a different package, so a module embedded in either kind
+of application may use only what the two generations share: the annotations. `payload` therefore
+travels as a **JSON text fragment** written verbatim through `@JsonRawValue`, not as a parsed tree,
+with the "are these bytes JSON?" verdict made in the module itself (it cannot be assumed: the
+baseline schema documents storing a binary serializer's output in that column). Timestamps are
+pinned with `@JsonFormat`, so the contract's `date-time` rendering does not depend on how the host
+application happens to have configured its mapper. Naming a binding type here is what previously
+reached a `@Bean` signature and stopped the module from starting on every Boot 4 line —
+[LLD-spring-config §1.3](LLD-spring-config.md) has the measurements and the two gates that now
+prevent it.
+
 - **Module:** `tandem-admin` (optional). Contains the use-case logic and the Spring-based
   REST adapter that realises [admin-api.openapi.yaml](admin-api.openapi.yaml). It depends
   only on `tandem-core` (ports/models) and `tandem-jdbc` (DB access) — **never on the client

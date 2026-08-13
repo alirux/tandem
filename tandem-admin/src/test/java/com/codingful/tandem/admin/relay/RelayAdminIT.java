@@ -7,11 +7,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.codingful.tandem.admin.OpenApiConformance;
 import com.codingful.tandem.admin.TandemAdminExceptionHandler;
-import com.codingful.tandem.admin.TandemAdminObjectMappers;
 import com.codingful.tandem.jdbc.JdbcRelayControl;
 import com.codingful.tandem.jdbc.JdbcRelayQuery;
 import com.codingful.tandem.test.TandemTestContainer;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -21,7 +19,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -57,10 +54,8 @@ class RelayAdminIT {
         JdbcRelayQuery query = new JdbcRelayQuery(container.dataSource());
         JdbcRelayControl control = new JdbcRelayControl(container.dataSource());
         RelayAdminService service = new RelayAdminService(query, control);
-        ObjectMapper objectMapper = TandemAdminObjectMappers.newDefault();
         mockMvc = MockMvcBuilders.standaloneSetup(new RelayAdminController(service))
                 .setControllerAdvice(new RelayExceptionHandler(), new TandemAdminExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
     }
 

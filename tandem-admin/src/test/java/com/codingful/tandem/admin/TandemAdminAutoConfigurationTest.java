@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.codingful.tandem.core.port.OutboxQuery;
 import com.codingful.tandem.core.port.OutboxStore;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -50,7 +49,6 @@ class TandemAdminAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(OutboxQuery.class);
                     assertThat(context).hasSingleBean(OutboxStore.class);
-                    assertThat(context).hasSingleBean(ObjectMapper.class);
                     assertThat(context).hasSingleBean(TandemAdminExceptionHandler.class);
                 });
     }

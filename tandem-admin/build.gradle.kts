@@ -14,11 +14,11 @@ dependencies {
     compileOnly(libs.spring.boot.autoconfigure)
     compileOnly(libs.spring.web)
     compileOnly(libs.slf4j.api)
-    // Never bundled: a Spring Boot web application always carries Jackson (spring-boot-starter-json),
-    // exactly like Spring itself. Needed here to render the payload column as JSON, not as an escaped
-    // string, in the wire DTOs (never a core type — HLD-admin-api §4).
-    compileOnly(libs.jackson.databind)
-    compileOnly(libs.jackson.datatype.jsr310)
+    // Annotations ONLY, never a databind type: Boot 3 carries Jackson 2 and Boot 4 carries Jackson 3,
+    // and jackson-annotations is the single artifact both generations share. The wire DTOs use it to
+    // pin the rendering (@JsonRawValue for the payload fragment, @JsonFormat for the timestamps) while
+    // staying indifferent to which Jackson the host application actually runs (LLD-spring-config §1.3).
+    compileOnly(libs.jackson.annotations)
 
     // Generates META-INF/spring-configuration-metadata.json for IDE completion (LLD-spring-config §2.4).
     annotationProcessor(platform(libs.spring.boot.dependencies))
@@ -65,7 +65,10 @@ tasks.named("compileJava") {
 // against the Boot 3.x baseline (compileOnly, above); these tasks re-run the very same compiled test
 // AND main classes with Spring swapped to another line. bootLatestThreeTest covers the latest Boot 3.x
 // patch (Framework 6.2.x, otherwise never exercised between the 6.1.x baseline and the 7.x line);
-// bootFourTest covers the 4.x line. Only the Docker-free tests run here.
+// bootFourTest covers the 4.x line **with Jackson 2 kept on the classpath** — which is a real
+// deployment (a Boot 4 application that opts back in via spring-boot-jackson2), not a stock one. The
+// stock Boot 4 classpath carries Jackson 3 instead and is covered by jacksonThreeTest below; keep the
+// two apart, since neither subsumes the other. Only the Docker-free tests run here.
 // ---------------------------------------------------------------------------------------------------
 val bootLatestThreeTestRuntimeClasspath: Configuration by configurations.creating
 val bootFourTestRuntimeClasspath: Configuration by configurations.creating
@@ -141,4 +144,72 @@ val bootFourTest = tasks.register<Test>("bootFourTest") {
 
 tasks.named("check") {
     dependsOn(bootLatestThreeTest, bootFourTest)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Stock-Boot-4 gate (Jackson 3) — the cell the matrix above structurally cannot reach.
+//
+// Every task above runs with Jackson 2 on the classpath, because the shared test sources are written
+// against it. That covers a real deployment (a Boot 4 application that opts back into Jackson 2 via
+// spring-boot-jackson2) but NOT the default one: since Boot 4.0.0, spring-boot-starter-web pulls
+// tools.jackson (Jackson 3) and no Jackson 2 databind at all. A defect that made tandem-admin unable
+// to start on every 4.x line shipped in 0.6.0 precisely because no task represented that classpath.
+//
+// Its own MINIMAL source set, deliberately not sharing the module's main test sources or their
+// dependency graph. Tried reusing them first (swap Jackson 2 for 3 on bootFourTest's classpath) and
+// reverted it: openapi-request-validator-core (needed by the shared tests, not by this gate) drags in
+// jackson-datatype-jsr310/jackson-dataformat-yaml (Jackson 2), and excluding only jackson-databind
+// leaves those two ORPHANED — their own bytecode references databind types that are now gone, and
+// Spring's standalone MockMvc trips over them while scanning for Jackson modules
+// (NoClassDefFoundError: InvalidDefinitionException, nothing to do with this module's own code). A
+// fresh classpath with only what this gate needs sidesteps that tangle entirely, and the source set's
+// own test asserts Jackson 2's databind is genuinely absent, so "this is a stock Boot 4 classpath" is
+// verified rather than assumed.
+//
+// Runs against the LATEST 4.x line only, matching bootLatestThreeTest's own precedent above (track
+// the newest of a line, not every historical point release) — the fix is Jackson-*generation*
+// sensitive (2 vs 3), not sensitive to which Jackson 3 minor is on the classpath, so a second run
+// pinned to 4.0.x would buy little over the manual verification already on record (backlog item 23).
+// ---------------------------------------------------------------------------------------------------
+val jacksonThree = sourceSets.create("jacksonThreeTest") {
+    compileClasspath += mainOutput
+    runtimeClasspath += mainOutput
+}
+
+configurations["jacksonThreeTestCompileClasspath"].exclude(
+        group = "com.fasterxml.jackson.core", module = "jackson-databind")
+configurations["jacksonThreeTestRuntimeClasspath"].exclude(
+        group = "com.fasterxml.jackson.core", module = "jackson-databind")
+
+dependencies {
+    "jacksonThreeTestImplementation"(platform(libs.spring.boot.dependencies.v4))
+    "jacksonThreeTestImplementation"(project(":tandem-jdbc"))
+    "jacksonThreeTestImplementation"(project(":tandem-test"))
+    "jacksonThreeTestImplementation"(libs.spring.boot.autoconfigure)
+    "jacksonThreeTestImplementation"(libs.spring.boot.test)
+    "jacksonThreeTestImplementation"(libs.spring.web)
+    "jacksonThreeTestImplementation"(libs.spring.webmvc)
+    "jacksonThreeTestImplementation"(libs.spring.test)
+    "jacksonThreeTestImplementation"(libs.spring.jdbc)
+    "jacksonThreeTestImplementation"(libs.jakarta.servlet.api)
+    "jacksonThreeTestImplementation"(libs.jackson3.databind)
+    "jacksonThreeTestImplementation"(libs.jackson.annotations)
+    "jacksonThreeTestImplementation"(libs.slf4j.api)
+    "jacksonThreeTestImplementation"(platform(libs.junit.bom))
+    "jacksonThreeTestImplementation"(libs.junit.jupiter)
+    "jacksonThreeTestImplementation"(libs.assertj.core)
+    "jacksonThreeTestRuntimeOnly"(libs.junit.platform.launcher)
+}
+
+val jacksonThreeTest = tasks.register<Test>("jacksonThreeTest") {
+    description = "Runs the stock-Boot-4 (Jackson 3) rendering/wiring tests, on their own minimal classpath."
+    group = "verification"
+    testClassesDirs = jacksonThree.output.classesDirs
+    classpath = jacksonThree.runtimeClasspath
+    useJUnitPlatform()
+    shouldRunAfter(tasks.named("test"))
+}
+
+tasks.named("check") {
+    dependsOn(jacksonThreeTest)
 }

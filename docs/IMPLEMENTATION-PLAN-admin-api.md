@@ -337,12 +337,9 @@ and REST layer, and every one of those HTTP tests validated against the committe
 **Two genuine implementation bugs the conformance check caught, not code review:**
 
 - **Jackson's default `Instant` serialization is a numeric timestamp**, violating the OpenAPI's
-  `string`/`date-time` schema for `createdAt` etc. Fixed by disabling
-  `SerializationFeature.WRITE_DATES_AS_TIMESTAMPS` — centralized in `TandemAdminObjectMappers`, the
-  one place both the autoconfiguration's fallback bean and every test build their `ObjectMapper`, so
-  production and tests can never drift apart on this. (A real Spring Boot application's own
-  autoconfigured `ObjectMapper` already disables this by default; only the fallback bean and raw
-  test-constructed mappers were at risk.)
+  `string`/`date-time` schema for `createdAt` etc. Fixed with `@JsonFormat(shape = STRING)` on every
+  timestamp field (LLD-spring-config §1.3) — pinned on the type itself, so the contract holds
+  regardless of which Jackson generation or mapper configuration the host application supplies.
 - **An explicit JSON `null` fails an OpenAPI 3.0 `oneOf` schema even when the field is `nullable`** —
   a known OpenAPI 3.0 limitation (fixed by `type: [..., 'null']` unions in 3.1, not available here).
   `OutboxEntry.payload`'s schema is `oneOf: [object, string]`, so a list-view row serializing
@@ -730,9 +727,10 @@ adding `paused = false` to the same reset statement.
 
 **One real bug the MockMvc IT caught, exactly like slice 1's original find:** `RelayAdminIT`'s
 `MockMvc` was built without the configured `ObjectMapper`, so `Instant` fields serialized as epoch
-numbers and failed the `date-time` conformance check on the first run. Fixed by wiring
-`TandemAdminObjectMappers.newDefault()` through a `MappingJackson2HttpMessageConverter`, matching
-every other test in this module.
+numbers and failed the `date-time` conformance check on the first run. `@JsonFormat(shape = STRING)`
+on the DTOs (LLD-spring-config §1.3) closes this class of mistake structurally: the timestamp shape
+travels with the type, so no test needs to hand a specific `ObjectMapper` to `MockMvc` for the
+contract to hold — the standalone default converter renders it correctly on its own.
 
 **Coverage review closed two genuine gaps:** `RelayAdminService.resume()`'s not-found branch
 (only `pause()`'s was tested) and `RelayStatusResponse`'s `uncoveredBuckets` count under `LEASE`
