@@ -18,6 +18,7 @@ import com.codingful.tandem.test.RecordingMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -362,7 +363,9 @@ class WorkerPoolTest {
                 .bucketCount(BUCKETS).workersPerInstance(2).instanceId("relay-under-test")
                 .pollInterval(Duration.ofMillis(10)).build();
         WorkerPool pool = new WorkerPool(outbox, new RecordingDispatcher(), cfg);
-        Instant beforeStart = Instant.now();
+        // Truncated to millis: cycle timestamps are kept as epoch millis (§3.8), so a microsecond-precision
+        // baseline taken in the same millisecond would sit after the cycle instant and fail spuriously.
+        Instant beforeStart = Instant.now().truncatedTo(ChronoUnit.MILLIS);
 
         pool.start();
         try {
