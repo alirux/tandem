@@ -778,26 +778,35 @@ source of truth, defined and reviewed before implementation; full design in
 ## 8. Replay
 
 Replay resets DONE or FAILED rows back to PENDING, causing the relay to re-process and re-publish them. Safe because:
-1. Rows are immutable (never deleted during normal operation)
+1. The event itself is immutable — replay rewrites only *delivery* state (`status`, `attempts`, the lease, the retry schedule); `payload`, `headers`, `seq` and the aggregate identity are never touched, and rows are never deleted during normal operation
 2. The same worker handles the same aggregate, preserving order
 3. Consumers must be idempotent on `(aggregate_id, seq)` — replay is an expected, documented scenario
 
 ```sql
 -- Replay a specific aggregate, optional ID range
 UPDATE tandem_outbox
-   SET status = 0, attempts = 0, last_error = NULL, next_attempt_at = NULL
+   SET status = 0, attempts = 0, next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
  WHERE aggregate_id = ?
    AND id BETWEEN :from_id AND :to_id
    AND status IN (2, 3);   -- DONE or FAILED
 
 -- Replay all FAILED rows for an aggregate type
 UPDATE tandem_outbox
-   SET status = 0, attempts = 0, last_error = NULL, next_attempt_at = NULL
+   SET status = 0, attempts = 0, next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
  WHERE aggregate_type = ?
    AND status = 3;
 ```
 
-Tandem exposes a `ReplayService` API (in `tandem-core`) that wraps these queries with parameter validation and emits a `tandem.outbox.replay.count` metric.
+> **`last_error` deliberately survives a replay.** Every other field above is reset because delivery
+> needs it: `attempts = 0` restores the retry budget (without it a row at `maxAttempts` returns to
+> `FAILED` on its first retriable failure), `next_attempt_at` and the lease columns make the row
+> claimable again. `last_error` is required by nothing — no functional path branches on it; it is
+> written by the relay and read only by the Admin API, i.e. by the operator. Clearing it would delete
+> the answer to *"why did this fail?"* for the very person who just replayed the row to fix it, and
+> for good if the replay succeeds. A `PENDING` row carrying a `last_error` is not a new state shape
+> either — it is exactly what a retriable failure already produces (§7).
+
+Tandem exposes a `ReplayService` API (in `tandem-core`) that wraps these queries with parameter validation.
 
 ---
 

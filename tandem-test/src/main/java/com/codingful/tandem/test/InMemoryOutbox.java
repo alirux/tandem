@@ -539,8 +539,7 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                 entry.record = entry.record.toBuilder()
                         .status(OutboxStatus.PENDING)
                         .attempts(0)
-                        .lastError(null)
-                        .nextAttemptAt(null)
+                        .nextAttemptAt(null)   // lastError kept, mirroring the JDBC adapter (HLD §8)
                         .lockedBy(null)
                         .lockedUntil(null)
                         .build();

@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
  */
 class InMemoryOutboxReplayAndDiscardTest {
 
+    private static final String LAST_FAILURE_REASON = "broker unreachable";
+
     private InMemoryOutbox outbox;
 
     @BeforeEach
@@ -53,17 +55,17 @@ class InMemoryOutboxReplayAndDiscardTest {
     }
 
     @Test
-    void GIVEN_a_replayed_row_WHEN_inspected_THEN_attempts_and_last_error_are_reset() {
+    void GIVEN_a_replayed_row_WHEN_inspected_THEN_it_has_a_fresh_attempt_budget_but_keeps_the_failure_reason() {
         long id = insert("order-1");
         outbox.markFailed(id, "boom");
-        outbox.markFailed(id, "boom again");
+        outbox.markFailed(id, LAST_FAILURE_REASON);
 
         outbox.replay(new ReplayCriteria(AggregateId.of("order-1"), null, null, null, Set.of(), false));
 
         OutboxRecord replayed = outbox.byId(id);
         assertThat(replayed.status()).isEqualTo(OutboxStatus.PENDING);
         assertThat(replayed.attempts()).isZero();
-        assertThat(replayed.lastError()).isNull();
+        assertThat(replayed.lastError()).isEqualTo(LAST_FAILURE_REASON);   // the operator's only "why did it fail?"
     }
 
     @Test

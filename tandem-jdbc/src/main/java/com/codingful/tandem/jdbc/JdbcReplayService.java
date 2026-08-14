@@ -20,7 +20,10 @@ import javax.sql.DataSource;
  * Replays matching rows back to {@code PENDING} so the relay re-publishes them (LLD-core §2.6, HLD §8).
  * Only {@code DONE} and {@code FAILED} rows are replayable — the only backward transitions;
  * {@code DISCARDED} is terminal and never replayed (HLD §6). Reset mirrors HLD §8:
- * {@code status=PENDING, attempts=0, last_error=NULL, next_attempt_at=NULL} (and clears any stale lease).
+ * {@code status=PENDING, attempts=0, next_attempt_at=NULL} (and clears any stale lease).
+ * {@code last_error} is deliberately <em>kept</em> — nothing branches on it, so clearing it would only
+ * destroy the operator's answer to "why did this fail?" at the moment they are acting on it; a
+ * {@code PENDING} row carrying a {@code last_error} is the same state {@code markForRetry} produces.
  * Honours {@code dryRun}.
  */
 public final class JdbcReplayService implements ReplayService {
@@ -106,7 +109,7 @@ public final class JdbcReplayService implements ReplayService {
 
     private static int resetToPending(Connection conn, String where, List<Object> params) throws SQLException {
         String sql = "UPDATE tandem_outbox"
-                + "   SET status = 0, attempts = 0, last_error = NULL, next_attempt_at = NULL,"
+                + "   SET status = 0, attempts = 0, next_attempt_at = NULL,"
                 + "       locked_by = NULL, locked_until = NULL"
                 + " WHERE " + where;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
