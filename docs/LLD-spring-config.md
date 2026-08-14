@@ -578,6 +578,11 @@ configuration contract is what they bind onto. They now ship in the same autocon
 specified in [LLD-spring-producer.md](LLD-spring-producer.md) §6 — read the two sections together for
 the module's full bean list.
 
+None of these beans validate or generate `seq` — it arrives already set on the `OutboxMessage`/
+`TandemAggregate` the caller built, from whatever the domain used as its source (commonly a JPA
+`@Version`). That source has a flush-timing hazard this autoconfiguration cannot see or guard against
+at wiring time: [LLD-spring-producer.md](LLD-spring-producer.md) §7.
+
 ### 4.4 `tandem-spring-relay` beans
 
 Conditional on `tandem.relay.enabled` (`@ConditionalOnProperty`, matchIfMissing = true, default true),

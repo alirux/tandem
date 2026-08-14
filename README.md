@@ -338,6 +338,14 @@ public Order placeOrder(Order order) {
 }
 ```
 
+`order.version()` above is illustrative, not a safe default: with a JPA `@Version`, the field only
+advances at *flush*, and a write-side tier runs inside the caller's own transaction — so by default
+it reads the *pre-increment* value, and two mutations in one transaction collide on
+`UNIQUE(aggregate_id, seq)`. Either build the outbox row after an explicit flush, or take `seq` from
+a source that advances per event. Details and measurements:
+[docs/HLD.md](docs/HLD.md#42-ordering-established-at-write-time) §4.2,
+[docs/HLD-managed-seq.md](docs/HLD-managed-seq.md).
+
 **Relay** — wire it directly (no Spring required); it polls the outbox and publishes to Kafka,
 preserving per-aggregate order:
 

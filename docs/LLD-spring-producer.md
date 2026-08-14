@@ -286,6 +286,19 @@ the aggregate built; the events tier reads it from the mapper's output (carried 
 generates or mutates `seq`. The `UNIQUE(aggregate_id, seq)` constraint remains the safety net (HLD §4.2),
 surfaced as `DuplicateSeqException` if a bug produces a collision.
 
+> **With a JPA `@Version`, that source is stale by default — and it is not a per-tier bug, so no
+> choice of tier here avoids it.** Hibernate advances `@Version` at *flush*, and every tier in this
+> document runs inside the caller's already-open transaction, so `entity.getVersion()` (however it
+> reaches the Template's `seq` argument, the annotation-built message, or the mapped event) is by
+> default the *pre-increment* value. Two mutations in one transaction then read the same version and
+> collide on `UNIQUE(aggregate_id, seq)` (`DuplicateSeqException`, aborting the business transaction);
+> a mutation that dirties no persistent field advances no version at all, so the *next* transaction
+> reuses the stale `seq`. Measured across all three Spring tiers plus the plain `OutboxRepository`
+> path, identically: [HLD.md](HLD.md#42-ordering-established-at-write-time) §4.2,
+> [HLD-managed-seq.md](HLD-managed-seq.md) §3.2. Two workarounds, neither tier-specific: build the
+> outbox row after an explicit flush, or take `seq` from a source that advances per *event* rather
+> than per entity state change (HLD-managed-seq.md §4 designs the latter — not yet built).
+
 ---
 
 ## 8. Compatibility & open points
