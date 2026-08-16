@@ -409,54 +409,47 @@ Full mapping, content modes, Tandem extensions (`seq` / `lamport` / `causationid
 
 ### 5.1 Outbox Table (PostgreSQL)
 
-The authoritative artifact is the Liquibase changelog at `schema/postgres/changelog/`, from which the
-flat `schema/postgres/tandem-baseline.sql` an operator applies is generated (LLD-jdbc §6). Tandem
-ships the changelog and does not run migrations itself. The listing below shows the shape of the core
-table and its indexes; consult the changelog for the exact current definition.
+**The authoritative definition is the Liquibase changelog** at `schema/postgres/changelog/`, from
+which the flat `schema/postgres/tandem-baseline.sql` an operator applies is generated (LLD-jdbc §6);
+Tandem ships the changelog and does not run migrations itself. What follows is a **deliberate
+excerpt**, not a copy: the columns that carry a design decision, so the rest of this document can
+refer to them. Everything else — delivery state, and the operator-facing columns — is elided here and
+explained in §5.2. A full transcription would only drift, as it silently did twice before this note
+existed.
 
 ```sql
 CREATE TABLE tandem_outbox (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    aggregate_id    VARCHAR(255) NOT NULL,
-    aggregate_type  VARCHAR(255) NOT NULL,
-    type            VARCHAR(255),          -- CloudEvents `type`, e.g. com.acme.order.placed (§4.8)
-    bucket          SMALLINT     NOT NULL,  -- virtual bucket = Math.floorMod(fnv1a64(aggregate_id), B); computed in Java by tandem-jdbc; §4.3
-    seq             BIGINT       NOT NULL,
-    payload         JSONB        NOT NULL,   -- JSONB by default; BYTEA when a binary serializer is used (§5.2)
-    headers         JSONB,
+    aggregate_id    VARCHAR(255) NOT NULL,   -- Kafka message key; the ordering scope
+    aggregate_type  VARCHAR(255) NOT NULL,   -- routes to the Kafka topic (§5.2)
+    bucket          SMALLINT     NOT NULL,   -- Math.floorMod(fnv1a64(aggregate_id), B), computed in Java; §4.3
+    seq             BIGINT       NOT NULL,   -- per-aggregate causal sequence
+    payload         JSONB        NOT NULL,   -- BYTEA when a binary serializer is used (§5.2)
     status          SMALLINT     NOT NULL DEFAULT 0,
     -- 0 = PENDING, 1 = IN_FLIGHT, 2 = DONE, 3 = FAILED, 4 = DISCARDED
-    locked_by       VARCHAR(64),
-    locked_until    TIMESTAMPTZ,
-    attempts        INT          NOT NULL DEFAULT 0,
-    last_error      TEXT,
-    next_attempt_at TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    UNIQUE (aggregate_id, seq)
+    -- … plus type, headers, the delivery-state columns (locked_by, locked_until, attempts,
+    -- replays, last_error, next_attempt_at, created_at) and the operator-facing
+    -- discard_reason / correlation_id — all of them described in §5.2
+    UNIQUE (aggregate_id, seq)               -- the per-aggregate ordering safety net (§4.2)
 );
-
--- Partial index for bucket polling (only PENDING rows), by bucket then id
-CREATE INDEX idx_tandem_outbox_dispatch
-    ON tandem_outbox (bucket, id)
-    WHERE status = 0;
-
--- Index for the head-of-chain / poison check per aggregate (§6, E2)
-CREATE INDEX idx_tandem_outbox_aggregate
-    ON tandem_outbox (aggregate_id, id)
-    WHERE status IN (0, 1, 3);
-
--- Index for the periodic lease-reclaim (status = 1 AND locked_until < now()); partial on
--- IN_FLIGHT only, so it stays tiny and the ~5s reclaim scans expired leases, not the whole table
-CREATE INDEX idx_tandem_outbox_inflight
-    ON tandem_outbox (locked_until)
-    WHERE status = 1;
-
--- Index for the metrics tick's two readings over FAILED rows (failed.count, and the blocked.count
--- grouping); partial on FAILED only, so it is normally empty and costs nothing
-CREATE INDEX idx_tandem_outbox_failed
-    ON tandem_outbox (aggregate_id, id)
-    WHERE status = 3;
 ```
+
+**Indexes.** All but one are **partial**, which is the design decision worth recording: each serves a
+query the relay or the metrics tick runs constantly, and restricting it to the relevant status keeps
+it small even as `DONE` rows accumulate between cleanup passes.
+
+| Index | Serves | Restricted to |
+|---|---|---|
+| `idx_tandem_outbox_dispatch` | the bucket poll, by bucket then id | `PENDING` |
+| `idx_tandem_outbox_aggregate` | the head-of-chain / poison check per aggregate (§6, E2) | `PENDING`, `IN_FLIGHT`, `FAILED` |
+| `idx_tandem_outbox_inflight` | the ~5 s lease-reclaim over expired leases | `IN_FLIGHT` |
+| `idx_tandem_outbox_failed` | the metrics tick's `failed.count` and `blocked.count` readings | `FAILED` |
+| `idx_tandem_outbox_correlation` | the Admin API's incident-time search by correlation id | *(not partial — see below)* |
+
+The correlation index is deliberately **not** partial and not an expression index over `headers`,
+even though `(correlation_id) WHERE correlation_id IS NOT NULL` would be smaller: a plain B-tree on a
+real column ports to MySQL 8 unchanged, where partial and expression indexes are unavailable and
+would need a generated-column workaround (§5.4, LLD-jdbc §5).
 
 ### 5.2 Column Semantics
 
@@ -475,9 +468,11 @@ CREATE INDEX idx_tandem_outbox_failed
 | `locked_until` | Lease expiry timestamp; if elapsed, another worker can reclaim the row |
 | `attempts` | Publish attempts in the **current** delivery round; used for backoff and max-retry threshold. Reset by a replay — for the lifetime count of operator replays see `replays` |
 | `replays` | How many times an operator has replayed this row, `0` if never. Survives a replay (unlike `attempts`), giving the audit trail on the row and letting the relay tell a replay from a write-side ordering violation (§8) |
-| `last_error` | Error message from the last failed attempt; operational diagnostics |
+| `last_error` | Error message from the last failed attempt; operational diagnostics. Read by nothing functional — only by the operator through the Admin API, which is why a replay keeps it (§8) |
 | `next_attempt_at` | Earliest timestamp for the next retry (exponential backoff) |
 | `created_at` | Insertion timestamp; used for lag age metrics and partition cleanup |
+| `discard_reason` | Operator-supplied reason recorded when the Admin API discards a `FAILED` row (HLD-admin-api §6.1). Distinct from `last_error`, which stays the original delivery failure — the two answer different questions and neither overwrites the other |
+| `correlation_id` | Searchable copy of `headers['correlation-id']`, in its own indexed column so the list view can return it without reading the JSONB (HLD-tracing §4). `headers` stays the source of truth for what reaches Kafka. `NULL` for rows written with tracing off. Bounded length on purpose: the value typically arrives from outside the application, so it is untrusted input and must not widen an index without limit |
 
 ### 5.3 Status State Machine
 
@@ -531,6 +526,34 @@ the aggregate. It is otherwise immutable (subject to the same cleanup/retention 
 MySQL 8 supports `SKIP LOCKED`, and the `bucket` is computed in Java (§4.3), so it is identical on MySQL with no DB-specific hash function. The type mappings are mechanical: `GENERATED ALWAYS AS IDENTITY` → `BIGINT AUTO_INCREMENT`, `JSONB` → `JSON`, `TIMESTAMPTZ` → `DATETIME(3)`/`TIMESTAMP(3)`, and partial indexes are unsupported (replaced by a full index with `status` as the leading column).
 
 Two differences are architectural rather than mechanical. Both were established by experiment against MySQL 8.4; [LLD-jdbc §5](LLD-jdbc.md) specifies the port in full, including the measurements. First, MySQL has no `UPDATE … RETURNING`, so the claim cannot remain the single atomic statement it is on PostgreSQL — it becomes a locking `SELECT` plus an `UPDATE` inside one explicit transaction, the only operation in the design that spans more than one statement (Q9). Second, **the relay must run at `READ COMMITTED`**: under MySQL's `REPEATABLE READ` default the claim's head-of-chain check takes a lock on every row it examines, across all buckets rather than the worker's own, and four workers measured **37% slower than one** — negative scaling, with no deadlock, no timeout and no error to reveal it. PostgreSQL defaults to `READ COMMITTED`, which is why this requirement has been invisible so far: it is a property Tandem has always relied on, not a concession made for MySQL.
+
+### 5.5 The Other Tables Tandem Owns
+
+`tandem_outbox` is the one every deployment revolves around, but it is not the only table Tandem
+creates. The boundary matters as much as the contents: **Tandem writes only its own `tandem_*`
+tables and never a domain table** (§9 records the same rule for the causal-ordering clock).
+
+| Table | Present when | Purpose |
+|---|---|---|
+| `tandem_outbox` | always | §5.1 |
+| `tandem_meta` | always | Cross-cutting key/value settings and state, keyed by name |
+| `tandem_bucket_lease` | `LEASE` coordination only | Per-bucket ownership under a renewable lease (§3.2, §4.3) |
+| `tandem_relay_member` | `LEASE` coordination only | Relay-instance presence, so the fair-share split rebalances on a plain scale-up and not only on failover (§4.3) |
+| `tandem_aggregate_clock` | *(never — §9 is designed, not implemented; no clock table ships today)* | Lamport clock store, kept in a `tandem_*` table rather than on the client's aggregate row (§9) |
+
+**`tandem_meta` holds three keys today** — `bucket_count` (the single value the write-side and the
+relay must agree on), `relay_paused` (the whole-relay desired state the Admin API writes and every
+instance re-reads on its control tick), and `coordination` (`SINGLE` or `LEASE`, written by the relay
+at startup so the Admin API knows which per-bucket endpoints this deployment can answer). They share
+one key/value table rather than getting dedicated ones for a specific reason: **it is the only place
+a `SINGLE`-mode deployment can be reached at all.** `tandem_bucket_lease` exists only under `LEASE`,
+so a pause stored there would never reach a `SINGLE` relay — and a new table per setting would either
+duplicate this one or repeat that same mistake. The same table also carries the relay's
+liveness heartbeat, which is what lets the Admin API report a dead relay under either coordination
+mode (§7). It is deliberately **not** seeded: the bucket-count guard writes the row on first
+startup from whatever the operator configured, so a fresh database with a non-default `B` is correct
+without anyone editing the schema — unlike the lease table, whose row count must equal `B` and is
+therefore seeded.
 
 ---
 
