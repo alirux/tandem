@@ -39,10 +39,11 @@ resolved (or consciously deferred) to write correct per-module LLDs.
   (`tandem.admin.enabled`, `tandem.tracing.enabled`). The core
   `tandem.*` contract (outbox/relay/kafka) is specified in [LLD-spring-config.md](LLD-spring-config.md) §2;
   the feature-flag keys land with their own modules. *(tandem-spring-producer / tandem-spring-relay)*
-- [~] **Q7 (P2)** — **Schema migration strategy.** *Basic-round decided:* the baseline DDL
-  (`tandem_outbox` + indexes; `tandem_bucket_lease` for standalone) ships as a **hand-written,
-  versioned SQL script per DB** that the operator applies (LLD-jdbc §6, HLD §5.1); a migration tool
-  (Liquibase/Flyway) is **deferred**. *Still open (full):* conditional optional columns/tables
+- [~] **Q7 (P2)** — **Schema migration strategy.** *Decided:* the schema's source of truth is a
+  **Liquibase changelog per DB** that the operator applies (LLD-jdbc §6, HLD §5.1); the flat
+  `tandem-baseline.sql` is generated from it for operators who do not run Liquibase, and the library
+  still does not run migrations itself. Liquibase is build-time only and reaches no published module.
+  *Still open (full):* conditional optional columns/tables
   (`type`, `lamport`, relay-control); versioned schema contract for standalone
   relay/admin. **Must satisfy backward + forward compatibility (§1.4)** — additive scripts only. *(all)*
 

@@ -1,0 +1,28 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Tandem — PostgreSQL schema changelog (LLD-jdbc §6).
+
+      This changelog is the SOURCE OF TRUTH for the schema. The flat, ready-to-apply
+      ../tandem-baseline.sql is GENERATED from it (`./gradlew generateBaselineSql`) for operators
+      who do not run Liquibase; CI fails if the two drift apart, so never edit the generated file
+      by hand.
+
+      The library still does NOT run migrations itself — Tandem ships this changelog, the operator
+      applies it. Liquibase is a build-time tool here and is not a dependency of any published
+      module.
+
+      Each schema version is its own included file, appended never rewritten: a changeset that has
+      shipped is immutable, because an operator's DATABASECHANGELOG already records its checksum.
+
+      Adopting Liquibase on a database created from an earlier flat baseline: run
+      `liquibase changelog-sync` once to record the already-applied changesets, then `update`.
+    -->
+
+    <include file="v1-baseline.sql" relativeToChangelogFile="true"/>
+
+</databaseChangeLog>

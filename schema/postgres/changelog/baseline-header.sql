@@ -1,0 +1,19 @@
+-- Tandem — baseline schema (PostgreSQL)
+--
+-- GENERATED FILE — do not edit. Regenerate with `./gradlew generateBaselineSql`.
+-- The source of truth is changelog/db.changelog-master.xml; CI fails if this file drifts from it.
+--
+-- This is the ready-to-apply baseline DDL for an operator who does not run Liquibase (LLD-jdbc §6):
+-- apply it to an empty database and you have the complete current schema. Liquibase users point
+-- `liquibase update` at the changelog instead and get the same schema plus change tracking. Either
+-- way the library does NOT run migrations itself.
+--
+-- The schema is a long-lived contract shared by the client write-side, the relay, and the Admin API
+-- (possibly at different Tandem versions on the same DB), so it MUST evolve ADDITIVELY only: new
+-- optional/nullable columns, new indexes or tables — never a removal, rename, type change, or newly
+-- required column (HLD §1.4). Optional features (attempt archive, causal-ordering clock) ship their
+-- own separate DDL and are NOT part of this baseline.
+--
+-- Targets PostgreSQL 13+. For MySQL, see schema/mysql (pending Q28: partial-index workaround,
+-- type mappings). The `bucket` value is computed in Java by tandem-jdbc (engine-independent),
+-- so there is no DB-specific bucket/hash function to port.

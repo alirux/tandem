@@ -50,7 +50,7 @@ usable by an adopter to check their own adapter is reached.
 
 A Testcontainers helper (tagged `@Tag("integration")`) that:
 - starts a real **PostgreSQL** and a real **Kafka** (KRaft) container,
-- applies the committed **baseline DDL** ([`schema/postgres/tandem-baseline.sql`](../schema/postgres/tandem-baseline.sql); LLD-jdbc §1/§6),
+- applies the committed **baseline DDL** ([`schema/postgres/tandem-baseline.sql`](../schema/postgres/tandem-baseline.sql), generated from the changelog; LLD-jdbc §1/§6) — so every integration test also proves the generated schema applies to a real PostgreSQL,
 - exposes the `DataSource` + bootstrap servers and convenience factories for `JdbcOutboxRepository`,
   the `WorkerPool` relay, and a Kafka consumer,
 

@@ -409,6 +409,11 @@ Full mapping, content modes, Tandem extensions (`seq` / `lamport` / `causationid
 
 ### 5.1 Outbox Table (PostgreSQL)
 
+The authoritative artifact is the Liquibase changelog at `schema/postgres/changelog/`, from which the
+flat `schema/postgres/tandem-baseline.sql` an operator applies is generated (LLD-jdbc §6). Tandem
+ships the changelog and does not run migrations itself. The listing below shows the shape of the core
+table and its indexes; consult the changelog for the exact current definition.
+
 ```sql
 CREATE TABLE tandem_outbox (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

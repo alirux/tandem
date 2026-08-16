@@ -1,24 +1,14 @@
--- Tandem — baseline schema (PostgreSQL)
---
--- GENERATED FILE — do not edit. Regenerate with `./gradlew generateBaselineSql`.
--- The source of truth is changelog/db.changelog-master.xml; CI fails if this file drifts from it.
---
--- This is the ready-to-apply baseline DDL for an operator who does not run Liquibase (LLD-jdbc §6):
--- apply it to an empty database and you have the complete current schema. Liquibase users point
--- `liquibase update` at the changelog instead and get the same schema plus change tracking. Either
--- way the library does NOT run migrations itself.
---
--- The schema is a long-lived contract shared by the client write-side, the relay, and the Admin API
--- (possibly at different Tandem versions on the same DB), so it MUST evolve ADDITIVELY only: new
--- optional/nullable columns, new indexes or tables — never a removal, rename, type change, or newly
--- required column (HLD §1.4). Optional features (attempt archive, causal-ordering clock) ship their
--- own separate DDL and are NOT part of this baseline.
---
--- Targets PostgreSQL 13+. For MySQL, see schema/mysql (pending Q28: partial-index workaround,
--- type mappings). The `bucket` value is computed in Java by tandem-jdbc (engine-independent),
--- so there is no DB-specific bucket/hash function to port.
+--liquibase formatted sql
 
--- Changeset v1-baseline.sql::v1-create-tandem-outbox::tandem
+-- Schema version v1 — the baseline every Tandem deployment starts from.
+--
+-- Everything here has shipped and is IMMUTABLE: an operator's DATABASECHANGELOG already records the
+-- checksums, so a later schema change appends a new v<n> file instead of editing this one.
+--
+-- Only text INSIDE a changeset reaches the generated flat baseline, so every section heading and
+-- rationale below sits within the changeset it describes rather than between changesets.
+
+--changeset tandem:v1-create-tandem-outbox stripComments:false
 -- ---------------------------------------------------------------------------
 -- Core (always required)
 -- ---------------------------------------------------------------------------
@@ -47,7 +37,7 @@ CREATE TABLE tandem_outbox (
     UNIQUE (aggregate_id, seq)               -- per-aggregate ordering safety net (HLD §4.2)
 );
 
--- Changeset v1-baseline.sql::v1-create-tandem-meta::tandem
+--changeset tandem:v1-create-tandem-meta stripComments:false
 -- Cross-cutting Tandem metadata, keyed by name (LLD-bucket-count-guard §5). Three keys today:
 --   bucket_count  — the single value the write-side and the relay must agree on.
 --   relay_paused  — the whole-relay desired state the Admin API writes and every relay instance
@@ -71,19 +61,19 @@ CREATE TABLE tandem_meta (
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Changeset v1-baseline.sql::v1-create-index-dispatch::tandem
+--changeset tandem:v1-create-index-dispatch stripComments:false
 -- Partial index driving the bucket poll (only PENDING rows), by bucket then id.
 CREATE INDEX idx_tandem_outbox_dispatch
     ON tandem_outbox (bucket, id)
     WHERE status = 0;
 
--- Changeset v1-baseline.sql::v1-create-index-aggregate::tandem
+--changeset tandem:v1-create-index-aggregate stripComments:false
 -- Supports the head-of-chain / poison-gate NOT EXISTS check per aggregate (HLD §6; LLD-jdbc §3.3).
 CREATE INDEX idx_tandem_outbox_aggregate
     ON tandem_outbox (aggregate_id, id)
     WHERE status IN (0, 1, 3);
 
--- Changeset v1-baseline.sql::v1-create-index-inflight::tandem
+--changeset tandem:v1-create-index-inflight stripComments:false
 -- Supports the periodic lease-reclaim (LLD-jdbc §3.5): "status = 1 AND locked_until < now()", run
 -- every reclaimInterval (~5s) on every instance. Partial on IN_FLIGHT only, so it stays tiny (in-flight
 -- rows are transient and few) and the reclaim scans expired leases, not the whole table — which matters
@@ -92,7 +82,7 @@ CREATE INDEX idx_tandem_outbox_inflight
     ON tandem_outbox (locked_until)
     WHERE status = 1;
 
--- Changeset v1-baseline.sql::v1-create-index-failed::tandem
+--changeset tandem:v1-create-index-failed stripComments:false
 -- Supports the two metrics-tick readings over FAILED rows (LLD-jdbc §4): `failed.count`, and the
 -- `blocked.count` subquery that groups failures by aggregate. Both otherwise seq-scan the whole outbox
 -- on every tick, because no other index can answer "status = 3" alone. Partial on FAILED only, so it is
@@ -102,7 +92,7 @@ CREATE INDEX idx_tandem_outbox_failed
     ON tandem_outbox (aggregate_id, id)
     WHERE status = 3;
 
--- Changeset v1-baseline.sql::v1-create-index-correlation::tandem
+--changeset tandem:v1-create-index-correlation stripComments:false
 -- Supports the Admin API's search by correlation id (HLD-admin-api §4) — the incident-time lookup, where
 -- the correlation id is often the ONLY identifier an operator has (it comes from a log line, an alert or a
 -- customer ticket; the aggregate id is not known yet). A plain, non-partial B-tree on a real column rather
@@ -115,7 +105,7 @@ CREATE INDEX idx_tandem_outbox_failed
 CREATE INDEX idx_tandem_outbox_correlation
     ON tandem_outbox (correlation_id);
 
--- Changeset v1-baseline.sql::v1-create-tandem-bucket-lease::tandem
+--changeset tandem:v1-create-tandem-bucket-lease stripComments:false
 -- ---------------------------------------------------------------------------
 -- LEASE coordination mode only (multi-instance)
 --
@@ -139,12 +129,12 @@ CREATE TABLE tandem_bucket_lease (
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Changeset v1-baseline.sql::v1-seed-tandem-bucket-lease::tandem
+--changeset tandem:v1-seed-tandem-bucket-lease stripComments:false
 -- Seed one row per virtual bucket (default B = 256 → 0..255).
 INSERT INTO tandem_bucket_lease (bucket)
 SELECT generate_series(0, 255)::smallint;
 
--- Changeset v1-baseline.sql::v1-create-tandem-relay-member::tandem
+--changeset tandem:v1-create-tandem-relay-member stripComments:false
 -- Relay-instance membership (presence), decoupled from bucket ownership (LLD-jdbc §3.2). One row per
 -- live relay instance, renewed each heartbeat. Its purpose is fair-share correctness: an instance that
 -- currently owns ZERO buckets has no row in tandem_bucket_lease and would otherwise be invisible to
@@ -157,4 +147,3 @@ CREATE TABLE tandem_relay_member (
     lease_until  TIMESTAMPTZ  NOT NULL,      -- presence expiry; renewed on heartbeat
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
-

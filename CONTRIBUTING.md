@@ -131,6 +131,10 @@ adapter modules depend on `tandem-core`, never the reverse. See
 4. If the change affects a documented contract (REST API, DB schema, Kafka message format),
    update the relevant HLD/LLD alongside the code — see
    [docs/HLD.md §1.4](docs/HLD.md) for the compatibility rules any such change must satisfy.
+   A **DB schema** change is made in the Liquibase changelog under `schema/postgres/changelog/`,
+   never in `schema/postgres/tandem-baseline.sql` — that file is generated
+   (`./gradlew generateBaselineSql`) and `check` fails if it drifts. A changeset that has shipped
+   is immutable, so append a new one rather than editing it.
 5. Run `./gradlew check` locally before opening the PR.
 6. Open a pull request against `main` with a clear description of the change and why it's
    needed.

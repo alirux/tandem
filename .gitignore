@@ -6,6 +6,10 @@ build/
 # Site (assembled by site/build.sh from site/ + the images in docs/)
 site/_build/
 
+# Liquibase drops its applied-changeset history next to the changelog when run by hand from there
+# (the Gradle task keeps it under build/ instead)
+schema/**/databasechangelog.csv
+
 # IDE
 .idea/
 *.iml

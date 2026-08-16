@@ -748,15 +748,36 @@ The **baseline DDL** to create is `tandem_outbox` + its indexes (HLD §5.1) plus
 coordination mode (§3.2), `tandem_bucket_lease` + `tandem_relay_member` (§1). Optional features add
 their tables only when enabled.
 
-**Delivery (decided):** Tandem ships the baseline as a **hand-written, versioned SQL script per DB**
-that the operator applies; the library does not run migrations itself. The PostgreSQL baseline is
-committed at [`schema/postgres/tandem-baseline.sql`](../schema/postgres/tandem-baseline.sql) (core
-`tandem_outbox` + indexes, plus the `LEASE`-mode `tandem_bucket_lease` seeded for the default
-`B=256`). The MySQL script (`schema/mysql/…`) is **pending Q28** — the schema mapping it must follow
+**Delivery (decided):** the schema's source of truth is a **Liquibase changelog per DB**, committed at
+[`schema/postgres/changelog/`](../schema/postgres/changelog/); **the library does not run migrations
+itself** — Tandem ships the changelog, the operator applies it. Liquibase is a build-time tool only
+and is **not a dependency of any published module**: it never reaches an adopter's classpath, and the
+minimal-client-footprint rule (§1.3) is untouched.
+
+Two ways to consume it, both producing the same schema:
+
+- **Liquibase users** point `liquibase update` (or `spring.liquibase.change-log`) at
+  `db.changelog-master.xml` and get change tracking with it. The changelog ships **inside the
+  `tandem-jdbc` jar** under `tandem/schema/postgres/changelog/`, so it can be referenced as
+  `classpath:` without copying files out of the repository. That resource path is a published
+  contract — renaming it breaks every configuration that names it.
+- **Everyone else** applies the flat
+  [`schema/postgres/tandem-baseline.sql`](../schema/postgres/tandem-baseline.sql) to an empty
+  database, exactly as before. That file is **generated** from the changelog
+  (`./gradlew generateBaselineSql`) and must never be hand-edited; `check` regenerates and compares
+  it, so a changelog change that is not reflected there fails the build rather than drifting in
+  silence.
+
+A changeset that has shipped is **immutable** — an operator's `DATABASECHANGELOG` already records its
+checksum — so a schema change appends a new `v<n>` file rather than editing an existing one. Only text
+*inside* a changeset reaches the generated baseline, which is why the section headings and rationale
+live within the changesets they describe. Adopting Liquibase on a database created from an earlier
+flat baseline needs one `liquibase changelog-sync` to record the already-applied changesets.
+
+The MySQL changelog (`schema/mysql/…`) is **pending Q28** — the schema mapping it must follow
 (status-prefixed indexes, timestamp precision, bucket seeding) is specified in §5.4; the `bucket` is
-computed in Java so there is no DB bucket function to port. Wrapping the
-scripts in a migration tool (Liquibase/Flyway) is **deferred**.
-The scripts must stay **additive** across versions (§1.4).
+computed in Java so there is no DB bucket function to port.
+The schema must stay **additive** across versions (§1.4).
 
 ## 7. Manual wiring without Spring (basic round)
 
