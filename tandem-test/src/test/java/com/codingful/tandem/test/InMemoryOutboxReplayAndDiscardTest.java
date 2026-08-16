@@ -66,6 +66,27 @@ class InMemoryOutboxReplayAndDiscardTest {
         assertThat(replayed.status()).isEqualTo(OutboxStatus.PENDING);
         assertThat(replayed.attempts()).isZero();
         assertThat(replayed.lastError()).isEqualTo(LAST_FAILURE_REASON);   // the operator's only "why did it fail?"
+        assertThat(outbox.findById(id).orElseThrow().replays()).isEqualTo(1);
+    }
+
+    @Test
+    void GIVEN_a_row_replayed_repeatedly_WHEN_inspected_THEN_every_replay_is_counted() {
+        long id = insert("order-1");
+        ReplayCriteria criteria = new ReplayCriteria(AggregateId.of("order-1"), null, null, null, Set.of(), false);
+
+        outbox.markFailed(id, "boom");
+        outbox.replay(criteria);
+        outbox.markFailed(id, "boom again");
+        outbox.replay(criteria);
+
+        assertThat(outbox.findById(id).orElseThrow().replays()).isEqualTo(2);
+    }
+
+    @Test
+    void GIVEN_a_row_that_was_never_replayed_WHEN_inspected_THEN_its_replay_count_is_zero() {
+        long id = insert("order-1");
+
+        assertThat(outbox.findById(id).orElseThrow().replays()).isZero();
     }
 
     @Test

@@ -12,6 +12,9 @@ import java.util.Objects;
  * <p>{@code correlationId} is the one exception to "no header values in the list view": it is read
  * from its own indexed column, not from {@code headers}, precisely so an incident search can return
  * it without touching the JSONB (HLD-tracing §4). {@code null} for rows written with tracing off.
+ *
+ * <p>{@code replays} counts operator replays for the lifetime of the row, where {@code attempts} is
+ * only the delivery budget of the current round and a replay resets it (HLD §8).
  */
 public record OutboxRowView(
         long id,
@@ -21,6 +24,7 @@ public record OutboxRowView(
         long seq,
         OutboxStatus status,
         int attempts,
+        int replays,
         String lastError,
         String discardReason,
         Instant nextAttemptAt,

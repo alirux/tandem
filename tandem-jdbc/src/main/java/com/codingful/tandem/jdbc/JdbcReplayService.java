@@ -24,6 +24,9 @@ import javax.sql.DataSource;
  * {@code last_error} is deliberately <em>kept</em> — nothing branches on it, so clearing it would only
  * destroy the operator's answer to "why did this fail?" at the moment they are acting on it; a
  * {@code PENDING} row carrying a {@code last_error} is the same state {@code markForRetry} produces.
+ * {@code replays} is <em>incremented</em>, so the replay leaves a trace on the row rather than only in
+ * the admin log: {@code attempts} is the budget of the current delivery round and must reset, while
+ * the lifetime count of operator replays survives (HLD §8).
  * Honours {@code dryRun}.
  */
 public final class JdbcReplayService implements ReplayService {
@@ -109,7 +112,7 @@ public final class JdbcReplayService implements ReplayService {
 
     private static int resetToPending(Connection conn, String where, List<Object> params) throws SQLException {
         String sql = "UPDATE tandem_outbox"
-                + "   SET status = 0, attempts = 0, next_attempt_at = NULL,"
+                + "   SET status = 0, attempts = 0, replays = replays + 1, next_attempt_at = NULL,"
                 + "       locked_by = NULL, locked_until = NULL"
                 + " WHERE " + where;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {

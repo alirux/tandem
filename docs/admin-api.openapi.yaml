@@ -623,6 +623,14 @@ components:
           $ref: '#/components/schemas/OutboxStatus'
         attempts:
           type: integer
+        replays:
+          type: integer
+          description: >
+            How many times an operator has replayed this message, 0 for one never replayed. Unlike
+            attempts, which is the delivery budget of the current round and is reset by a replay,
+            this counts for the lifetime of the row - it is the audit trail of a replay on the row
+            itself, rather than only in the admin log. Deliberately NOT required: an admin instance
+            older than this field simply omits it, which a mixed-version rollout must tolerate.
         lastError:
           type: string
           nullable: true

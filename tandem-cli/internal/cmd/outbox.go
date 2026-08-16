@@ -198,6 +198,11 @@ func entryPairs(_ *App, e client.OutboxEntry) [][2]string {
 		{"attempts", fmt.Sprint(e.Attempts)},
 		{"createdAt", e.CreatedAt.Format(time.RFC3339)},
 	}
+	// Shown whenever the server reports it, zero included: "replays 0" means this message was never
+	// replayed, while the line being absent means the admin instance predates the field.
+	if e.Replays != nil {
+		pairs = append(pairs, [2]string{"replays", fmt.Sprint(*e.Replays)})
+	}
 	if e.Type != nil {
 		pairs = append(pairs, [2]string{"type", *e.Type})
 	}

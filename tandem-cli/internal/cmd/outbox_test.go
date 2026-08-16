@@ -200,10 +200,26 @@ func TestOutboxGet_rendersTypeLastErrorDiscardReasonCorrelationIdAndLockedByWhen
 		"discardReason:", "poison message",
 		"lockedBy:", "worker-3",
 		"correlationId:", "incident-corr",
+		"replays:", "2",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, missing %q", stdout, want)
 		}
+	}
+}
+
+// An admin instance older than the replays field omits it, and the CLI must stay readable against
+// one rather than printing a zero it never received.
+func TestOutboxGet_omitsReplaysWhenTheServerDoesNotReportIt(t *testing.T) {
+	server := newFixtureServer(t, map[string]route{
+		"GET /outbox/messages/1": {200, "outbox_entry.json"},
+	})
+	stdout, _, code := execute(t, server.URL, "outbox", "get", "1")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stdout=%q", code, stdout)
+	}
+	if strings.Contains(stdout, "replays") {
+		t.Errorf("stdout = %q, must not report replays when the response carries none", stdout)
 	}
 }
 

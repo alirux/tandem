@@ -64,6 +64,43 @@ class JdbcReplayServiceIT extends AbstractPostgresIT {
         assertThat(statusOf(1)).isEqualTo(OutboxStatus.PENDING.code());
         assertThat(attemptsOf(1)).isZero();
         assertThat(lastErrorOf(1)).isEqualTo(LAST_FAILURE_REASON);   // the operator's only "why did it fail?"
+        assertThat(replaysOf(1)).isEqualTo(1);   // the attempt budget resets, the replay history does not
+    }
+
+    @Test
+    void GIVEN_a_row_replayed_repeatedly_WHEN_inspected_THEN_every_replay_is_counted() {
+        // "Replayed twice" is a different story from "replayed once" when reconstructing an incident,
+        // so the row carries a count rather than a flag.
+        insert("order-1", 1);
+        setStatus(1, OutboxStatus.FAILED, 5);
+        ReplayCriteria criteria = new ReplayCriteria(AggregateId.of("order-1"), null, null, null, Set.of(), false);
+
+        replay.replay(criteria);
+        setStatus(1, OutboxStatus.FAILED, 5);
+        replay.replay(criteria);
+        setStatus(1, OutboxStatus.FAILED, 5);
+        replay.replay(criteria);
+
+        assertThat(replaysOf(1)).isEqualTo(3);
+    }
+
+    @Test
+    void GIVEN_a_replay_that_only_counts_matches_WHEN_it_completes_THEN_no_replay_is_recorded_on_the_row() {
+        insert("order-1", 1);
+        setStatus(1, OutboxStatus.FAILED, 5);
+
+        ReplayResult result = replay.replay(new ReplayCriteria(
+                AggregateId.of("order-1"), null, null, null, Set.of(), true));
+
+        assertThat(result.matched()).isEqualTo(1);
+        assertThat(replaysOf(1)).isZero();   // a dry run must leave the row exactly as it found it
+    }
+
+    @Test
+    void GIVEN_a_row_that_was_never_replayed_WHEN_inspected_THEN_its_replay_count_is_zero() {
+        insert("order-1", 1);
+
+        assertThat(replaysOf(1)).isZero();
     }
 
     @Test
@@ -145,6 +182,10 @@ class JdbcReplayServiceIT extends AbstractPostgresIT {
 
     private static int attemptsOf(long id) {
         return intColumn("SELECT attempts FROM tandem_outbox WHERE id = ?", id);
+    }
+
+    private static int replaysOf(long id) {
+        return intColumn("SELECT replays FROM tandem_outbox WHERE id = ?", id);
     }
 
     private static String lastErrorOf(long id) {

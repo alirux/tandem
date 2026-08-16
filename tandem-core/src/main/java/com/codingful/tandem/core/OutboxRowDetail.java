@@ -56,6 +56,10 @@ public record OutboxRowDetail(OutboxRowView view, byte[] payload, Map<String, St
         return view.attempts();
     }
 
+    public int replays() {
+        return view.replays();
+    }
+
     public String lastError() {
         return view.lastError();
     }

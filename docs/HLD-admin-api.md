@@ -106,6 +106,12 @@ contract rather than published unimplemented — [HLD-attempt-archive.md](HLD-at
   "security is the host's responsibility" above. Reads are not logged: an operator's own
   dashboard polling `GET /relay/status` every few seconds would otherwise flood the log with
   traffic that never mutates anything.
+  **Replay additionally leaves its trace on the row**, via the `replays` counter the reset
+  increments and `OutboxEntry.replays` exposes (HLD §8). The log alone was not enough for this one
+  operation: it lives in a different process from the database an operator inspects, and rotates —
+  so a row that had been replayed was indistinguishable from one that never was, which is exactly
+  what the audit-trail argument for this API rules out. The field is deliberately **not** `required`
+  in the contract, so an admin instance older than it simply omits it during a mixed-version rollout.
 - **Configurable base path + versioned** — a configurable base (default `/tandem/admin`)
   plus a fixed major-version segment `/v1`, so the effective default is `/tandem/admin/v1`.
   A breaking change ships under `/v2` alongside `/v1` (matching the semver release rule in

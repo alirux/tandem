@@ -120,8 +120,11 @@ type OutboxEntry struct {
 
 	// Payload Present only in single-message detail, omitted in list view
 	Payload *OutboxEntry_Payload `json:"payload,omitempty"`
-	Seq     int64                `json:"seq"`
-	Status  OutboxStatus         `json:"status"`
+
+	// Replays How many times an operator has replayed this message, 0 for one never replayed. Unlike attempts, which is the delivery budget of the current round and is reset by a replay, this counts for the lifetime of the row - it is the audit trail of a replay on the row itself, rather than only in the admin log. Deliberately NOT required: an admin instance older than this field simply omits it, which a mixed-version rollout must tolerate.
+	Replays *int         `json:"replays,omitempty"`
+	Seq     int64        `json:"seq"`
+	Status  OutboxStatus `json:"status"`
 
 	// Type CloudEvents event type, e.g. com.acme.order.placed (nullable; HLD §5.1)
 	Type *string `json:"type,omitempty"`

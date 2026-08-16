@@ -24,5 +24,6 @@
     -->
 
     <include file="v1-baseline.sql" relativeToChangelogFile="true"/>
+    <include file="v2-replays.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -12,7 +12,8 @@ class OutboxRowDetailTest {
     private static OutboxRowView view() {
         return new OutboxRowView(
                 1L, AggregateId.of("order-1"), "Order", "com.acme.order.placed", 1,
-                OutboxStatus.DONE, 1, null, null, null, null, null, Instant.parse("2026-08-01T00:00:00Z"), null);
+                OutboxStatus.DONE, 1, 0, null, null, null, null, null,
+                Instant.parse("2026-08-01T00:00:00Z"), null);
     }
 
     @Test

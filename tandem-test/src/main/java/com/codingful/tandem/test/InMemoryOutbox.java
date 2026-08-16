@@ -66,10 +66,17 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
 
     static final String LEASE_EXPIRED_ERROR = "lease expired (worker crash or stall) before ack";
 
-    /** One stored row: the immutable {@link OutboxRecord} plus the bucket it hashed into. */
+    /**
+     * One stored row: the immutable {@link OutboxRecord} plus the bucket it hashed into and the
+     * lifetime replay count. {@code replays} is held here rather than on {@link OutboxRecord} for the
+     * same reason the JDBC adapter keeps it out of the claim query: the relay never reads it, and a
+     * field on the record would hand a claimed row a {@code replays} of 0 that looks authoritative
+     * and is not.
+     */
     private static final class Entry {
         OutboxRecord record;
         final int bucket;
+        int replays;
 
         Entry(OutboxRecord record, int bucket) {
             this.record = record;
@@ -457,7 +464,7 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                 if (!matches(r, criteria)) {
                     continue;
                 }
-                out.add(toRowView(r));
+                out.add(toRowView(entry));
             }
             return out;
         }
@@ -467,7 +474,7 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
     public Optional<OutboxRowDetail> findById(long id) {
         synchronized (lock) {
             Entry e = rows.get(id);
-            return e == null ? Optional.empty() : Optional.of(toRowDetail(e.record));
+            return e == null ? Optional.empty() : Optional.of(toRowDetail(e));
         }
     }
 
@@ -496,11 +503,12 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
         return criteria.createdTo() == null || !r.createdAt().isAfter(criteria.createdTo());
     }
 
-    private static OutboxRowView toRowView(OutboxRecord r) {
+    private static OutboxRowView toRowView(Entry e) {
+        OutboxRecord r = e.record;
         return new OutboxRowView(
                 r.id(), r.aggregateId(), r.aggregateType(), r.type(), r.seq(), r.status(), r.attempts(),
-                r.lastError(), r.discardReason(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(), r.createdAt(),
-                correlationIdOf(r));
+                e.replays, r.lastError(), r.discardReason(), r.nextAttemptAt(), r.lockedBy(), r.lockedUntil(),
+                r.createdAt(), correlationIdOf(r));
     }
 
     /**
@@ -512,8 +520,8 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
         return r.headers().get(TandemHeaders.CORRELATION_ID);
     }
 
-    private static OutboxRowDetail toRowDetail(OutboxRecord r) {
-        return new OutboxRowDetail(toRowView(r), r.payload(), r.headers());
+    private static OutboxRowDetail toRowDetail(Entry e) {
+        return new OutboxRowDetail(toRowView(e), e.record.payload(), e.record.headers());
     }
 
     // --- ReplayService (Admin API, slice 2) ---
@@ -543,6 +551,7 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                         .lockedBy(null)
                         .lockedUntil(null)
                         .build();
+                entry.replays++;   // attempts resets, the lifetime replay count does not (HLD §8)
             }
             return new ReplayResult(matched.size(), matched.size(), false);
         }

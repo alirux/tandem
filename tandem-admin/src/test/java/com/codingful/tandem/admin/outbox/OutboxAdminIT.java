@@ -123,6 +123,9 @@ class OutboxAdminIT {
         mockMvc.perform(post("/tandem/admin/v1/outbox/messages/{id}/replay", id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PENDING"))
+                // The replay is visible on the row the operator gets back, not only in the admin log.
+                .andExpect(jsonPath("$.replays").value(1))
+                .andExpect(jsonPath("$.attempts").value(0))
                 .andExpect(OpenApiConformance.conformsToOpenApi());
     }
 

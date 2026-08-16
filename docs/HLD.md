@@ -473,7 +473,8 @@ CREATE INDEX idx_tandem_outbox_failed
 | `status` | State machine: `PENDING → IN_FLIGHT → DONE` / `FAILED`; `FAILED → DISCARDED` (admin only). See §5.3 |
 | `locked_by` | Worker identity (e.g. `worker-0@hostname`); enables lease-based failover |
 | `locked_until` | Lease expiry timestamp; if elapsed, another worker can reclaim the row |
-| `attempts` | Total publish attempts; used for backoff and max-retry threshold |
+| `attempts` | Publish attempts in the **current** delivery round; used for backoff and max-retry threshold. Reset by a replay — for the lifetime count of operator replays see `replays` |
+| `replays` | How many times an operator has replayed this row, `0` if never. Survives a replay (unlike `attempts`), giving the audit trail on the row and letting the relay tell a replay from a write-side ordering violation (§8) |
 | `last_error` | Error message from the last failed attempt; operational diagnostics |
 | `next_attempt_at` | Earliest timestamp for the next retry (exponential backoff) |
 | `created_at` | Insertion timestamp; used for lag age metrics and partition cleanup |
@@ -790,14 +791,16 @@ Replay resets DONE or FAILED rows back to PENDING, causing the relay to re-proce
 ```sql
 -- Replay a specific aggregate, optional ID range
 UPDATE tandem_outbox
-   SET status = 0, attempts = 0, next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
+   SET status = 0, attempts = 0, replays = replays + 1,
+       next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
  WHERE aggregate_id = ?
    AND id BETWEEN :from_id AND :to_id
    AND status IN (2, 3);   -- DONE or FAILED
 
 -- Replay all FAILED rows for an aggregate type
 UPDATE tandem_outbox
-   SET status = 0, attempts = 0, next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
+   SET status = 0, attempts = 0, replays = replays + 1,
+       next_attempt_at = NULL, locked_by = NULL, locked_until = NULL
  WHERE aggregate_type = ?
    AND status = 3;
 ```
@@ -810,6 +813,28 @@ UPDATE tandem_outbox
 > the answer to *"why did this fail?"* for the very person who just replayed the row to fix it, and
 > for good if the replay succeeds. A `PENDING` row carrying a `last_error` is not a new state shape
 > either — it is exactly what a retriable failure already produces (§7).
+
+> **`replays` records that the replay happened.** The Admin API exists in part because replay mutates
+> delivery state and therefore needs an **audit trail** (HLD-admin-api §4) — but that trail used to be
+> a single log line in a separate process, so the row an operator actually inspects said nothing. A
+> replayed row and one that was never replayed were byte-identical. `replays` is that promise kept, on
+> the row itself: it counts operator replays for the **lifetime** of the row, where `attempts` is only
+> the budget of the current delivery round and must reset. It is counted rather than flagged because
+> "replayed twice" is a materially different story from "replayed once" when reconstructing an
+> incident. Additive and `NOT NULL DEFAULT 0`, so existing rows read as never-replayed with no
+> backfill; **the relay's claim query does not select it**, so a relay older than the column keeps
+> working against a migrated database unchanged (§1.4).
+>
+> This is also what makes a write-side ordering violation distinguishable from a legitimate replay.
+> The relay can detect that it published an aggregate's events in non-ascending `seq` order, but the
+> two causes present identically on the row — so a detector that reads `seq` alone raises an incident
+> during the very replay an operator is running to recover from one. With `replays` on the row the
+> detector disambiguates: on `seq < the last seq published for that aggregate`, a single primary-key
+> lookup of `replays` separates a replayed row (suppress) from a genuine regression (alert). Two
+> constraints on such a detector, both easy to get wrong: it must **not lower the watermark** for a
+> suppressed row, or a later genuine regression goes unseen; and `replays > 0` suppresses that row
+> permanently, since a row that has been replayed is no longer a reliable witness to the original
+> write order.
 
 Tandem exposes a `ReplayService` API (in `tandem-core`) that wraps these queries with parameter validation.
 
