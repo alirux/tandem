@@ -385,6 +385,64 @@
       ]
     },
     {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Events published out of order",
+      "description": "tandem.outbox.seq_regression.count \u2014 the relay published an aggregate's events with a seq lower than one it had already sent, so writers to that aggregate are not serialised (HLD \u00a74.2). Operator replays are excluded, so anything above zero is a write-side bug, not a recovery action. This is the only place the violation is ever visible: the rows are left in perfect order in the table, so no query finds it afterwards \u2014 only the relay, as it publishes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tandem-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          },
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(tandem_outbox_seq_regression_count_total)",
+          "legendFormat": "out of order"
+        }
+      ]
+    },
+    {
       "id": 102,
       "type": "row",
       "title": "Is the relay itself healthy?",
@@ -392,7 +450,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "collapsed": false,
       "panels": []
@@ -410,7 +468,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -451,7 +509,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -505,7 +563,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 51
+        "y": 59
       },
       "fieldConfig": {
         "defaults": {
@@ -563,7 +621,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 51
+        "y": 59
       },
       "fieldConfig": {
         "defaults": {
@@ -604,7 +662,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 59
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -648,7 +706,7 @@
         "h": 5,
         "w": 12,
         "x": 12,
-        "y": 59
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {

@@ -13,7 +13,7 @@ class TandemRelayConfigMappingTest {
 
     private static TandemRelayProperties allUnset() {
         return new TandemRelayProperties(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -29,6 +29,7 @@ class TandemRelayConfigMappingTest {
         assertThat(config.cleanupInterval()).isEqualTo(defaults.cleanupInterval());
         assertThat(config.metricsInterval()).isEqualTo(defaults.metricsInterval());
         assertThat(config.logEveryRows()).isEqualTo(defaults.logEveryRows());
+        assertThat(config.seqRegressionDetection()).isEqualTo(defaults.seqRegressionDetection());
         assertThat(config.bucketCount()).isEqualTo(256);
     }
 
@@ -37,7 +38,7 @@ class TandemRelayConfigMappingTest {
         TandemRelayProperties relay = new TandemRelayProperties(
                 Coordination.LEASE, "relay-1", Duration.ofSeconds(45), 8, Duration.ofMillis(250),
                 50, Duration.ofSeconds(90), 5, Duration.ofDays(7), 500, Duration.ofSeconds(10),
-                Duration.ofMinutes(30), Duration.ofSeconds(30), 5_000L);
+                Duration.ofMinutes(30), Duration.ofSeconds(30), 5_000L, false);
 
         RelayConfig config = TandemRelayAutoConfiguration.buildRelayConfig(OUTBOX, relay);
 
@@ -55,5 +56,6 @@ class TandemRelayConfigMappingTest {
         assertThat(config.cleanupInterval()).isEqualTo(Duration.ofMinutes(30));
         assertThat(config.metricsInterval()).isEqualTo(Duration.ofSeconds(30));
         assertThat(config.logEveryRows()).isEqualTo(5_000L);
+        assertThat(config.seqRegressionDetection()).isFalse();
     }
 }

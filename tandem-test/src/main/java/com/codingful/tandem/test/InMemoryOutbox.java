@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
@@ -380,6 +381,16 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                 }
             }
             return OptionalLong.of(blocked);
+        }
+    }
+
+    @Override
+    public OptionalInt replaysOf(long id) {
+        synchronized (lock) {
+            Entry e = rows.get(id);
+            // Empty for an unknown row, mirroring the JDBC adapter: cleanup can delete a DONE row
+            // between the ack and this lookup, and an absent row cannot be shown not to have been replayed.
+            return e == null ? OptionalInt.empty() : OptionalInt.of(e.replays);
         }
     }
 

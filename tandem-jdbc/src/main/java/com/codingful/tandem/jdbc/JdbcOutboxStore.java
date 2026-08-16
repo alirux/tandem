@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import javax.sql.DataSource;
@@ -114,6 +115,11 @@ public final class JdbcOutboxStore implements OutboxStore {
                     + "        WHERE status = 3 GROUP BY aggregate_id) f"
                     + "   ON f.aggregate_id = o.aggregate_id AND o.id > f.first_failed_id"
                     + " WHERE o.status = 0";
+
+    // The seq-regression discriminator (HLD §8), read by primary key and only after the relay has
+    // already seen a seq go backwards — never part of CLAIM_SQL's projection, which is what keeps this
+    // column off the hot path and a pre-column relay working against a migrated database (§1.4).
+    private static final String REPLAYS_SQL = "SELECT replays FROM tandem_outbox WHERE id = ?";
 
     private static final String CLEANUP_SQL =
             "DELETE FROM tandem_outbox"
@@ -269,6 +275,21 @@ public final class JdbcOutboxStore implements OutboxStore {
             return OptionalLong.of(rs.getLong(1));
         } catch (SQLException e) {
             throw new TandemException("blockedCount failed", e);
+        }
+    }
+
+    @Override
+    public OptionalInt replaysOf(long id) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(REPLAYS_SQL)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                // Empty when the row is gone — cleanup can delete a DONE row between the ack and this
+                // lookup, and an absent row cannot be shown not to have been replayed.
+                return rs.next() ? OptionalInt.of(rs.getInt(1)) : OptionalInt.empty();
+            }
+        } catch (SQLException e) {
+            throw new TandemException("replaysOf failed for id " + id, e);
         }
     }
 

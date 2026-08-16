@@ -74,6 +74,15 @@ tandem:
     # combined), independent of any metrics adapter. Default: 10000.
     # log-every-rows: 10000
 
+    # tandem.relay.seq-regression-detection — whether the relay watches the seq order it actually
+    # publishes per aggregate and reports a violated write-side ordering precondition (an ERROR log
+    # plus the seq-regression counter). On by default, because that violation is otherwise
+    # completely silent. Turn it off where writers to one aggregate are serialised by construction:
+    # detection is bounded and therefore partial (a relay restart, or eviction past the 4096
+    # most-recently-published aggregates of a worker, loses the watermark), and it holds one entry per
+    # tracked aggregate per worker. Default: true.
+    # seq-regression-detection: true
+
   # ----------------------------------------------------------------------------------------------
   # tandem.metrics — the tandem-micrometer adapter. Only takes effect when Micrometer and a
   # MeterRegistry bean are on the classpath; a no-op TandemMetrics otherwise ignores these.

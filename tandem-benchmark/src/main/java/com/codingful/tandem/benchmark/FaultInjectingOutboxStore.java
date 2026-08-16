@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -90,5 +91,13 @@ final class FaultInjectingOutboxStore implements OutboxStore {
     @Override
     public OptionalLong blockedCount() {
         return delegate.blockedCount();
+    }
+
+    // Must be forwarded like every other optional reading above: the port's default answers "unknown",
+    // and the relay reads unknown as "cannot rule out a replay", which switches seq-regression detection
+    // off entirely for anything running behind this decorator.
+    @Override
+    public OptionalInt replaysOf(long id) {
+        return delegate.replaysOf(id);
     }
 }

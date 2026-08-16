@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -99,5 +100,23 @@ public interface OutboxStore {
      */
     default OptionalLong blockedCount() {
         return OptionalLong.empty();
+    }
+
+    /**
+     * How many times an operator has replayed one row, by primary key — the discriminator that tells a
+     * write-side ordering violation from a legitimate replay (HLD §8).
+     *
+     * <p>Deliberately a <b>separate single-row lookup</b> rather than a column on the claimed record:
+     * the relay reads it only when it has already seen a {@code seq} go backwards for an aggregate,
+     * which is rare by definition, so the hot claim query stays untouched — and a relay older than the
+     * column keeps working against a migrated database (§1.4). Do not "simplify" this by folding
+     * {@code replays} into {@code claimBatch}'s projection.
+     *
+     * @param id the row's primary key
+     * @return the lifetime replay count, or empty if the row is gone or this store does not record it
+     *         — the relay then raises nothing, since it cannot rule out a replay
+     */
+    default OptionalInt replaysOf(long id) {
+        return OptionalInt.empty();
     }
 }

@@ -71,6 +71,14 @@ class MicrometerTandemMetricsTest {
     }
 
     @Test
+    void GIVEN_out_of_order_publishes_detected_WHEN_read_THEN_the_counter_accumulates_them() {
+        metrics.incrementSeqRegression();
+        metrics.incrementSeqRegression();
+
+        assertThat(registry.get("tandem.outbox.seq_regression.count").counter().count()).isEqualTo(2);
+    }
+
+    @Test
     void GIVEN_active_workers_and_uncovered_buckets_reported_WHEN_read_THEN_each_gauge_reflects_its_own_value() {
         metrics.recordActiveWorkers(8);
         metrics.recordUncoveredBuckets(3);

@@ -405,9 +405,10 @@ with a provisioned datasource and the committed dashboard. **One exporter per in
 `workers.active` is per-instance while `lag.count` is a global reading every instance reports, so a
 single shared registry would silently collapse the first kind to whichever instance wrote last.
 
-Eight scripted phases walk the relay through the states each meter exists to reveal: a backlog with no
-relay behind it, a drain, steady load, an aggregate that fails, a second instance joining, that
-instance's worker getting stuck without crashing, a genuine crash with rows still in flight, recovery.
+Nine scripted phases walk the relay through the states each meter exists to reveal: a backlog with no
+relay behind it, a drain, steady load, an aggregate that fails, two unserialised writers to one
+aggregate, a second instance joining, that instance's worker getting stuck without crashing, a genuine
+crash with rows still in flight, recovery.
 `tandem.relay.config.invalid` is the one meter not driven — it fires once and aborts the process by
 design (LLD-micrometer §4), leaving nothing for a scraper to read.
 
@@ -424,6 +425,26 @@ all could put rows in the state lease reclaim needs to see:
 `STALL` is what finally exercised the reclaim path: §8.1 records that S5's interesting case
 (`reclaimed > 0`) had never fired across runs, because a dispatch that merely fails releases its row
 long before any crash. A dispatch that hangs does not.
+
+**`seq_regression.count` is the one phase that provokes nothing at all — it stages a real bug.**
+`OutOfOrderWriter` writes two events for one aggregate from two concurrent transactions and commits the
+later `seq` first, holding the earlier one open while the relay publishes. No fault injector is
+involved and nothing is simulated: both events go through the real `JdbcOutboxRepository`, and the
+inversion comes from where it comes from in production — `id` assigned at INSERT, visibility decided at
+COMMIT. It is deliberately not a `Fault`, because it is not a relay failure to inject; it is a
+*write-side* precondition violation (HLD §4.2), and the point of the phase is that the relay is the
+only thing that can see it. It uses a dedicated aggregate id outside the generator's universe so it
+owns its own `seq` numbering, and reuses `TransactionalUnitOfWork` (one instance per thread, each
+binding its own connection) rather than duplicating the no-close connection proxy.
+
+> **A real defect this phase caught on its first run, worth keeping.** The demo showed a flat zero:
+> `FaultInjectingOutboxStore` forwards every `OutboxStore` method to the delegate *except* the newly
+> added `replaysOf`, so it silently fell back to the port default — "unknown" — which the relay reads
+> as "cannot rule out a replay" and therefore suppresses. Detection was off for everything running
+> behind the decorator, with no error anywhere. Any delegating `OutboxStore` has the same trap, and
+> nothing in the type system catches it, since the default makes the method optional to override. The
+> fix is one forwarding method; the lesson is that this class of signal cannot be verified by unit
+> tests alone, which is what the phase is for.
 
 **A fourth fault, on a different axis entirely, was needed for `workers.cycle_age_seconds` (LLD-jdbc
 §3.8) — and none of the three above could reach it.** Every `Fault` above acts on the *dispatch* path,

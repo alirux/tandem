@@ -121,6 +121,9 @@ public class TandemRelayAutoConfiguration {
         if (relay.logEveryRows() != null) {
             builder.logEveryRows(relay.logEveryRows());
         }
+        if (relay.seqRegressionDetection() != null) {
+            builder.seqRegressionDetection(relay.seqRegressionDetection());
+        }
         return builder.build();
     }
 

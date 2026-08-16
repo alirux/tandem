@@ -145,11 +145,11 @@ a growing red `FAILED` bar catches the eye without reading the number.
 See [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md) for the full command reference.
 
 To see the relay's own metrics rather than take them on faith, `tandem-benchmark`'s
-`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through eight
-scripted phases — no relay running, a drain, steady load, a failing aggregate, a second instance
-joining, that instance's worker getting stuck without crashing, a crash with rows in flight,
-recovery — and holds the dashboard open so every signal `TandemMetrics` reports can be read on a
-live graph instead of asserted in a test:
+`metricsDashboardDemo` runs a real Micrometer → Prometheus → Grafana pipeline through nine
+scripted phases — no relay running, a drain, steady load, a failing aggregate, two unserialised
+writers to one aggregate, a second instance joining, that instance's worker getting stuck without
+crashing, a crash with rows in flight, recovery — and holds the dashboard open so every signal
+`TandemMetrics` reports can be read on a live graph instead of asserted in a test:
 
 ```bash
 ./gradlew :tandem-benchmark:metricsDashboardDemo

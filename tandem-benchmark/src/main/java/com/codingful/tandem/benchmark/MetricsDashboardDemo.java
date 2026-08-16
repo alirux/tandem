@@ -51,6 +51,15 @@ public final class MetricsDashboardDemo {
     /** Long enough to be several points on the cycle-age panel, short enough to keep the run brisk. */
     private static final Duration STUCK_WORKER_WINDOW = Duration.ofSeconds(25);
 
+    /** An aggregate of its own, outside the generator's universe, so this phase owns its seq numbering. */
+    private static final String REORDERED_AGGREGATE = "reorder-demo-1";
+
+    /**
+     * How long the earlier write is held uncommitted. Must comfortably exceed one claim cycle, or the
+     * relay never gets the chance to publish the later event first and the phase shows nothing.
+     */
+    private static final Duration COMMIT_INVERSION_WINDOW = Duration.ofSeconds(5);
+
     // reclaimInterval is deliberately left at RelayConfig's own 5s default rather than shortened the way
     // the S8 scenario shortens it. It is what paces bucket takeover after a crash, so a sub-second value
     // closes the coverage gap faster than any reading interval can sample it: bucket.uncovered would then
@@ -138,6 +147,23 @@ public final class MetricsDashboardDemo {
                         on.""".formatted(failingAggregate));
                 env.faultInjector().flakeAggregate(failingAggregate);
                 await(Duration.ofSeconds(30), env);
+
+                phase(observability, "Two writers to one aggregate are not serialised", """
+                        Everything so far has been about delivery. This is about the one precondition
+                        Tandem cannot enforce and, until now, could not even see: HLD §4.2 requires
+                        writers to a single aggregate to be serialised.
+                        Two transactions now write aggregate %s concurrently — seq N is inserted first
+                        but held uncommitted while seq N+1 commits, so the relay publishes N+1 first
+                        and only sees N afterwards. Nothing is faked: both go through the real
+                        write-side API, and the reorder comes from id being assigned at INSERT while
+                        visibility is decided at COMMIT.
+                        Watch 'events published out of order'. Note what the outbox looks like
+                        afterwards: the two rows sit in the table in perfect order, id ascending with
+                        seq, so no query could ever find this after the fact. The relay is the only
+                        witness, and only while it publishes.""".formatted(REORDERED_AGGREGATE));
+                new OutOfOrderWriter(env.dataSource(), cfg.bucketCount())
+                        .writeInverted(REORDERED_AGGREGATE, 1, COMMIT_INVERSION_WINDOW);
+                await(Duration.ofSeconds(15), env);
 
                 phase(observability, "A second relay instance joins", """
                         Both instances report the same GLOBAL backlog reading, on two separate series.

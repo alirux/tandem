@@ -61,6 +61,7 @@ throughput rate is a query the TSDB derives, never something Tandem computes).
 | `recordFailed(long)` | `failed.count` | Gauge | — |
 | `recordBlocked(long)` | `blocked.count` | Gauge | — |
 | `incrementRetry()` | `retry.count` | Counter | — |
+| `incrementSeqRegression()` | `seq_regression.count` | Counter | — |
 | `incrementLeaseExpired(long)` | `lease_expired.count` | Counter | — |
 | `recordActiveWorkers(int)` | `workers.active` | Gauge | — |
 | `recordWorkerCycleAgeSeconds(double)` | `workers.cycle_age_seconds` | Gauge | — |
@@ -125,6 +126,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
         this.published = Counter.builder("tandem.outbox.published").register(registry);
         this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
         this.leaseExpired = Counter.builder("tandem.outbox.lease_expired.count").register(registry);
+        this.seqRegressions = Counter.builder("tandem.outbox.seq_regression.count").register(registry);
     }
 
     @Override public boolean isEnabled() { return true; }

@@ -45,6 +45,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     private final Timer publishLatency;
     private final Counter retries;
     private final Counter leaseExpired;
+    private final Counter seqRegressions;
     private final Map<String, AtomicInteger> configInvalidByCheck = new ConcurrentHashMap<>();
 
     /** @param registry where every meter below is registered; kept to register a new one per distinct {@code check} name */
@@ -81,6 +82,7 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
                 .register(registry);
         this.retries = Counter.builder("tandem.outbox.retry.count").register(registry);
         this.leaseExpired = Counter.builder("tandem.outbox.lease_expired.count").register(registry);
+        this.seqRegressions = Counter.builder("tandem.outbox.seq_regression.count").register(registry);
     }
 
     @Override
@@ -136,6 +138,11 @@ public final class MicrometerTandemMetrics implements TandemMetrics {
     @Override
     public void incrementRetry() {
         retries.increment();
+    }
+
+    @Override
+    public void incrementSeqRegression() {
+        seqRegressions.increment();
     }
 
     @Override

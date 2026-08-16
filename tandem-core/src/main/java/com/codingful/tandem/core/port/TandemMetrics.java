@@ -49,6 +49,20 @@ public interface TandemMetrics {
     }
 
     /**
+     * The relay published an aggregate's events in non-ascending {@code seq} order — the one failure
+     * mode of the write-side ordering precondition (HLD §4.2) that nothing else in the design can see
+     * (HLD §8). A row published behind one already published for the same aggregate ends up perfectly
+     * ordered <i>in the table</i>, so no scan of {@code tandem_outbox} can ever find it after the
+     * fact; only the relay, at publish time, witnesses the sequence that actually went out.
+     *
+     * <p>Counted only for a genuine regression: a row an operator replayed presents identically and is
+     * excluded by the relay before this is called, so a non-zero value means the writers to one
+     * aggregate were not serialised.
+     */
+    default void incrementSeqRegression() {
+    }
+
+    /**
      * @param latency time from this row's {@code created_at} to its Kafka ack, one sample per
      *                successfully published row. An approximation of the HLD §10 "relay latency"
      *                KPI, not an exact measurement of it: {@code created_at} is set at {@code INSERT},

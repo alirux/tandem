@@ -43,6 +43,7 @@ public final class RelayConfig {
     private final Duration metricsInterval;
     private final long deliveryTimeoutMs;
     private final long logEveryRows;
+    private final boolean seqRegressionDetection;
 
     private RelayConfig(Builder b) {
         this.bucketCount = b.bucketCount;
@@ -61,6 +62,7 @@ public final class RelayConfig {
         this.metricsInterval = b.metricsInterval;
         this.deliveryTimeoutMs = b.deliveryTimeoutMs;
         this.logEveryRows = b.logEveryRows;
+        this.seqRegressionDetection = b.seqRegressionDetection;
     }
 
     public int bucketCount() {
@@ -134,6 +136,11 @@ public final class RelayConfig {
 
     public long logEveryRows() {
         return logEveryRows;
+    }
+
+    /** Whether the relay watches for a write-side ordering violation as it publishes (§3.9). Default {@code true}. */
+    public boolean seqRegressionDetection() {
+        return seqRegressionDetection;
     }
 
     /** The §6 defaults. */
@@ -238,6 +245,7 @@ public final class RelayConfig {
         private Duration metricsInterval = Duration.ofSeconds(10);
         private long deliveryTimeoutMs = 30_000;   // Kafka producer default (LLD-kafka §1)
         private long logEveryRows = 10_000;
+        private boolean seqRegressionDetection = true;
 
         private Builder() {
         }
@@ -379,6 +387,22 @@ public final class RelayConfig {
          */
         public Builder logEveryRows(long logEveryRows) {
             this.logEveryRows = positive(logEveryRows, "logEveryRows");
+            return this;
+        }
+
+        /**
+         * Whether each worker watches the {@code seq} order it actually publishes per aggregate and
+         * reports a regression (§3.9) — the only signal for a violated write-side ordering precondition
+         * (HLD §4.2/§8). Default {@code true}.
+         *
+         * <p>Turn it off where writers to one aggregate are serialised by construction and the signal is
+         * not wanted: the detection is bounded and therefore partial by design (a relay restart, or LRU
+         * eviction past the 4096 most-recently-published aggregates of a worker, loses the watermark),
+         * and it holds one entry per tracked aggregate per worker. Disabled, no watermark map is
+         * allocated at all.
+         */
+        public Builder seqRegressionDetection(boolean seqRegressionDetection) {
+            this.seqRegressionDetection = seqRegressionDetection;
             return this;
         }
 

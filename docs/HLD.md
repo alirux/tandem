@@ -657,6 +657,7 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.publish.latency` | Timer (histogram) | Time from a row's `created_at` to its Kafka ack, one sample per successfully published row — the runtime-verifiable approximation of the §10 NFR "relay latency" KPI (`COMMIT` → ack, p50 < 200 ms / p99 < 1 s at normal load). Approximation, not exact: `created_at` is set at `INSERT`, not `COMMIT` (a caller transaction that does more work after the outbox insert makes this an upper bound, never an underestimate), and the two ends are read from different clocks — the database's and the relay's — so a persistent skew between them shows up as a constant offset, not noise. Published as a **percentile histogram**, not a client-computed percentile: percentiles cannot be averaged across relay instances, but a TSDB (e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance p95/p99 from the published buckets | **Critical** |
 | `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
 | `tandem.outbox.blocked.count` | Gauge | PENDING rows sitting behind a `FAILED` row of the same aggregate — waiting, but unclaimable until an operator resolves the head. Counted by `lag.count` as well, deliberately: they are undelivered events, and a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported separately because the two situations demand opposite responses — see the alerting rules below | High |
+| `tandem.outbox.seq_regression.count` | Counter | Cumulative events published with a `seq` **lower** than one already published for the same aggregate — the only observable symptom of a violated write-side ordering precondition (§4.2, §8). Operator replays are excluded at the source (the relay checks the row's `replays`), so a non-zero value means writers to one aggregate are not serialised, never that someone ran a recovery action. Detected in-process at publish time because it is undetectable afterwards: the rows are left in the table in perfect order, `id` ascending with `seq`, so no query over `tandem_outbox` can find it. Detection is bounded and therefore partial — a relay restart, or eviction past the 4096 most-recently-published aggregates of a worker, loses the watermark — so it under-reports and never over-reports. Opt out with `seqRegressionDetection = false` | **Critical** |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
 | `tandem.outbox.workers.active` | Gauge | Number of active relay workers (thread alive; does **not** imply making progress — pair with `workers.cycle_age_seconds`) | Medium |
@@ -692,6 +693,14 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
   is worth the cost. That cost is not flat: `count(*)` uses the partial index on `status = 0`, but
   `min(created_at)` is not indexed, so the query is proportional to the backlog — most expensive
   exactly when the backlog is large.
+- **`seq_regression.count` > 0 → a write-side bug, and the alert never clears on its own.** Unlike every
+  other signal here this one does not describe the relay's health at all: the relay behaved correctly and
+  is telling you that two writers to one aggregate ran concurrently, which §4.2 forbids. Nothing in Tandem
+  can repair it and no amount of waiting helps — the events for that aggregate have already been consumed
+  out of order. Alert on any increase, and note that the counter is cumulative for the life of the process,
+  so the actionable rule is on `increase(...)` over a window rather than on the absolute value. The
+  identifiers needed to find the aggregate are in the `ERROR` the relay logs alongside it; the metric
+  alone says only that it happened.
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
 - `workers.cycle_age_seconds` > threshold (e.g. 60s) → a worker is alive but not progressing (stuck
@@ -848,16 +857,17 @@ UPDATE tandem_outbox
 > backfill; **the relay's claim query does not select it**, so a relay older than the column keeps
 > working against a migrated database unchanged (§1.4).
 >
-> This is also what makes a write-side ordering violation distinguishable from a legitimate replay.
-> The relay can detect that it published an aggregate's events in non-ascending `seq` order, but the
-> two causes present identically on the row — so a detector that reads `seq` alone raises an incident
-> during the very replay an operator is running to recover from one. With `replays` on the row the
-> detector disambiguates: on `seq < the last seq published for that aggregate`, a single primary-key
-> lookup of `replays` separates a replayed row (suppress) from a genuine regression (alert). Two
-> constraints on such a detector, both easy to get wrong: it must **not lower the watermark** for a
-> suppressed row, or a later genuine regression goes unseen; and `replays > 0` suppresses that row
-> permanently, since a row that has been replayed is no longer a reliable witness to the original
-> write order.
+> This is also what makes a write-side ordering violation distinguishable from a legitimate replay, and
+> it is what the relay's detector runs on. The relay notices that it published an aggregate's events in
+> non-ascending `seq` order, but the two causes present identically on the row — so a detector reading
+> `seq` alone would raise an incident during the very replay an operator is running to recover from one.
+> With `replays` on the row it disambiguates: on `seq < the last seq published for that aggregate`, a
+> single primary-key lookup of `replays` separates a replayed row (suppress) from a genuine regression
+> (`ERROR` + `tandem.outbox.seq_regression.count`, §7). Two constraints, both easy to get wrong: the
+> watermark is **not lowered** for a suppressed row, or a later genuine regression would go unseen; and
+> `replays > 0` suppresses that row permanently, since a row that has been replayed is no longer a
+> reliable witness to the original write order. An equal `seq` is a redelivery, not a regression, and is
+> never reported. Full mechanics — where the check runs, and why it is bounded — in LLD-jdbc §3.9.
 
 Tandem exposes a `ReplayService` API (in `tandem-core`) that wraps these queries with parameter validation.
 

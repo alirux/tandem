@@ -27,6 +27,12 @@ import java.time.Duration;
  * @param cleanupInterval    how often DONE rows are cleaned up; default {@code 15m}
  * @param metricsInterval    how often the relay reports backlog, backlog age and live workers; default {@code 10s}
  * @param logEveryRows       per-worker INFO progress log every N dispatch outcomes (ok + ko); default {@code 10000}
+ * @param seqRegressionDetection whether the relay watches the {@code seq} order it publishes per aggregate
+ *                           and reports a violated write-side ordering precondition; default {@code true}.
+ *                           Set {@code false} where writers to one aggregate are serialised by
+ *                           construction: the detection is bounded and therefore partial (a restart or
+ *                           LRU eviction loses a watermark) and costs one entry per tracked aggregate
+ *                           per worker
  */
 @org.springframework.boot.context.properties.ConfigurationProperties("tandem.relay")
 public record TandemRelayProperties(
@@ -43,5 +49,6 @@ public record TandemRelayProperties(
         Duration reclaimInterval,
         Duration cleanupInterval,
         Duration metricsInterval,
-        Long logEveryRows) {
+        Long logEveryRows,
+        Boolean seqRegressionDetection) {
 }

@@ -30,10 +30,11 @@ import java.util.function.Supplier;
  *
  * <p><b>Completions never touch the database.</b> The dispatcher settles its futures on its own I/O
  * thread (for Kafka, the producer's single sender thread, which every worker's sends share), so the
- * completion handler only enqueues — acks into {@code doneIds}, failures into {@code failures} — and
+ * completion handler only enqueues — acks into {@code acked}, failures into {@code failures} — and
  * both queues are drained by the worker's own loop ({@link #flushDone()} / {@link #flushFailures()}),
  * where the JDBC writes happen. A slow store can then never stall the dispatcher's I/O thread and,
- * with it, every other in-flight send.
+ * with it, every other in-flight send. The seq-regression detector (§3.9) lives on the same side of
+ * that line, which is what lets it issue a database lookup and keeps its watermarks unsynchronized.
  */
 final class RelayWorker {
 
@@ -49,8 +50,13 @@ final class RelayWorker {
     private final Supplier<Set<Integer>> ownedBuckets;
 
     private final AtomicInteger inFlight = new AtomicInteger();
-    private final ConcurrentLinkedQueue<Long> doneIds = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<OutboxRecord> acked = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<FailedDispatch> failures = new ConcurrentLinkedQueue<>();
+
+    // Null when seq-regression detection is off (RelayConfig.seqRegressionDetection) — nothing is
+    // allocated in that case. Otherwise touched only from this worker's own loop, never from a
+    // completion thread, so it needs no synchronization (§3.9).
+    private final SeqWatermarks watermarks;
 
     // Coarse-grained throughput visibility independent of any metrics adapter — see recordProgress().
     private final AtomicLong outcomeCount = new AtomicLong();
@@ -74,6 +80,7 @@ final class RelayWorker {
         this.clock = clock;
         this.workerId = workerId;
         this.ownedBuckets = ownedBuckets;
+        this.watermarks = cfg.seqRegressionDetection() ? new SeqWatermarks() : null;
     }
 
     /**
@@ -111,7 +118,7 @@ final class RelayWorker {
     private void onComplete(OutboxRecord record, Throwable error) {
         try {
             if (error == null) {
-                doneIds.add(record.id());
+                acked.add(record);
                 if (metrics.isEnabled()) {
                     metrics.incrementPublished(1);
                     metrics.recordPublishLatency(Duration.between(record.createdAt(), clock.instant()));
@@ -172,21 +179,53 @@ final class RelayWorker {
         }
     }
 
-    /** Flush the acked ids accumulated across aggregates in one batched mark-DONE (§3.4.1). */
+    /**
+     * Flush the acked rows accumulated across aggregates in one batched mark-DONE (§3.4.1), judging the
+     * {@code seq} order they went out in on the way through (§3.9).
+     *
+     * <p>The queue is FIFO over the completion order, so draining it <i>is</i> the publish sequence —
+     * which is the only place that sequence is ever observable, since the rows themselves are left
+     * perfectly ordered in the table (HLD §8).
+     */
     int flushDone() {
-        if (doneIds.isEmpty()) {
+        if (acked.isEmpty()) {
             return 0;
         }
         List<Long> batch = new ArrayList<>();
-        Long id;
-        while ((id = doneIds.poll()) != null) {
-            batch.add(id);
-        }
-        if (batch.isEmpty()) {
-            return 0;
+        List<OutboxRecord> suspected = new ArrayList<>();
+        OutboxRecord record;
+        while ((record = acked.poll()) != null) {
+            batch.add(record.id());
+            if (watermarks != null && watermarks.record(record.aggregateId(), record.seq()) == SeqWatermarks.Verdict.REGRESSED) {
+                suspected.add(record);
+            }
         }
         store.markDoneBatch(batch);
+        // Strictly after the mark-DONE: the detector is a diagnostic and must never be able to leave a
+        // delivered row IN_FLIGHT waiting for a lease to expire. Normally an empty list, so the lookups
+        // below cost nothing on the hot path.
+        for (OutboxRecord suspect : suspected) {
+            reportIfRegression(suspect);
+        }
         return batch.size();
+    }
+
+    /**
+     * Disambiguate a {@code seq} that went backwards: a row an operator replayed and one reordered by
+     * unserialised writers are otherwise byte-identical, and only {@code replays} tells them apart
+     * (HLD §8). Unknown counts as replayed — an unreportable case is better than a false incident.
+     */
+    private void reportIfRegression(OutboxRecord record) {
+        if (store.replaysOf(record.id()).orElse(1) > 0) {
+            return;
+        }
+        LOG.log(Level.ERROR, "Published an aggregate's events out of seq order, so writers to it are not"
+                + " serialised (HLD 4.2) workerId:" + workerId + ", rowId:" + record.id()
+                + ", aggregateType:" + record.aggregateType() + ", aggregateId:" + record.aggregateId()
+                + ", seq:" + record.seq());
+        if (metrics.isEnabled()) {
+            metrics.incrementSeqRegression();
+        }
     }
 
     /**

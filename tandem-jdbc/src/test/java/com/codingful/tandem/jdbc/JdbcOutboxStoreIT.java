@@ -1,8 +1,10 @@
 package com.codingful.tandem.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.codingful.tandem.core.LagSnapshot;
+import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
@@ -35,6 +37,35 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
     private void insert(String aggregateId, long seq) {
         repository.insert(OutboxMessage.builder()
                 .aggregateId(aggregateId).aggregateType("Order").seq(seq).payload("{}".getBytes()).build());
+    }
+
+    @Test
+    void GIVEN_a_row_that_was_never_replayed_WHEN_its_replay_count_is_read_THEN_it_reads_zero() {
+        insert("order-1", 1);
+
+        assertThat(store.replaysOf(1L)).hasValue(0);
+    }
+
+    /**
+     * Cleanup can delete a DONE row between its ack and this lookup, and an absent row cannot be shown
+     * not to have been replayed — so the answer is "unknown", never a confident zero that the relay
+     * would read as a write-side ordering violation (§3.9).
+     */
+    @Test
+    void GIVEN_a_row_that_no_longer_exists_WHEN_its_replay_count_is_read_THEN_the_answer_is_unknown() {
+        assertThat(store.replaysOf(404L)).isEmpty();
+    }
+
+    @Test
+    void GIVEN_the_database_is_unreachable_WHEN_a_replay_count_is_read_THEN_the_failure_surfaces_as_a_tandem_exception() {
+        // The relay reads this from its worker loop, which handles TandemException; a raw SQLException
+        // would escape as an unexpected checked-to-unchecked leak.
+        JdbcOutboxStore unreachable = new JdbcOutboxStore(
+                new SimpleDataSource("jdbc:postgresql://127.0.0.1:1/none", "none", "none"), 10);
+
+        assertThatThrownBy(() -> unreachable.replaysOf(1L))
+                .isInstanceOf(TandemException.class)
+                .hasCauseInstanceOf(SQLException.class);
     }
 
     private static Set<Integer> allBuckets() {

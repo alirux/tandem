@@ -545,6 +545,51 @@ very first claim reports an ageing timestamp from start time rather than an abse
 either absolute number, since a died thread is restarted automatically (§3.1) and a transient deficit
 during that restart is normal — a persistent one is a worker dying in a loop.
 
+### 3.9 Write-side ordering detection (`SeqWatermarks`)
+
+HLD §4.2 makes "writers to one aggregate are serialised" a precondition Tandem depends on and cannot
+enforce. When it is violated the relay publishes an aggregate's events out of `seq` order, and this is
+where that becomes visible — the only place it ever is.
+
+**Why it cannot be found afterwards.** The hazard is a commit-order inversion: `id` is assigned at
+INSERT, visibility is decided at COMMIT, so a row inserted first but committed second is invisible to
+the claim's snapshot while its successor is published. Once both commit, the table is left in *perfect*
+order — `seq` 1 on the lower `id`, `seq` 2 on the higher — so no query over `tandem_outbox` can tell
+that anything went wrong. Neither `UNIQUE (aggregate_id, seq)` (two different values) nor the
+head-of-chain gate (§3.3, which cannot see an uncommitted row) fires. Only the relay, at publish time,
+witnesses the sequence that actually went out. Pinned end to end by `CommitOrderReorderIT`, which also
+shows the result is identical at `bucketCount` 1 and 256 — one aggregate always hashes to one bucket, so
+serialising the *relay* does not compensate for an unserialised *write side*.
+
+**Where the check runs.** In `RelayWorker.flushDone()`, on the worker's own thread, never in the
+dispatch completion handler. That placement is forced rather than chosen: completions must not touch the
+database (§3.4), and the disambiguation below issues a query. It pays twice over — the acked queue is
+FIFO over completion order, so draining it *is* the publish sequence, and the watermarks are reached
+from one thread only and need no synchronization. The check runs strictly **after** `markDoneBatch`, so
+a diagnostic can never leave a delivered row `IN_FLIGHT` waiting out a lease.
+
+**The verdict.** Against the last `seq` published for that aggregate: greater (or first seen) advances
+the watermark; **equal** is an at-least-once redelivery after a lease reclaim, not an ordering fault;
+**lower** is a suspicion, not yet a finding.
+
+**Disambiguating a suspicion.** A replayed row and a reordered one are byte-identical on every field
+except `replays` (HLD §8), so a suspicion triggers a single primary-key `OutboxStore.replaysOf(id)`
+lookup — `replays > 0` suppresses it, `0` reports it (`ERROR` with the row and aggregate identifiers,
+plus `TandemMetrics.incrementSeqRegression()`). Two rules that are easy to get wrong and are pinned by
+tests: a suppressed row **never lowers the watermark** (it would mask the next genuine regression), and
+an **unknown** count — the port's default, which is what any `OutboxStore` decorator that forgets to
+forward the method returns — suppresses too, since a replay cannot be ruled out. The lookup stays off
+the hot path by construction: it runs only in the already-rare backwards branch, so `replays` is
+deliberately **not** in `claimBatch`'s projection, which is also what lets a relay older than the column
+run against a migrated database (HLD §1.4).
+
+**Bounded, and knowingly partial.** `SeqWatermarks` is an LRU capped at **4096 aggregates per worker** —
+a fixed constant, not a knob. Unbounded tracking would leak one entry per distinct aggregate for the
+life of the process. Eviction degrades detection exactly as a relay restart already does, which the
+design accepts: this under-reports and never over-reports. Set `RelayConfig.seqRegressionDetection` to
+`false` (Spring: `tandem.relay.seq-regression-detection`) where writers are serialised by construction
+and the signal is not wanted — nothing is then allocated at all.
+
 ---
 
 ## 4. Metrics
