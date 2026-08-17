@@ -103,6 +103,13 @@ class JdbcOutboxRepositoryIT extends AbstractPostgresIT {
     }
 
     @Test
+    void GIVEN_no_messages_WHEN_inserted_in_a_batch_THEN_it_returns_without_touching_the_database() {
+        repository.insertAll(List.of());   // would open a connection/statement if it reached the database
+
+        assertThat(rowCount()).isZero();
+    }
+
+    @Test
     void GIVEN_tracing_enabled_and_no_explicit_trace_headers_WHEN_inserted_THEN_the_captured_headers_are_stored() {
         tracingRepository.insert(OutboxMessage.builder()
                 .aggregateId("order-trace-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build());

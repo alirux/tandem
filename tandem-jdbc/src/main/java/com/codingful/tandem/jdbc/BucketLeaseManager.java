@@ -1,7 +1,6 @@
 package com.codingful.tandem.jdbc;
 
 import com.codingful.tandem.core.exception.TandemConfigurationException;
-import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.port.TandemMetrics;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -127,28 +126,24 @@ public final class BucketLeaseManager implements BucketSource {
      */
     @Override
     public void validateOnStart(TandemMetrics metrics, Logger logger) {
-        int seeded;
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(COUNT_SQL);
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();
-            seeded = rs.getInt(1);
-        } catch (SQLException e) {
-            failLeaseTable(metrics, logger, "the tandem_bucket_lease table is missing or unreadable ("
-                    + e.getMessage() + ")", e);
-            return;   // unreachable — failLeaseTable always throws
-        }
+        int seeded = Jdbc.run(dataSource, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(COUNT_SQL);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        }, e -> leaseTableException(metrics, logger, "the tandem_bucket_lease table is missing or unreadable ("
+                + e.getMessage() + ")", e));
         if (seeded != bucketCount) {
-            failLeaseTable(metrics, logger, "tandem_bucket_lease is seeded with " + seeded
+            throw leaseTableException(metrics, logger, "tandem_bucket_lease is seeded with " + seeded
                     + " rows but coordination=LEASE requires exactly bucketCount=" + bucketCount, null);
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(MEMBER_PROBE_SQL)) {
-            ps.executeQuery().close();
-        } catch (SQLException e) {
-            failLeaseTable(metrics, logger, "the tandem_relay_member table is missing or unreadable ("
-                    + e.getMessage() + ")", e);
-        }
+        Jdbc.run(dataSource, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(MEMBER_PROBE_SQL)) {
+                ps.executeQuery().close();
+            }
+        }, e -> leaseTableException(metrics, logger, "the tandem_relay_member table is missing or unreadable ("
+                + e.getMessage() + ")", e));
     }
 
     /**
@@ -156,7 +151,8 @@ public final class BucketLeaseManager implements BucketSource {
      *              detected without one (e.g. a row-count mismatch) — always passed to the logger when present
      *              so the stack trace is not lost (HLD-logging.md §4).
      */
-    private void failLeaseTable(TandemMetrics metrics, Logger logger, String detail, SQLException cause) {
+    private TandemConfigurationException leaseTableException(
+            TandemMetrics metrics, Logger logger, String detail, SQLException cause) {
         String message = "Unsafe relay config: " + detail
                 + ". Apply the LEASE baseline DDL (schema/postgres/tandem-baseline.sql seeds "
                 + "tandem_bucket_lease with B rows) and ensure bucketCount matches every instance, "
@@ -168,41 +164,39 @@ public final class BucketLeaseManager implements BucketSource {
         } else {
             logger.log(Level.ERROR, logMessage);
         }
-        throw new TandemConfigurationException(message);
+        return new TandemConfigurationException(message);
     }
 
     @Override
     public Set<Integer> ownedBuckets() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(OWNED_BUCKETS_SQL)) {
-            ps.setString(1, ownerId);
-            Set<Integer> owned = new HashSet<>();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    owned.add(rs.getInt(1));
+        return Jdbc.run(dataSource, "reading owned buckets failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(OWNED_BUCKETS_SQL)) {
+                ps.setString(1, ownerId);
+                Set<Integer> owned = new HashSet<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        owned.add(rs.getInt(1));
+                    }
                 }
+                return owned;
             }
-            return owned;
-        } catch (SQLException e) {
-            throw new TandemException("reading owned buckets failed", e);
-        }
+        });
     }
 
     @Override
     public OptionalInt uncoveredBuckets() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(UNCOVERED_BUCKETS_SQL);
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();   // an aggregate without GROUP BY always returns exactly one row
-            return OptionalInt.of(rs.getInt(1));
-        } catch (SQLException e) {
-            throw new TandemException("uncoveredBuckets failed", e);
-        }
+        return Jdbc.run(dataSource, "uncoveredBuckets failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(UNCOVERED_BUCKETS_SQL);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                return OptionalInt.of(rs.getInt(1));
+            }
+        });
     }
 
     @Override
     public void heartbeat() {
-        try (Connection conn = dataSource.getConnection()) {
+        Jdbc.run(dataSource, "bucket lease heartbeat failed", conn -> {
             registerMember(conn);          // make this instance visible before counting (§3.2)
             pruneExpiredMembers(conn);     // drop dead instances so the divisor is accurate
             renew(conn);
@@ -214,19 +208,15 @@ public final class BucketLeaseManager implements BucketSource {
             } else if (owned < target) {
                 claimDeficit(conn, target - owned);
             }
-        } catch (SQLException e) {
-            throw new TandemException("bucket lease heartbeat failed", e);
-        }
+        });
     }
 
     @Override
     public void release() {
-        try (Connection conn = dataSource.getConnection()) {
+        Jdbc.run(dataSource, "releasing bucket leases failed", conn -> {
             releaseOwnedBuckets(conn);
             deleteMember(conn);   // drop presence immediately so peers rebalance without waiting for expiry
-        } catch (SQLException e) {
-            throw new TandemException("releasing bucket leases failed", e);
-        }
+        });
     }
 
     private void renew(Connection conn) throws SQLException {

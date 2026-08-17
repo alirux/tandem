@@ -1,14 +1,12 @@
 package com.codingful.tandem.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.codingful.tandem.core.AggregateId;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.ReplayCriteria;
 import com.codingful.tandem.core.ReplayResult;
-import com.codingful.tandem.core.exception.TandemException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -164,17 +162,8 @@ class JdbcReplayServiceIT extends AbstractPostgresIT {
         assertThat(statusOf(2)).isEqualTo(OutboxStatus.PENDING.code());
     }
 
-    @Test
-    void GIVEN_the_database_is_unreachable_WHEN_replayed_THEN_the_failure_surfaces_as_a_tandem_exception() {
-        // Callers (the Admin API) depend on the adapter never leaking a raw SQLException.
-        JdbcReplayService unreachable = new JdbcReplayService(
-                new SimpleDataSource("jdbc:postgresql://127.0.0.1:1/none", "none", "none"));
-
-        assertThatThrownBy(() -> unreachable.replay(
-                new ReplayCriteria(AggregateId.of("order-1"), null, null, null, Set.of(), false)))
-                .isInstanceOf(TandemException.class)
-                .hasCauseInstanceOf(SQLException.class);
-    }
+    // The "unreachable database → TandemException" invariant used to be pinned here per-adapter; it
+    // is now proven once, for every Jdbc* adapter, by JdbcTest (item 30).
 
     private static int statusOf(long id) {
         return intColumn("SELECT status FROM tandem_outbox WHERE id = ?", id);

@@ -3,12 +3,9 @@ package com.codingful.tandem.jdbc;
 import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.port.OutboxStore;
-import com.codingful.tandem.core.exception.TandemException;
 import java.sql.Array;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
@@ -152,23 +149,22 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (buckets.isEmpty() || batchSize <= 0) {
             return List.of();
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(CLAIM_SQL)) {
-            Array bucketArray = conn.createArrayOf("integer", buckets.toArray());
-            ps.setArray(1, bucketArray);
-            ps.setInt(2, batchSize);
-            ps.setString(3, workerId);
-            ps.setLong(4, lease.toMillis());
-            List<OutboxRecord> claimed = new ArrayList<>();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    claimed.add(OutboxRowMapper.map(rs));
+        return Jdbc.run(dataSource, "claimBatch failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(CLAIM_SQL)) {
+                Array bucketArray = conn.createArrayOf("integer", buckets.toArray());
+                ps.setArray(1, bucketArray);
+                ps.setInt(2, batchSize);
+                ps.setString(3, workerId);
+                ps.setLong(4, lease.toMillis());
+                List<OutboxRecord> claimed = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        claimed.add(OutboxRowMapper.map(rs));
+                    }
                 }
+                return claimed;
             }
-            return claimed;
-        } catch (SQLException e) {
-            throw new TandemException("claimBatch failed", e);
-        }
+        });
     }
 
     @Override
@@ -185,54 +181,50 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (ids.isEmpty()) {
             return;
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(MARK_DONE_SQL)) {
-            ps.setArray(1, conn.createArrayOf("bigint", ids.toArray()));
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("markDoneBatch failed", e);
-        }
+        Jdbc.run(dataSource, "markDoneBatch failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(MARK_DONE_SQL)) {
+                ps.setArray(1, conn.createArrayOf("bigint", ids.toArray()));
+                ps.executeUpdate();
+            }
+        });
     }
 
     @Override
     public void markForRetry(long id, String error, Duration retryDelay) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(MARK_FOR_RETRY_SQL)) {
-            ps.setString(1, error);
-            if (retryDelay == null) {
-                ps.setNull(2, Types.BIGINT);          // now() + NULL = NULL → due immediately
-            } else {
-                ps.setLong(2, retryDelay.toMillis());
+        Jdbc.run(dataSource, "markForRetry failed for id " + id, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(MARK_FOR_RETRY_SQL)) {
+                ps.setString(1, error);
+                if (retryDelay == null) {
+                    ps.setNull(2, Types.BIGINT);          // now() + NULL = NULL → due immediately
+                } else {
+                    ps.setLong(2, retryDelay.toMillis());
+                }
+                ps.setLong(3, id);
+                ps.executeUpdate();
             }
-            ps.setLong(3, id);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("markForRetry failed for id " + id, e);
-        }
+        });
     }
 
     @Override
     public void markFailed(long id, String error) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(MARK_FAILED_SQL)) {
-            ps.setString(1, error);
-            ps.setLong(2, id);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("markFailed failed for id " + id, e);
-        }
+        Jdbc.run(dataSource, "markFailed failed for id " + id, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(MARK_FAILED_SQL)) {
+                ps.setString(1, error);
+                ps.setLong(2, id);
+                ps.executeUpdate();
+            }
+        });
     }
 
     @Override
     public int reclaimExpiredLeases() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(RECLAIM_SQL)) {
-            ps.setString(1, LEASE_EXPIRED_ERROR);
-            ps.setInt(2, maxAttempts);
-            return ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("reclaimExpiredLeases failed", e);
-        }
+        return Jdbc.run(dataSource, "reclaimExpiredLeases failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(RECLAIM_SQL)) {
+                ps.setString(1, LEASE_EXPIRED_ERROR);
+                ps.setInt(2, maxAttempts);
+                return ps.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -241,56 +233,52 @@ public final class JdbcOutboxStore implements OutboxStore {
      */
     @Override
     public Optional<LagSnapshot> lag() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(LAG_SQL);
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();   // an aggregate without GROUP BY always returns exactly one row
-            long pending = rs.getLong(1);
-            OffsetDateTime oldest = rs.getObject(2, OffsetDateTime.class);   // NULL when nothing is pending
-            return Optional.of(new LagSnapshot(pending,
-                    Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
-        } catch (SQLException e) {
-            throw new TandemException("lag failed", e);
-        }
+        return Jdbc.run(dataSource, "lag failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(LAG_SQL);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                long pending = rs.getLong(1);
+                OffsetDateTime oldest = rs.getObject(2, OffsetDateTime.class);   // NULL when nothing is pending
+                return Optional.of(new LagSnapshot(pending,
+                        Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
+            }
+        });
     }
 
     @Override
     public OptionalLong failedCount() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(FAILED_COUNT_SQL);
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();   // an aggregate without GROUP BY always returns exactly one row
-            return OptionalLong.of(rs.getLong(1));
-        } catch (SQLException e) {
-            throw new TandemException("failedCount failed", e);
-        }
+        return Jdbc.run(dataSource, "failedCount failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(FAILED_COUNT_SQL);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                return OptionalLong.of(rs.getLong(1));
+            }
+        });
     }
 
     @Override
     public OptionalLong blockedCount() {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(BLOCKED_COUNT_SQL);
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();   // an aggregate without GROUP BY always returns exactly one row
-            return OptionalLong.of(rs.getLong(1));
-        } catch (SQLException e) {
-            throw new TandemException("blockedCount failed", e);
-        }
+        return Jdbc.run(dataSource, "blockedCount failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(BLOCKED_COUNT_SQL);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                return OptionalLong.of(rs.getLong(1));
+            }
+        });
     }
 
     @Override
     public OptionalInt replaysOf(long id) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(REPLAYS_SQL)) {
-            ps.setLong(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                // Empty when the row is gone — cleanup can delete a DONE row between the ack and this
-                // lookup, and an absent row cannot be shown not to have been replayed.
-                return rs.next() ? OptionalInt.of(rs.getInt(1)) : OptionalInt.empty();
+        return Jdbc.run(dataSource, "replaysOf failed for id " + id, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(REPLAYS_SQL)) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    // Empty when the row is gone — cleanup can delete a DONE row between the ack and this
+                    // lookup, and an absent row cannot be shown not to have been replayed.
+                    return rs.next() ? OptionalInt.of(rs.getInt(1)) : OptionalInt.empty();
+                }
             }
-        } catch (SQLException e) {
-            throw new TandemException("replaysOf failed for id " + id, e);
-        }
+        });
     }
 
     @Override
@@ -299,13 +287,12 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (batchSize <= 0) {
             return 0;
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(CLEANUP_SQL)) {
-            ps.setObject(1, OffsetDateTime.ofInstant(doneBefore, ZoneOffset.UTC));
-            ps.setInt(2, batchSize);
-            return ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("cleanup failed", e);
-        }
+        return Jdbc.run(dataSource, "cleanup failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(CLEANUP_SQL)) {
+                ps.setObject(1, OffsetDateTime.ofInstant(doneBefore, ZoneOffset.UTC));
+                ps.setInt(2, batchSize);
+                return ps.executeUpdate();
+            }
+        });
     }
 }

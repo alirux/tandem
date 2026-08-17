@@ -1,10 +1,8 @@
 package com.codingful.tandem.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.codingful.tandem.core.LagSnapshot;
-import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
@@ -56,17 +54,8 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
         assertThat(store.replaysOf(404L)).isEmpty();
     }
 
-    @Test
-    void GIVEN_the_database_is_unreachable_WHEN_a_replay_count_is_read_THEN_the_failure_surfaces_as_a_tandem_exception() {
-        // The relay reads this from its worker loop, which handles TandemException; a raw SQLException
-        // would escape as an unexpected checked-to-unchecked leak.
-        JdbcOutboxStore unreachable = new JdbcOutboxStore(
-                new SimpleDataSource("jdbc:postgresql://127.0.0.1:1/none", "none", "none"), 10);
-
-        assertThatThrownBy(() -> unreachable.replaysOf(1L))
-                .isInstanceOf(TandemException.class)
-                .hasCauseInstanceOf(SQLException.class);
-    }
+    // The "unreachable database → TandemException" invariant used to be pinned here per-adapter; it
+    // is now proven once, for every Jdbc* adapter, by JdbcTest (item 30).
 
     private static Set<Integer> allBuckets() {
         Set<Integer> buckets = new HashSet<>();
@@ -135,6 +124,16 @@ class JdbcOutboxStoreIT extends AbstractPostgresIT {
         assertThat(claim(10)).isEmpty();
 
         store.markForRetry(id, "transient", Duration.ofSeconds(-1));   // already past → now due
+        assertThat(claim(10)).extracting(OutboxRecord::id).containsExactly(id);
+    }
+
+    @Test
+    void GIVEN_no_retry_delay_WHEN_marked_for_retry_THEN_it_is_due_immediately() {
+        insert("order-1", 1);
+        long id = claim(10).get(0).id();
+
+        store.markForRetry(id, "transient", null);   // now() + NULL = NULL → due immediately, not in the future
+
         assertThat(claim(10)).extracting(OutboxRecord::id).containsExactly(id);
     }
 

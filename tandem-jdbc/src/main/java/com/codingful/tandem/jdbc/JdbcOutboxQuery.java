@@ -5,10 +5,8 @@ import com.codingful.tandem.core.OutboxRowDetail;
 import com.codingful.tandem.core.OutboxRowView;
 import com.codingful.tandem.core.OutboxSearchCriteria;
 import com.codingful.tandem.core.OutboxStatus;
-import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.port.OutboxQuery;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -53,16 +51,15 @@ public final class JdbcOutboxQuery implements OutboxQuery {
             counts.put(status, 0L);
         }
         String sql = "SELECT status, count(*) AS row_count FROM tandem_outbox GROUP BY status";
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql);
-                ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                counts.put(OutboxStatus.fromCode(rs.getInt("status")), rs.getLong("row_count"));
+        return Jdbc.run(dataSource, "statusCounts query failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                    ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    counts.put(OutboxStatus.fromCode(rs.getInt("status")), rs.getLong("row_count"));
+                }
+                return counts;
             }
-            return counts;
-        } catch (SQLException e) {
-            throw new TandemException("statusCounts query failed", e);
-        }
+        });
     }
 
     @Override
@@ -112,43 +109,41 @@ public final class JdbcOutboxQuery implements OutboxQuery {
         sql.append(" ORDER BY id LIMIT ?");
         params.add(criteria.limit());
 
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, params);
-            try (ResultSet rs = ps.executeQuery()) {
-                List<OutboxRowView> rows = new ArrayList<>();
-                while (rs.next()) {
-                    rows.add(mapView(rs));
+        return Jdbc.run(dataSource, "search query failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+                bind(ps, params);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<OutboxRowView> rows = new ArrayList<>();
+                    while (rs.next()) {
+                        rows.add(mapView(rs));
+                    }
+                    return rows;
                 }
-                return rows;
             }
-        } catch (SQLException e) {
-            throw new TandemException("search query failed", e);
-        }
+        });
     }
 
     @Override
     public Optional<OutboxRowDetail> findById(long id) {
         String sql = "SELECT " + VIEW_COLUMNS + ", payload::text AS payload, headers::text AS headers"
                 + "  FROM tandem_outbox WHERE id = ?";
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
+        return Jdbc.run(dataSource, "findById query failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.empty();
+                    }
+                    OutboxRowView view = mapView(rs);
+                    String payloadText = rs.getString("payload");
+                    Map<String, String> headers = MiniJson.parseObject(rs.getString("headers"));
+                    byte[] payload = payloadText == null
+                            ? new byte[0]
+                            : payloadText.getBytes(StandardCharsets.UTF_8);
+                    return Optional.of(new OutboxRowDetail(view, payload, headers));
                 }
-                OutboxRowView view = mapView(rs);
-                String payloadText = rs.getString("payload");
-                Map<String, String> headers = MiniJson.parseObject(rs.getString("headers"));
-                byte[] payload = payloadText == null
-                        ? new byte[0]
-                        : payloadText.getBytes(StandardCharsets.UTF_8);
-                return Optional.of(new OutboxRowDetail(view, payload, headers));
             }
-        } catch (SQLException e) {
-            throw new TandemException("findById query failed", e);
-        }
+        });
     }
 
     private static OutboxRowView mapView(ResultSet rs) throws SQLException {

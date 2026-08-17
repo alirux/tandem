@@ -1,6 +1,5 @@
 package com.codingful.tandem.jdbc;
 
-import com.codingful.tandem.core.exception.TandemException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -57,36 +56,32 @@ public final class JdbcRelayControlSource implements RelayControlSource {
 
     @Override
     public void onStart() {
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement coordinationPs = conn.prepareStatement(UPSERT_COORDINATION_SQL);
-                PreparedStatement intervalPs = conn.prepareStatement(UPSERT_HEARTBEAT_INTERVAL_SQL)) {
-            coordinationPs.setString(1, coordination.name());
-            coordinationPs.executeUpdate();
-            intervalPs.setString(1, Long.toString(heartbeatInterval.toSeconds()));
-            intervalPs.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("recording relay coordination mode failed", e);
-        }
+        Jdbc.run(dataSource, "recording relay coordination mode failed", conn -> {
+            try (PreparedStatement coordinationPs = conn.prepareStatement(UPSERT_COORDINATION_SQL);
+                    PreparedStatement intervalPs = conn.prepareStatement(UPSERT_HEARTBEAT_INTERVAL_SQL)) {
+                coordinationPs.setString(1, coordination.name());
+                coordinationPs.executeUpdate();
+                intervalPs.setString(1, Long.toString(heartbeatInterval.toSeconds()));
+                intervalPs.executeUpdate();
+            }
+        });
     }
 
     @Override
     public void heartbeat() {
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(HEARTBEAT_SQL)) {
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new TandemException("relay heartbeat failed", e);
-        }
+        Jdbc.run(dataSource, "relay heartbeat failed", conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(HEARTBEAT_SQL)) {
+                ps.executeUpdate();
+            }
+        });
     }
 
     @Override
     public void refresh() {
-        try (Connection conn = dataSource.getConnection()) {
+        Jdbc.run(dataSource, "refreshing relay control state failed", conn -> {
             wholeRelayPaused = readRelayPaused(conn);
             pausedBuckets.set(coordination == Coordination.LEASE ? readPausedBuckets(conn) : Set.of());
-        } catch (SQLException e) {
-            throw new TandemException("refreshing relay control state failed", e);
-        }
+        });
     }
 
     @Override

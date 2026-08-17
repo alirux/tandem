@@ -3,7 +3,6 @@ package com.codingful.tandem.jdbc;
 import com.codingful.tandem.core.OutboxStatus;
 import com.codingful.tandem.core.ReplayCriteria;
 import com.codingful.tandem.core.ReplayResult;
-import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.port.ReplayService;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -51,16 +50,14 @@ public final class JdbcReplayService implements ReplayService {
         List<Object> params = new ArrayList<>();
         String where = buildWhere(criteria, effectiveStatuses, params);
 
-        try (Connection conn = dataSource.getConnection()) {
+        return Jdbc.run(dataSource, "replay failed", conn -> {
             if (criteria.dryRun()) {
                 long matched = count(conn, where, params);
                 return new ReplayResult(matched, 0, true);
             }
             int replayed = resetToPending(conn, where, params);
             return new ReplayResult(replayed, replayed, false);
-        } catch (SQLException e) {
-            throw new TandemException("replay failed", e);
-        }
+        });
     }
 
     /** Requested statuses intersected with the replayable set; defaults to all replayable when unset. */

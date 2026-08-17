@@ -101,13 +101,12 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     @Override
     public void insert(OutboxMessage message) {
         Objects.requireNonNull(message, "message");
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            bind(ps, message);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw translate(e, message);
-        }
+        Jdbc.run(dataSource, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                bind(ps, message);
+                ps.executeUpdate();
+            }
+        }, e -> translate(e, message));
     }
 
     @Override
@@ -116,18 +115,19 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         if (messages.isEmpty()) {
             return;
         }
-        OutboxMessage current = null;
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            for (OutboxMessage message : messages) {
-                current = message;
-                bind(ps, message);
-                ps.addBatch();
+        // Mutated inside the lambda below and read from the exception mapper on failure — an array
+        // (not a plain local) because the mapper closes over it after the lambda returns/throws.
+        OutboxMessage[] current = new OutboxMessage[1];
+        Jdbc.run(dataSource, conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                for (OutboxMessage message : messages) {
+                    current[0] = message;
+                    bind(ps, message);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
             }
-            ps.executeBatch();
-        } catch (SQLException e) {
-            throw translate(e, current);
-        }
+        }, e -> translate(e, current[0]));
     }
 
     private void bind(PreparedStatement ps, OutboxMessage message) throws SQLException {
