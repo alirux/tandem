@@ -61,7 +61,7 @@ public final class JdbcRelayControl implements RelayControl {
     }
 
     private void setRelayPaused(boolean paused) {
-        Jdbc.run(dataSource, "setting relay_paused failed", conn -> {
+        Jdbc.exec(dataSource, "setting relay_paused failed", conn -> {
             try (PreparedStatement ps = conn.prepareStatement(UPSERT_RELAY_PAUSED_SQL)) {
                 ps.setString(1, Boolean.toString(paused));
                 ps.executeUpdate();

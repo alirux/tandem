@@ -6,7 +6,6 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -126,24 +125,21 @@ public final class BucketLeaseManager implements BucketSource {
      */
     @Override
     public void validateOnStart(TandemMetrics metrics, Logger logger) {
-        int seeded = Jdbc.run(dataSource, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(COUNT_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                rs.next();
-                return rs.getInt(1);
-            }
-        }, e -> leaseTableException(metrics, logger, "the tandem_bucket_lease table is missing or unreadable ("
-                + e.getMessage() + ")", e));
+        int seeded = Jdbc.run(dataSource,
+                conn -> Jdbc.withStatement(conn, COUNT_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();
+                    return rs.getInt(1);
+                })),
+                e -> leaseTableException(metrics, logger, "the tandem_bucket_lease table is missing or unreadable ("
+                        + e.getMessage() + ")", e));
         if (seeded != bucketCount) {
             throw leaseTableException(metrics, logger, "tandem_bucket_lease is seeded with " + seeded
                     + " rows but coordination=LEASE requires exactly bucketCount=" + bucketCount, null);
         }
-        Jdbc.run(dataSource, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(MEMBER_PROBE_SQL)) {
-                ps.executeQuery().close();
-            }
-        }, e -> leaseTableException(metrics, logger, "the tandem_relay_member table is missing or unreadable ("
-                + e.getMessage() + ")", e));
+        Jdbc.exec(dataSource,
+                conn -> Jdbc.exec(conn, MEMBER_PROBE_SQL, ps -> Jdbc.exec(ps, rs -> { })),
+                e -> leaseTableException(metrics, logger, "the tandem_relay_member table is missing or unreadable ("
+                        + e.getMessage() + ")", e));
     }
 
     /**
@@ -169,34 +165,31 @@ public final class BucketLeaseManager implements BucketSource {
 
     @Override
     public Set<Integer> ownedBuckets() {
-        return Jdbc.run(dataSource, "reading owned buckets failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(OWNED_BUCKETS_SQL)) {
-                ps.setString(1, ownerId);
-                Set<Integer> owned = new HashSet<>();
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        owned.add(rs.getInt(1));
-                    }
-                }
-                return owned;
-            }
-        });
+        return Jdbc.run(dataSource, "reading owned buckets failed", conn ->
+                Jdbc.withStatement(conn, OWNED_BUCKETS_SQL, ps -> {
+                    ps.setString(1, ownerId);
+                    return Jdbc.withResultSet(ps, rs -> {
+                        Set<Integer> owned = new HashSet<>();
+                        while (rs.next()) {
+                            owned.add(rs.getInt(1));
+                        }
+                        return owned;
+                    });
+                }));
     }
 
     @Override
     public OptionalInt uncoveredBuckets() {
-        return Jdbc.run(dataSource, "uncoveredBuckets failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(UNCOVERED_BUCKETS_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                rs.next();   // an aggregate without GROUP BY always returns exactly one row
-                return OptionalInt.of(rs.getInt(1));
-            }
-        });
+        return Jdbc.run(dataSource, "uncoveredBuckets failed", conn ->
+                Jdbc.withStatement(conn, UNCOVERED_BUCKETS_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                    return OptionalInt.of(rs.getInt(1));
+                })));
     }
 
     @Override
     public void heartbeat() {
-        Jdbc.run(dataSource, "bucket lease heartbeat failed", conn -> {
+        Jdbc.exec(dataSource, "bucket lease heartbeat failed", conn -> {
             registerMember(conn);          // make this instance visible before counting (§3.2)
             pruneExpiredMembers(conn);     // drop dead instances so the divisor is accurate
             renew(conn);
@@ -213,26 +206,26 @@ public final class BucketLeaseManager implements BucketSource {
 
     @Override
     public void release() {
-        Jdbc.run(dataSource, "releasing bucket leases failed", conn -> {
+        Jdbc.exec(dataSource, "releasing bucket leases failed", conn -> {
             releaseOwnedBuckets(conn);
             deleteMember(conn);   // drop presence immediately so peers rebalance without waiting for expiry
         });
     }
 
     private void renew(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(RENEW_SQL)) {
+        Jdbc.exec(conn, RENEW_SQL, ps -> {
             ps.setLong(1, leaseMillis);
             ps.setString(2, ownerId);
             ps.executeUpdate();
-        }
+        });
     }
 
     private void registerMember(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(REGISTER_MEMBER_SQL)) {
+        Jdbc.exec(conn, REGISTER_MEMBER_SQL, ps -> {
             ps.setString(1, ownerId);
             ps.setLong(2, leaseMillis);
             ps.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -241,20 +234,20 @@ public final class BucketLeaseManager implements BucketSource {
      * the buckets it held actually being reclaimed by {@link #claimDeficit}.
      */
     private void pruneExpiredMembers(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(PRUNE_MEMBERS_SQL)) {
+        Jdbc.exec(conn, PRUNE_MEMBERS_SQL, ps -> {
             List<String> pruned = returnedOwners(ps);
             if (!pruned.isEmpty()) {
                 LOG.log(Level.WARNING, "Relay pruned dead member(s), presence lease expired owner:" + ownerId
                         + ", deadOwners:" + pruned);
             }
-        }
+        });
     }
 
     private void deleteMember(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(DELETE_MEMBER_SQL)) {
+        Jdbc.exec(conn, DELETE_MEMBER_SQL, ps -> {
             ps.setString(1, ownerId);
             ps.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -262,36 +255,35 @@ public final class BucketLeaseManager implements BucketSource {
      * zero-owned joiner is still counted (it just registered). At least 1 (self, LLD-jdbc §3.2).
      */
     private int countLiveMembers(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(LIVE_MEMBERS_SQL);
-             ResultSet rs = ps.executeQuery()) {
+        return Jdbc.withStatement(conn, LIVE_MEMBERS_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
             rs.next();
             return Math.max(1, rs.getInt(1));
-        }
+        }));
     }
 
     private int ownedCount(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(OWNED_COUNT_SQL)) {
+        return Jdbc.withStatement(conn, OWNED_COUNT_SQL, ps -> {
             ps.setString(1, ownerId);
-            try (ResultSet rs = ps.executeQuery()) {
+            return Jdbc.withResultSet(ps, rs -> {
                 rs.next();
                 return rs.getInt(1);
-            }
-        }
+            });
+        });
     }
 
     private void releaseOwnedBuckets(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(RELEASE_ALL_SQL)) {
+        Jdbc.exec(conn, RELEASE_ALL_SQL, ps -> {
             ps.setString(1, ownerId);
             List<Integer> released = returnedBuckets(ps);
             if (!released.isEmpty()) {
                 LOG.log(Level.INFO, "Relay released all owned buckets owner:" + ownerId
                         + ", count:" + released.size() + describeIfSmall(released));
             }
-        }
+        });
     }
 
     private void releaseExcess(Connection conn, int excess) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(RELEASE_EXCESS_SQL)) {
+        Jdbc.exec(conn, RELEASE_EXCESS_SQL, ps -> {
             ps.setString(1, ownerId);
             ps.setInt(2, excess);
             List<Integer> released = returnedBuckets(ps);
@@ -299,11 +291,11 @@ public final class BucketLeaseManager implements BucketSource {
                 LOG.log(Level.INFO, "Relay released excess buckets owner:" + ownerId
                         + ", count:" + released.size() + describeIfSmall(released));
             }
-        }
+        });
     }
 
     private void claimDeficit(Connection conn, int deficit) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(CLAIM_DEFICIT_SQL)) {
+        Jdbc.exec(conn, CLAIM_DEFICIT_SQL, ps -> {
             ps.setString(1, ownerId);
             ps.setLong(2, leaseMillis);
             ps.setInt(3, deficit);
@@ -312,7 +304,7 @@ public final class BucketLeaseManager implements BucketSource {
                 LOG.log(Level.INFO, "Relay claimed buckets owner:" + ownerId
                         + ", count:" + claimed.size() + describeIfSmall(claimed));
             }
-        }
+        });
     }
 
     /**
@@ -321,24 +313,24 @@ public final class BucketLeaseManager implements BucketSource {
      * not just how many.
      */
     private static List<Integer> returnedBuckets(PreparedStatement ps) throws SQLException {
-        List<Integer> buckets = new ArrayList<>();
-        try (ResultSet rs = ps.executeQuery()) {
+        return Jdbc.withResultSet(ps, rs -> {
+            List<Integer> buckets = new ArrayList<>();
             while (rs.next()) {
                 buckets.add(rs.getInt(1));
             }
-        }
-        return buckets;
+            return buckets;
+        });
     }
 
     /** As {@link #returnedBuckets}, for the {@code owner} column pruned from {@code tandem_relay_member}. */
     private static List<String> returnedOwners(PreparedStatement ps) throws SQLException {
-        List<String> owners = new ArrayList<>();
-        try (ResultSet rs = ps.executeQuery()) {
+        return Jdbc.withResultSet(ps, rs -> {
+            List<String> owners = new ArrayList<>();
             while (rs.next()) {
                 owners.add(rs.getString(1));
             }
-        }
-        return owners;
+            return owners;
+        });
     }
 
     /**

@@ -101,7 +101,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     @Override
     public void insert(OutboxMessage message) {
         Objects.requireNonNull(message, "message");
-        Jdbc.run(dataSource, conn -> {
+        Jdbc.exec(dataSource, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
                 bind(ps, message);
                 ps.executeUpdate();
@@ -118,7 +118,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         // Mutated inside the lambda below and read from the exception mapper on failure — an array
         // (not a plain local) because the mapper closes over it after the lambda returns/throws.
         OutboxMessage[] current = new OutboxMessage[1];
-        Jdbc.run(dataSource, conn -> {
+        Jdbc.exec(dataSource, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
                 for (OutboxMessage message : messages) {
                     current[0] = message;

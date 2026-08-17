@@ -181,7 +181,7 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (ids.isEmpty()) {
             return;
         }
-        Jdbc.run(dataSource, "markDoneBatch failed", conn -> {
+        Jdbc.exec(dataSource, "markDoneBatch failed", conn -> {
             try (PreparedStatement ps = conn.prepareStatement(MARK_DONE_SQL)) {
                 ps.setArray(1, conn.createArrayOf("bigint", ids.toArray()));
                 ps.executeUpdate();
@@ -191,7 +191,7 @@ public final class JdbcOutboxStore implements OutboxStore {
 
     @Override
     public void markForRetry(long id, String error, Duration retryDelay) {
-        Jdbc.run(dataSource, "markForRetry failed for id " + id, conn -> {
+        Jdbc.exec(dataSource, "markForRetry failed for id " + id, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(MARK_FOR_RETRY_SQL)) {
                 ps.setString(1, error);
                 if (retryDelay == null) {
@@ -207,7 +207,7 @@ public final class JdbcOutboxStore implements OutboxStore {
 
     @Override
     public void markFailed(long id, String error) {
-        Jdbc.run(dataSource, "markFailed failed for id " + id, conn -> {
+        Jdbc.exec(dataSource, "markFailed failed for id " + id, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(MARK_FAILED_SQL)) {
                 ps.setString(1, error);
                 ps.setLong(2, id);

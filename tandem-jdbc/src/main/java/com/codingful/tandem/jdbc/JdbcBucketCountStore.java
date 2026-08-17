@@ -48,7 +48,7 @@ public final class JdbcBucketCountStore implements BucketCountStore {
         if (candidate <= 0) {
             throw new IllegalArgumentException("candidate bucketCount must be positive: " + candidate);
         }
-        Jdbc.run(dataSource, "Seeding tandem_meta bucket_count failed", conn -> {
+        Jdbc.exec(dataSource, "Seeding tandem_meta bucket_count failed", conn -> {
             try (PreparedStatement ps = conn.prepareStatement(SEED_SQL)) {
                 ps.setString(1, Integer.toString(candidate));
                 ps.executeUpdate();   // 0 rows if a value was already present — that's the expected race loser

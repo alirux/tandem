@@ -56,7 +56,7 @@ public final class JdbcRelayControlSource implements RelayControlSource {
 
     @Override
     public void onStart() {
-        Jdbc.run(dataSource, "recording relay coordination mode failed", conn -> {
+        Jdbc.exec(dataSource, "recording relay coordination mode failed", conn -> {
             try (PreparedStatement coordinationPs = conn.prepareStatement(UPSERT_COORDINATION_SQL);
                     PreparedStatement intervalPs = conn.prepareStatement(UPSERT_HEARTBEAT_INTERVAL_SQL)) {
                 coordinationPs.setString(1, coordination.name());
@@ -69,7 +69,7 @@ public final class JdbcRelayControlSource implements RelayControlSource {
 
     @Override
     public void heartbeat() {
-        Jdbc.run(dataSource, "relay heartbeat failed", conn -> {
+        Jdbc.exec(dataSource, "relay heartbeat failed", conn -> {
             try (PreparedStatement ps = conn.prepareStatement(HEARTBEAT_SQL)) {
                 ps.executeUpdate();
             }
@@ -78,7 +78,7 @@ public final class JdbcRelayControlSource implements RelayControlSource {
 
     @Override
     public void refresh() {
-        Jdbc.run(dataSource, "refreshing relay control state failed", conn -> {
+        Jdbc.exec(dataSource, "refreshing relay control state failed", conn -> {
             wholeRelayPaused = readRelayPaused(conn);
             pausedBuckets.set(coordination == Coordination.LEASE ? readPausedBuckets(conn) : Set.of());
         });
