@@ -1,7 +1,6 @@
 package com.codingful.tandem.jdbc;
 
 import com.codingful.tandem.core.port.DiscardService;
-import java.sql.PreparedStatement;
 import java.util.Objects;
 import javax.sql.DataSource;
 
@@ -25,12 +24,11 @@ public final class JdbcDiscardService implements DiscardService {
 
     @Override
     public boolean discard(long id, String reason) {
-        return Jdbc.run(dataSource, "discard failed for id " + id, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(DISCARD_SQL)) {
-                ps.setString(1, reason);
-                ps.setLong(2, id);
-                return ps.executeUpdate() > 0;
-            }
-        });
+        return Jdbc.run(dataSource, "discard failed for id " + id, conn ->
+                Jdbc.withStatement(conn, DISCARD_SQL, ps -> {
+                    ps.setString(1, reason);
+                    ps.setLong(2, id);
+                    return ps.executeUpdate() > 0;
+                }));
     }
 }

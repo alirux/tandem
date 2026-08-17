@@ -2,8 +2,6 @@ package com.codingful.tandem.jdbc;
 
 import com.codingful.tandem.core.exception.TandemException;
 import com.codingful.tandem.core.port.BucketCountStore;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.Objects;
 import java.util.OptionalInt;
 import javax.sql.DataSource;
@@ -35,12 +33,9 @@ public final class JdbcBucketCountStore implements BucketCountStore {
 
     @Override
     public OptionalInt read() {
-        return Jdbc.run(dataSource, "Reading tandem_meta bucket_count failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(READ_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? OptionalInt.of(parse(rs.getString(1))) : OptionalInt.empty();
-            }
-        });
+        return Jdbc.run(dataSource, "Reading tandem_meta bucket_count failed", conn ->
+                Jdbc.withStatement(conn, READ_SQL, ps -> Jdbc.withResultSet(ps, rs ->
+                        rs.next() ? OptionalInt.of(parse(rs.getString(1))) : OptionalInt.empty())));
     }
 
     @Override
@@ -48,12 +43,11 @@ public final class JdbcBucketCountStore implements BucketCountStore {
         if (candidate <= 0) {
             throw new IllegalArgumentException("candidate bucketCount must be positive: " + candidate);
         }
-        Jdbc.exec(dataSource, "Seeding tandem_meta bucket_count failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(SEED_SQL)) {
-                ps.setString(1, Integer.toString(candidate));
-                ps.executeUpdate();   // 0 rows if a value was already present — that's the expected race loser
-            }
-        });
+        Jdbc.exec(dataSource, "Seeding tandem_meta bucket_count failed", conn ->
+                Jdbc.exec(conn, SEED_SQL, ps -> {
+                    ps.setString(1, Integer.toString(candidate));
+                    ps.executeUpdate();   // 0 rows if a value was already present — that's the expected race loser
+                }));
         // Re-read the now-effective value (this call's candidate, or the winner's if we lost the race).
         return read().orElseThrow(() ->
                 new TandemException("tandem_meta bucket_count missing immediately after seed"));

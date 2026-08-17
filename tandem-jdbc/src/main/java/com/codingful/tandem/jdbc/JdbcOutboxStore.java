@@ -4,8 +4,6 @@ import com.codingful.tandem.core.LagSnapshot;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.port.OutboxStore;
 import java.sql.Array;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
@@ -149,22 +147,21 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (buckets.isEmpty() || batchSize <= 0) {
             return List.of();
         }
-        return Jdbc.run(dataSource, "claimBatch failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(CLAIM_SQL)) {
-                Array bucketArray = conn.createArrayOf("integer", buckets.toArray());
-                ps.setArray(1, bucketArray);
-                ps.setInt(2, batchSize);
-                ps.setString(3, workerId);
-                ps.setLong(4, lease.toMillis());
-                List<OutboxRecord> claimed = new ArrayList<>();
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        claimed.add(OutboxRowMapper.map(rs));
-                    }
-                }
-                return claimed;
-            }
-        });
+        return Jdbc.run(dataSource, "claimBatch failed", conn ->
+                Jdbc.withStatement(conn, CLAIM_SQL, ps -> {
+                    Array bucketArray = conn.createArrayOf("integer", buckets.toArray());
+                    ps.setArray(1, bucketArray);
+                    ps.setInt(2, batchSize);
+                    ps.setString(3, workerId);
+                    ps.setLong(4, lease.toMillis());
+                    return Jdbc.withResultSet(ps, rs -> {
+                        List<OutboxRecord> claimed = new ArrayList<>();
+                        while (rs.next()) {
+                            claimed.add(OutboxRowMapper.map(rs));
+                        }
+                        return claimed;
+                    });
+                }));
     }
 
     @Override
@@ -181,50 +178,46 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (ids.isEmpty()) {
             return;
         }
-        Jdbc.exec(dataSource, "markDoneBatch failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(MARK_DONE_SQL)) {
-                ps.setArray(1, conn.createArrayOf("bigint", ids.toArray()));
-                ps.executeUpdate();
-            }
-        });
+        Jdbc.exec(dataSource, "markDoneBatch failed", conn ->
+                Jdbc.exec(conn, MARK_DONE_SQL, ps -> {
+                    ps.setArray(1, conn.createArrayOf("bigint", ids.toArray()));
+                    ps.executeUpdate();
+                }));
     }
 
     @Override
     public void markForRetry(long id, String error, Duration retryDelay) {
-        Jdbc.exec(dataSource, "markForRetry failed for id " + id, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(MARK_FOR_RETRY_SQL)) {
-                ps.setString(1, error);
-                if (retryDelay == null) {
-                    ps.setNull(2, Types.BIGINT);          // now() + NULL = NULL → due immediately
-                } else {
-                    ps.setLong(2, retryDelay.toMillis());
-                }
-                ps.setLong(3, id);
-                ps.executeUpdate();
-            }
-        });
+        Jdbc.exec(dataSource, "markForRetry failed for id " + id, conn ->
+                Jdbc.exec(conn, MARK_FOR_RETRY_SQL, ps -> {
+                    ps.setString(1, error);
+                    if (retryDelay == null) {
+                        ps.setNull(2, Types.BIGINT);          // now() + NULL = NULL → due immediately
+                    } else {
+                        ps.setLong(2, retryDelay.toMillis());
+                    }
+                    ps.setLong(3, id);
+                    ps.executeUpdate();
+                }));
     }
 
     @Override
     public void markFailed(long id, String error) {
-        Jdbc.exec(dataSource, "markFailed failed for id " + id, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(MARK_FAILED_SQL)) {
-                ps.setString(1, error);
-                ps.setLong(2, id);
-                ps.executeUpdate();
-            }
-        });
+        Jdbc.exec(dataSource, "markFailed failed for id " + id, conn ->
+                Jdbc.exec(conn, MARK_FAILED_SQL, ps -> {
+                    ps.setString(1, error);
+                    ps.setLong(2, id);
+                    ps.executeUpdate();
+                }));
     }
 
     @Override
     public int reclaimExpiredLeases() {
-        return Jdbc.run(dataSource, "reclaimExpiredLeases failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(RECLAIM_SQL)) {
-                ps.setString(1, LEASE_EXPIRED_ERROR);
-                ps.setInt(2, maxAttempts);
-                return ps.executeUpdate();
-            }
-        });
+        return Jdbc.run(dataSource, "reclaimExpiredLeases failed", conn ->
+                Jdbc.withStatement(conn, RECLAIM_SQL, ps -> {
+                    ps.setString(1, LEASE_EXPIRED_ERROR);
+                    ps.setInt(2, maxAttempts);
+                    return ps.executeUpdate();
+                }));
     }
 
     /**
@@ -233,52 +226,43 @@ public final class JdbcOutboxStore implements OutboxStore {
      */
     @Override
     public Optional<LagSnapshot> lag() {
-        return Jdbc.run(dataSource, "lag failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(LAG_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                rs.next();   // an aggregate without GROUP BY always returns exactly one row
-                long pending = rs.getLong(1);
-                OffsetDateTime oldest = rs.getObject(2, OffsetDateTime.class);   // NULL when nothing is pending
-                return Optional.of(new LagSnapshot(pending,
-                        Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
-            }
-        });
+        return Jdbc.run(dataSource, "lag failed", conn ->
+                Jdbc.withStatement(conn, LAG_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                    long pending = rs.getLong(1);
+                    OffsetDateTime oldest = rs.getObject(2, OffsetDateTime.class);   // NULL when nothing is pending
+                    return Optional.of(new LagSnapshot(pending,
+                            Optional.ofNullable(oldest).map(OffsetDateTime::toInstant)));
+                })));
     }
 
     @Override
     public OptionalLong failedCount() {
-        return Jdbc.run(dataSource, "failedCount failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(FAILED_COUNT_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                rs.next();   // an aggregate without GROUP BY always returns exactly one row
-                return OptionalLong.of(rs.getLong(1));
-            }
-        });
+        return Jdbc.run(dataSource, "failedCount failed", conn ->
+                Jdbc.withStatement(conn, FAILED_COUNT_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                    return OptionalLong.of(rs.getLong(1));
+                })));
     }
 
     @Override
     public OptionalLong blockedCount() {
-        return Jdbc.run(dataSource, "blockedCount failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(BLOCKED_COUNT_SQL);
-                 ResultSet rs = ps.executeQuery()) {
-                rs.next();   // an aggregate without GROUP BY always returns exactly one row
-                return OptionalLong.of(rs.getLong(1));
-            }
-        });
+        return Jdbc.run(dataSource, "blockedCount failed", conn ->
+                Jdbc.withStatement(conn, BLOCKED_COUNT_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();   // an aggregate without GROUP BY always returns exactly one row
+                    return OptionalLong.of(rs.getLong(1));
+                })));
     }
 
     @Override
     public OptionalInt replaysOf(long id) {
-        return Jdbc.run(dataSource, "replaysOf failed for id " + id, conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(REPLAYS_SQL)) {
-                ps.setLong(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
+        return Jdbc.run(dataSource, "replaysOf failed for id " + id, conn ->
+                Jdbc.withStatement(conn, REPLAYS_SQL, ps -> {
+                    ps.setLong(1, id);
                     // Empty when the row is gone — cleanup can delete a DONE row between the ack and this
                     // lookup, and an absent row cannot be shown not to have been replayed.
-                    return rs.next() ? OptionalInt.of(rs.getInt(1)) : OptionalInt.empty();
-                }
-            }
-        });
+                    return Jdbc.withResultSet(ps, rs -> rs.next() ? OptionalInt.of(rs.getInt(1)) : OptionalInt.empty());
+                }));
     }
 
     @Override
@@ -287,12 +271,11 @@ public final class JdbcOutboxStore implements OutboxStore {
         if (batchSize <= 0) {
             return 0;
         }
-        return Jdbc.run(dataSource, "cleanup failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(CLEANUP_SQL)) {
-                ps.setObject(1, OffsetDateTime.ofInstant(doneBefore, ZoneOffset.UTC));
-                ps.setInt(2, batchSize);
-                return ps.executeUpdate();
-            }
-        });
+        return Jdbc.run(dataSource, "cleanup failed", conn ->
+                Jdbc.withStatement(conn, CLEANUP_SQL, ps -> {
+                    ps.setObject(1, OffsetDateTime.ofInstant(doneBefore, ZoneOffset.UTC));
+                    ps.setInt(2, batchSize);
+                    return ps.executeUpdate();
+                }));
     }
 }

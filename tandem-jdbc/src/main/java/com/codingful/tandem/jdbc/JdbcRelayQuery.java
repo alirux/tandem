@@ -5,7 +5,6 @@ import com.codingful.tandem.core.RelayCoordinationMode;
 import com.codingful.tandem.core.RelayStatusView;
 import com.codingful.tandem.core.WorkerView;
 import com.codingful.tandem.core.port.RelayQuery;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -122,76 +121,62 @@ public final class JdbcRelayQuery implements RelayQuery {
     }
 
     private Optional<Instant> readCoordinationUpdatedAt() {
-        return Jdbc.run(dataSource, "coordination heartbeat query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(COORDINATION_UPDATED_AT_SQL);
-                    ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.ofNullable(instantOrNull(rs, "updated_at")) : Optional.empty();
-            }
-        });
+        return Jdbc.run(dataSource, "coordination heartbeat query failed", conn ->
+                Jdbc.withStatement(conn, COORDINATION_UPDATED_AT_SQL, ps -> Jdbc.withResultSet(ps, rs ->
+                        rs.next() ? Optional.ofNullable(instantOrNull(rs, "updated_at")) : Optional.empty())));
     }
 
     @Override
     public List<BucketStatusView> buckets(boolean uncoveredOnly) {
         String sql = uncoveredOnly ? UNCOVERED_BUCKETS_SQL : BUCKETS_SQL;
-        return Jdbc.run(dataSource, "buckets query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                    ResultSet rs = ps.executeQuery()) {
-                List<BucketStatusView> rows = new ArrayList<>();
-                while (rs.next()) {
-                    rows.add(mapBucket(rs));
-                }
-                return rows;
-            }
-        });
+        return Jdbc.run(dataSource, "buckets query failed", conn ->
+                Jdbc.withStatement(conn, sql, ps -> Jdbc.withResultSet(ps, rs -> {
+                    List<BucketStatusView> rows = new ArrayList<>();
+                    while (rs.next()) {
+                        rows.add(mapBucket(rs));
+                    }
+                    return rows;
+                })));
     }
 
     @Override
     public Optional<BucketStatusView> bucket(int bucket) {
-        return Jdbc.run(dataSource, "bucket query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(BUCKET_BY_ID_SQL)) {
-                ps.setInt(1, bucket);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? Optional.of(mapBucket(rs)) : Optional.empty();
-                }
-            }
-        });
+        return Jdbc.run(dataSource, "bucket query failed", conn ->
+                Jdbc.withStatement(conn, BUCKET_BY_ID_SQL, ps -> {
+                    ps.setInt(1, bucket);
+                    return Jdbc.withResultSet(ps, rs -> rs.next() ? Optional.of(mapBucket(rs)) : Optional.empty());
+                }));
     }
 
     @Override
     public List<WorkerView> workers() {
-        return Jdbc.run(dataSource, "workers query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(WORKERS_SQL);
-                    ResultSet rs = ps.executeQuery()) {
-                List<WorkerView> rows = new ArrayList<>();
-                while (rs.next()) {
-                    rows.add(new WorkerView(rs.getString("owner"), instantOrNull(rs, "updated_at"), rs.getInt("bucket_count")));
-                }
-                return rows;
-            }
-        });
+        return Jdbc.run(dataSource, "workers query failed", conn ->
+                Jdbc.withStatement(conn, WORKERS_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    List<WorkerView> rows = new ArrayList<>();
+                    while (rs.next()) {
+                        rows.add(new WorkerView(rs.getString("owner"), instantOrNull(rs, "updated_at"), rs.getInt("bucket_count")));
+                    }
+                    return rows;
+                })));
     }
 
     private Map<String, String> readMeta() {
-        return Jdbc.run(dataSource, "tandem_meta query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(META_SQL);
-                    ResultSet rs = ps.executeQuery()) {
-                Map<String, String> meta = new HashMap<>();
-                while (rs.next()) {
-                    meta.put(rs.getString("key"), rs.getString("value"));
-                }
-                return meta;
-            }
-        });
+        return Jdbc.run(dataSource, "tandem_meta query failed", conn ->
+                Jdbc.withStatement(conn, META_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
+                    Map<String, String> meta = new HashMap<>();
+                    while (rs.next()) {
+                        meta.put(rs.getString("key"), rs.getString("value"));
+                    }
+                    return meta;
+                })));
     }
 
     private int count(String sql) {
-        return Jdbc.run(dataSource, "count query failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                    ResultSet rs = ps.executeQuery()) {
-                rs.next();
-                return rs.getInt(1);
-            }
-        });
+        return Jdbc.run(dataSource, "count query failed", conn ->
+                Jdbc.withStatement(conn, sql, ps -> Jdbc.withResultSet(ps, rs -> {
+                    rs.next();
+                    return rs.getInt(1);
+                })));
     }
 
     private static BucketStatusView mapBucket(ResultSet rs) throws SQLException {

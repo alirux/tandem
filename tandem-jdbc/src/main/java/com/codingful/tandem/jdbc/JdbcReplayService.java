@@ -6,7 +6,6 @@ import com.codingful.tandem.core.ReplayResult;
 import com.codingful.tandem.core.port.ReplayService;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -98,13 +97,13 @@ public final class JdbcReplayService implements ReplayService {
     }
 
     private static long count(Connection conn, String where, List<Object> params) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("SELECT count(*) FROM tandem_outbox WHERE " + where)) {
+        return Jdbc.withStatement(conn, "SELECT count(*) FROM tandem_outbox WHERE " + where, ps -> {
             bind(ps, params);
-            try (ResultSet rs = ps.executeQuery()) {
+            return Jdbc.withResultSet(ps, rs -> {
                 rs.next();
                 return rs.getLong(1);
-            }
-        }
+            });
+        });
     }
 
     private static int resetToPending(Connection conn, String where, List<Object> params) throws SQLException {
@@ -112,10 +111,10 @@ public final class JdbcReplayService implements ReplayService {
                 + "   SET status = 0, attempts = 0, replays = replays + 1, next_attempt_at = NULL,"
                 + "       locked_by = NULL, locked_until = NULL"
                 + " WHERE " + where;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        return Jdbc.withStatement(conn, sql, ps -> {
             bind(ps, params);
             return ps.executeUpdate();
-        }
+        });
     }
 
     private static void bind(PreparedStatement ps, List<Object> params) throws SQLException {

@@ -1,8 +1,6 @@
 package com.codingful.tandem.jdbc;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.HashSet;
@@ -57,23 +55,20 @@ public final class JdbcRelayControlSource implements RelayControlSource {
     @Override
     public void onStart() {
         Jdbc.exec(dataSource, "recording relay coordination mode failed", conn -> {
-            try (PreparedStatement coordinationPs = conn.prepareStatement(UPSERT_COORDINATION_SQL);
-                    PreparedStatement intervalPs = conn.prepareStatement(UPSERT_HEARTBEAT_INTERVAL_SQL)) {
-                coordinationPs.setString(1, coordination.name());
-                coordinationPs.executeUpdate();
-                intervalPs.setString(1, Long.toString(heartbeatInterval.toSeconds()));
-                intervalPs.executeUpdate();
-            }
+            Jdbc.exec(conn, UPSERT_COORDINATION_SQL, ps -> {
+                ps.setString(1, coordination.name());
+                ps.executeUpdate();
+            });
+            Jdbc.exec(conn, UPSERT_HEARTBEAT_INTERVAL_SQL, ps -> {
+                ps.setString(1, Long.toString(heartbeatInterval.toSeconds()));
+                ps.executeUpdate();
+            });
         });
     }
 
     @Override
     public void heartbeat() {
-        Jdbc.exec(dataSource, "relay heartbeat failed", conn -> {
-            try (PreparedStatement ps = conn.prepareStatement(HEARTBEAT_SQL)) {
-                ps.executeUpdate();
-            }
-        });
+        Jdbc.exec(dataSource, "relay heartbeat failed", conn -> Jdbc.exec(conn, HEARTBEAT_SQL, ps -> ps.executeUpdate()));
     }
 
     @Override
@@ -95,20 +90,17 @@ public final class JdbcRelayControlSource implements RelayControlSource {
     }
 
     private static boolean readRelayPaused(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(READ_RELAY_PAUSED_SQL);
-                ResultSet rs = ps.executeQuery()) {
-            return rs.next() && "true".equals(rs.getString(1));
-        }
+        return Jdbc.withStatement(conn, READ_RELAY_PAUSED_SQL, ps ->
+                Jdbc.withResultSet(ps, rs -> rs.next() && "true".equals(rs.getString(1))));
     }
 
     private static Set<Integer> readPausedBuckets(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(READ_PAUSED_BUCKETS_SQL);
-                ResultSet rs = ps.executeQuery()) {
+        return Jdbc.withStatement(conn, READ_PAUSED_BUCKETS_SQL, ps -> Jdbc.withResultSet(ps, rs -> {
             Set<Integer> buckets = new HashSet<>();
             while (rs.next()) {
                 buckets.add(rs.getInt(1));
             }
             return buckets;
-        }
+        }));
     }
 }
