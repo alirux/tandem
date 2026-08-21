@@ -122,6 +122,33 @@ The project follows a hexagonal (ports & adapters) style: `tandem-core` defines 
 adapter modules depend on `tandem-core`, never the reverse. See
 [docs/HLD.md](docs/HLD.md) for the full architecture.
 
+## Design documents
+
+| Document | Contents |
+|---|---|
+| [HLD.md](docs/HLD.md) | High-Level Design — architecture, decisions, data model, flow |
+| [LLD-base.md](docs/LLD-base.md) | Shared build/package conventions |
+| [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
+| [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
+| [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive — designed, not implemented |
+| [tracing-concepts.md](docs/tracing-concepts.md) | Distributed tracing vocabulary — span, trace, `traceparent`, span link (reference, not Tandem-specific) |
+| [LLD-micrometer.md](docs/LLD-micrometer.md) | Micrometer metrics adapter — meter mapping, gauge registration mechanics, Spring autoconfiguration |
+| [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
+| [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |
+| [LLD-spring-producer.md](docs/LLD-spring-producer.md) | Spring write-side ergonomics — the Template, `@TransactionalOutbox`, and Spring-events tiers, plus optional payload serialization |
+| [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
+| [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract. Every error `type` it returns resolves to a [problem-type page](https://tandem.codingful.com/problems/). |
+| [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
+| [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
+| [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
+| [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
+| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — the opt-in Tandem-assigned sequence number (`managedSeq()`) and the opt-in write-side advisory lock that serializes concurrent writers (`lockedWrite()`), independent of each other. Also records what the app-assigned `seq` default costs today (measured) |
+| [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
+| [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith, a hand-rolled outbox, and the stream processors (Kafka Streams, Flink) |
+| [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
+| [IMPLEMENTATION-PLAN-basic-round.md](docs/IMPLEMENTATION-PLAN-basic-round.md) | Execution plan, scope fence, and per-module done-ness for the first milestone |
+| [IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) | Plan for the `LEASE` multi-instance coordination opt-in (embedded-multi-replica or standalone) |
+
 ## Making a change
 
 1. Fork the repository and create a branch from `main`.

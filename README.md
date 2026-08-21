@@ -183,47 +183,27 @@ consumer.
   (binary mode), interoperable with the wider ecosystem.
 - **First-class, per-aggregate replay** — re-publish a single aggregate's history through a
   programmatic Java API (`ReplayService`).
-- **Pluggable metrics port** — `TandemMetrics` in `tandem-core` reports published and retried counts,
-  a per-row publish-latency histogram (insert-to-ack, the runtime-checkable read on the p50/p99
-  latency targets), config-validation failures, and the signals an operator actually alerts on: how
-  many events are waiting, how long the oldest has been waiting, how many are permanently failed right
-  now, how many later events are blocked behind one of those failures (queued but unclaimable until it
-  is resolved — reported separately so it never gets confused with a relay that is merely falling
-  behind), how many relay workers are alive, and — under `LEASE` coordination — how many buckets have
-  work waiting but no live owner. All of it is read periodically and **only when an adapter is wired**,
-  so a no-op default costs nothing. `tandem-micrometer` binds all of it to a real Micrometer
-  `MeterRegistry`, autoconfigured by `tandem-spring-relay` the moment both are on the classpath.
-- **Embedded or standalone, single or multi-instance** — the relay runs in your app or in a separate
-  process you assemble yourself, and coordinates one or many concurrent instances via a declared
-  mode: `SINGLE` (one instance owns all buckets, zero cost) or `LEASE` (lease-partitioned ownership
-  for a horizontally-scaled client or multiple relay processes). Both modes are implemented and
-  tested. Only the outbox INSERT must live in the client, which stays dependency-light.
+- **Pluggable metrics port** — `TandemMetrics` reports the signals an operator alerts on: backlog
+  age, failures, blocked/waiting events, worker health, and bucket coverage under `LEASE`. No-op
+  until an adapter is wired; `tandem-micrometer` binds it to Micrometer, autoconfigured by
+  `tandem-spring-relay`.
+- **Embedded or standalone, single or multi-instance** — the relay runs in your app or a separate
+  process, coordinating via a declared mode: `SINGLE` (one instance, zero cost) or `LEASE`
+  (lease-partitioned ownership across multiple instances). Only the outbox INSERT must live in the
+  client, which stays dependency-light.
 - **An Admin API to see and act on a stuck outbox** — `tandem-admin`, an optional REST module
-  (off by default) covering the outbox (health summary, search, message detail, replay, bulk
-  replay, discard) and the relay (status, pause/resume — whole relay or one bucket under `LEASE`,
-  per-bucket/per-worker observability, force-release a stalled bucket). API-first: the OpenAPI
-  contract is the source of truth. Every write operation is audit-logged, including the caller's
-  identity when the host application authenticates requests. Contract:
+  (off by default) for outbox inspection and replay/discard, plus relay status/pause/resume.
+  API-first, every write audit-logged. Contract:
   [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml).
-  [`tandem-cli`](tandem-cli/) is a Go command-line frontend over the same contract — discoverable
-  verbs and typed flags instead of hand-built `curl` calls, never a second control path. Separate
-  Go module and release cadence from the library; command reference generated at
-  [tandem-cli/docs/cli](tandem-cli/docs/cli/tandem-cli.md), design in [LLD-cli.md](docs/LLD-cli.md).
-- **Framework-agnostic core** — works with plain Java and no container. Spring Boot autoconfiguration is
-  implemented for both the **write side** (`tandem-spring-producer` — the four usage tiers over the outbox
-  INSERT) and the **relay** (`tandem-spring-relay` — started and stopped with the application), so a Spring
-  app needs no manual wiring (see the [Spring sample](#try-it)). One artifact per module serves **Boot 3.x
-  and 4.x** alike — Spring is `compileOnly`, so your app's own version binds at runtime, and `./gradlew
-  check` runs the autoconfiguration tests against both lines. Plain-Java wiring stays available (see
-  [Usage](#usage)).
-- **Trace and correlation propagation across the outbox boundary** — off by default
-  (`tandem.tracing.enabled`), so a consumed event can be traced back to the domain transaction that
-  produced it. Propagation mode carries the trace context and correlation id onto the row at insert;
-  instrumented mode (`tandem.tracing.publish-span`) additionally emits a relay publish span at the
-  real send instant. Ships for Spring applications (bridged to Micrometer Tracing) and, via the
-  optional `tandem-tracing-otel` module, for any application instrumenting itself with the
-  OpenTelemetry SDK directly. The correlation id alone needs no tracing library at all — read from an
-  MDC key or the explicit `TandemContext` API — and is also searchable through the Admin API.
+  [`tandem-cli`](tandem-cli/) is a Go frontend over the same contract — never a second control path.
+- **Framework-agnostic core** — works with plain Java, no container required. Spring Boot
+  autoconfiguration covers both the write side (`tandem-spring-producer`) and the relay
+  (`tandem-spring-relay`), one artifact per module serving Boot 3.x and 4.x alike. See the
+  [Spring sample](#try-it) and [Usage](#usage).
+- **Trace and correlation propagation across the outbox boundary** — off by default, so a consumed
+  event traces back to the domain transaction that produced it. Ships for Spring (bridged to
+  Micrometer Tracing) and, via the optional `tandem-tracing-otel` module, for plain OpenTelemetry.
+  The correlation id alone needs no tracing library and is searchable through the Admin API.
   Design: [HLD-tracing.md](docs/HLD-tracing.md).
 
 ## Architecture in detail
@@ -338,23 +318,16 @@ public Order placeOrder(Order order) {
 }
 ```
 
-`order.version()` above is illustrative, not a safe default: with a JPA `@Version`, the field only
-advances at *flush*, and a write-side tier runs inside the caller's own transaction — so by default
-it reads the *pre-increment* value, and two mutations in one transaction collide on
-`UNIQUE(aggregate_id, seq)`. Either build the outbox row after an explicit flush, or take `seq` from
-a source that advances per event — `managedSeq()` in place of `seq(…)` hands the number to Tandem
-itself, for an aggregate that has no version to give ([HLD-managed-seq](docs/HLD-managed-seq.md) §4.1).
+`order.version()` above is illustrative, not a safe default: a JPA `@Version` only advances at
+*flush*, so a write-side tier running inside the caller's transaction reads the pre-increment value
+— two mutations in one transaction then collide on `UNIQUE(aggregate_id, seq)`. Build the outbox row
+after an explicit flush, or use `managedSeq()` to let Tandem assign the number instead.
 
-Prefer the explicit flush, because it does a second job that is easy to miss: it is also what makes
-the aggregate's own write lock **serialize concurrent writers**. Without it the outbox row is
-inserted before the domain `UPDATE`, so the lock is taken too late to order anything, and two
-writers to one aggregate can publish out of order even though the code looks correctly locked. It
-does not cover writers that only insert *children* of the aggregate — they share no row to lock; for
-those, `lockedWrite()` asks Tandem to take its own advisory lock on the aggregate instead, keyed on
-the aggregate id rather than on any domain row
-([HLD-managed-seq](docs/HLD-managed-seq.md) §4.2). Details and measurements:
-[docs/HLD.md](docs/HLD.md#42-ordering-established-at-write-time) §4.2,
-[docs/HLD-managed-seq.md](docs/HLD-managed-seq.md).
+The explicit flush also does a second job: it's what makes the aggregate's write lock **serialize
+concurrent writers** — without it the lock is taken too late to order anything. It doesn't cover
+writers that only touch *children* of the aggregate (no shared row to lock); `lockedWrite()` asks
+Tandem to take its own advisory lock instead. Details and measurements:
+[HLD §4.2](docs/HLD.md#42-ordering-established-at-write-time), [HLD-managed-seq.md](docs/HLD-managed-seq.md).
 
 **Relay** — wire it directly (no Spring required); it polls the outbox and publishes to Kafka,
 preserving per-aggregate order:
@@ -362,11 +335,9 @@ preserving per-aggregate order:
 ```java
 OutboxRepository repo = new JdbcOutboxRepository(dataSource, /* bucketCount */ 256);
 
-// Startup guard: fail fast if the write-side and the relay disagree on bucketCount. A mismatch
-// would route rows into buckets no worker polls — delivery stops with no error — so the first
-// side to start records the value and every later start validates against it. Run it once, on a
-// plain DataSource. (The write-side and relay usually run in separate processes; call it in each.)
-BucketCountGuard.check(dataSource, /* bucketCount */ 256);   // must match the repository above
+// Fail-fast guard: write-side and relay must agree on bucketCount, or rows silently land in
+// buckets no worker polls. Call once per process (write-side and relay usually run separately).
+BucketCountGuard.check(dataSource, /* bucketCount */ 256);
 
 OutboxStore      store      = new JdbcOutboxStore(dataSource, /* maxAttempts */ 10);
 TopicRouter      router     = TopicRouter.kebabWithSuffix("-topic");
@@ -375,14 +346,11 @@ WorkerPool       relay      = new WorkerPool(store, dispatcher, RelayConfig.defa
 relay.start();   // on shutdown: relay.stop();  (in-flight rows recovered by lease)
 ```
 
-Spring users write none of the above. `tandem-spring-producer` autoconfigures the write side (running
-the bucket-count guard for you) and adds the `TransactionalOutboxTemplate`, the `@TransactionalOutbox`
-annotation, and the Spring application-events tier; `tandem-spring-relay` autoconfigures the relay and
-starts it with the application. Both wire from `tandem.*` properties, with IDE completion and hover help
-from the metadata each module ships; each also ships a commented reference configuration
-(`tandem-producer-reference.yml`, `tandem-relay-reference.yml`) listing every key it binds with its
-default. See the [Spring sample](#try-it), [LLD-spring-producer.md](docs/LLD-spring-producer.md) and
-[LLD-spring-config.md](docs/LLD-spring-config.md).
+Spring users write none of the above: `tandem-spring-producer` autoconfigures the write side (plus
+the `TransactionalOutboxTemplate`, `@TransactionalOutbox`, and Spring-events tiers) and
+`tandem-spring-relay` autoconfigures and starts the relay. Both bind from `tandem.*` properties with
+IDE completion and a commented reference YAML. See the [Spring sample](#try-it),
+[LLD-spring-producer.md](docs/LLD-spring-producer.md) and [LLD-spring-config.md](docs/LLD-spring-config.md).
 
 ## Logging
 
@@ -432,30 +400,10 @@ of the version you actually depend on.
 
 ### Design documents
 
-| Document | Contents |
-|---|---|
-| [HLD.md](docs/HLD.md) | High-Level Design — architecture, decisions, data model, flow |
-| [LLD-base.md](docs/LLD-base.md) | Shared build/package conventions |
-| [HLD-cloudevents.md](docs/HLD-cloudevents.md) | CloudEvents publication format |
-| [HLD-tracing.md](docs/HLD-tracing.md) | Trace & correlation propagation |
-| [HLD-attempt-archive.md](docs/HLD-attempt-archive.md) | Forensic per-attempt archive — designed, not implemented |
-| [tracing-concepts.md](docs/tracing-concepts.md) | Distributed tracing vocabulary — span, trace, `traceparent`, span link (reference, not Tandem-specific) |
-| [LLD-micrometer.md](docs/LLD-micrometer.md) | Micrometer metrics adapter — meter mapping, gauge registration mechanics, Spring autoconfiguration |
-| [HLD-logging.md](docs/HLD-logging.md) | Logging posture — per-module logging API, level policy, what is never logged |
-| [LLD-spring-config.md](docs/LLD-spring-config.md) | Spring modules & configuration contract — module split, property contract, autoconfiguration (not the write-side ergonomics) |
-| [LLD-spring-producer.md](docs/LLD-spring-producer.md) | Spring write-side ergonomics — the Template, `@TransactionalOutbox`, and Spring-events tiers, plus optional payload serialization |
-| [LLD-bucket-count-guard.md](docs/LLD-bucket-count-guard.md) | Guard against a divergent bucket count between write-side and relay (core strategy + port, JDBC adapter) |
-| [HLD-admin-api.md](docs/HLD-admin-api.md) · [admin-api.openapi.yaml](docs/admin-api.openapi.yaml) | Admin API design + OpenAPI contract. Every error `type` it returns resolves to a [problem-type page](https://tandem.codingful.com/problems/). |
-| [LLD-cli.md](docs/LLD-cli.md) | `tandem-cli` — the Go command-line frontend over the Admin API |
-| [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
-| [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
-| [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
-| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — the opt-in Tandem-assigned sequence number (`managedSeq()`) and the opt-in write-side advisory lock that serializes concurrent writers (`lockedWrite()`), independent of each other. Also records what the app-assigned `seq` default costs today (measured) |
-| [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
-| [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith, a hand-rolled outbox, and the stream processors (Kafka Streams, Flink) |
-| [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
-| [IMPLEMENTATION-PLAN-basic-round.md](docs/IMPLEMENTATION-PLAN-basic-round.md) | Execution plan, scope fence, and per-module done-ness for the first milestone |
-| [IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) | Plan for the `LEASE` multi-instance coordination opt-in (embedded-multi-replica or standalone) |
+Tandem is designed spec-first — every feature has an HLD (architecture/decisions) and, where there's
+a swappable boundary, a per-module LLD. Start with [HLD.md](docs/HLD.md) for the overall
+architecture; the full index of every design document, what it covers, and its status is in
+[CONTRIBUTING.md#design-documents](CONTRIBUTING.md#design-documents).
 
 ## Design principles
 
@@ -504,64 +452,39 @@ Behaviours of what **is** shipped that can surprise you in production. Each one 
 trade-off or a tracked gap — none is a bug report. (For what is *not yet* shipped, see
 [Future work](#future-work) below.)
 
-- **PostgreSQL only today.** The shipped schema, the claim/lease SQL, and every integration test
-  target PostgreSQL — there is no MySQL baseline DDL and no MySQL engine variant in any released
-  version, so running Tandem against MySQL is not possible today.
+- **PostgreSQL only today.** No MySQL baseline DDL or engine variant ships yet — running Tandem
+  against MySQL isn't possible.
 
-- **A permanently failed event stops its aggregate.** The claim query only takes a row when no
-  earlier row of the same `aggregate_id` is still PENDING, IN_FLIGHT or FAILED — that is what
-  preserves per-aggregate order, and it means a row that exhausts `maxAttempts` (default 10, roughly
-  7 minutes with the jittered backoff ladder) leaves every later event of that aggregate
-  undelivered. Other aggregates are unaffected: the blast radius is one aggregate, by design. The
-  `TandemMetrics` `blocked.count` gauge reports how many later events are queued behind such a
-  failure, so the blast radius is observable without querying the table directly — but it stays
-  above zero, and a naive alert on backlog age alone will misread this as the relay stalling, until
-  the failure is resolved.
-  **Resolution:** the Admin API's replay/discard endpoints (`tandem-admin`) inspect `last_error` and
-  either retry the row or move it to `status = 4` (DISCARDED) to unblock the chain — see
-  [Try it](#try-it).
+- **A permanently failed event stops its aggregate.** A row that exhausts `maxAttempts` (default
+  10) blocks every later event of that aggregate; other aggregates are unaffected. `blocked.count`
+  makes the blast radius observable. **Resolution:** the Admin API's replay/discard endpoints
+  unblock it — see [Try it](#try-it).
 
-- **Ordering within an aggregate is only as good as your write-side.** Tandem relays rows in `id`
-  order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
-  two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
-  second, the relay will already have published the later event. The contract is that writers to one
-  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, an optimistic version
-  check, or Tandem's own `lockedWrite()` — and that `seq` is that aggregate's version, or Tandem's own
-  if the aggregate has none (`managedSeq()`). See [HLD §4.2](docs/HLD.md).
+- **Ordering within an aggregate is only as good as your write-side.** Tandem relays in `id` order
+  and rejects a duplicate `seq`, but doesn't create order — writers to one aggregate must be
+  serialized (a row lock, an optimistic check, or `lockedWrite()`). See [HLD §4.2](docs/HLD.md).
 
 - **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
-  and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox
-  pattern pays to never diverge.
+  and the mark-DONE republishes the event. Consumers must be idempotent.
 
-- **A reclaimed row has a brief double-ownership window.** `markDone`/`markForRetry`/`markFailed`
-  update by `id` without an `AND locked_by = :me` fence, so after a lease expiry and reclaim a late
-  write from the previous owner can still land on a row another instance now owns. The effect is
-  bounded to at most a duplicate publish — never a reorder — which is why the fence is tracked as
-  hardening rather than a fix ([IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) §6).
+- **A reclaimed row has a brief double-ownership window.** A late write from a previous owner can
+  still land on a row another instance now owns after a lease reclaim — bounded to a duplicate
+  publish, never a reorder (tracked as hardening,
+  [IMPLEMENTATION-PLAN-embedded-lease.md](docs/IMPLEMENTATION-PLAN-embedded-lease.md) §6).
 
-- **Idle latency is bounded by `pollInterval`, not by the commit.** There is no post-commit wakeup
-  yet: a bucket that was drained waits on average `pollInterval / 2` (≈ 50 ms at the 100 ms default,
-  120 ms worst case — the idle sleep carries ±20% jitter) before the new row is discovered. Under sustained load the cost is ≈ 0 — the
-  worker loop only sleeps when a claim comes back empty. Lowering `pollInterval` trades this against
-  idle query load across all instances and workers; the full analysis, and the wakeup options, are in
+- **Idle latency is bounded by `pollInterval`, not by the commit.** No post-commit wakeup yet — up
+  to ~120 ms worst case at the 100 ms default, ~0 under sustained load. Full analysis:
   [dispatch-latency.md](docs/dispatch-latency.md).
 
-- **`bucketCount` is immutable after the first deploy.** Changing it re-maps aggregates onto
-  different buckets and would split one aggregate's events across workers, so the startup guard
-  refuses a mismatch rather than accepting it — and re-sharding an existing outbox is not supported.
-  Pick `B` once (default 256, comfortable to well past the parallelism most deployments need).
+- **`bucketCount` is immutable after the first deploy.** Re-sharding an existing outbox isn't
+  supported — pick `B` once (default 256).
 
-- **Cleanup and lease reclaim are not bucket-scoped.** Every relay instance scans the whole
-  `tandem_outbox` for expired leases (every 5 s) and for terminal rows past the retention window
-  (every 15 min, default retention 14 days). It is safe — the work is idempotent and keyed by
-  `id`/`status` — just redundant under `LEASE` with N instances ([LLD-jdbc §3.2/§3.7](docs/LLD-jdbc.md)).
-  Terminal rows also stay in the table for the whole retention window, which is what keeps the table
-  large enough to be worth an index-only dispatch scan.
+- **Cleanup and lease reclaim are not bucket-scoped.** Every instance scans the whole outbox table
+  — safe (idempotent) but redundant under `LEASE` with N instances
+  ([LLD-jdbc §3.2/§3.7](docs/LLD-jdbc.md)).
 
-- **Configuration is still read once, at startup.** The Admin API can pause/resume the whole relay or
-  a single bucket under `LEASE` at runtime (see [Try it](#try-it)) — so taking a misbehaving relay, or
-  just one bucket, out of the picture no longer means stopping the process — but tunables like
-  `pollInterval`, `batchSize` or `metricsInterval` still can't be changed without a restart.
+- **Configuration is read once, at startup.** The relay (or a single `LEASE` bucket) can be
+  paused/resumed at runtime, but tunables like `pollInterval` need a restart to change.
 
 - **Blocking JDBC only.** The relay is a thread-per-worker pool over a `DataSource`; R2DBC and
   reactive pipelines are not supported.
