@@ -12,8 +12,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import javax.sql.DataSource;
@@ -43,6 +45,16 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     private static final String INSERT_SQL =
             "INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, seq, payload, headers, correlation_id) "
                     + "VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)";
+
+    /**
+     * The same insert with {@code seq} left out, for a message that leaves the number to Tandem
+     * ({@link OutboxMessage.Builder#managedSeq()}): omitting the column is what makes the
+     * {@code tandem_seq} default fire, and it is the entire mechanism — no extra statement, no round
+     * trip and no lock inside the caller's transaction (HLD-managed-seq §4.1).
+     */
+    private static final String INSERT_MANAGED_SEQ_SQL =
+            "INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, payload, headers, correlation_id) "
+                    + "VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)";
 
     /** PostgreSQL {@code unique_violation} SQLSTATE (LLD-jdbc §2 → DuplicateSeqException). */
     private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
@@ -101,7 +113,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     @Override
     public void insert(OutboxMessage message) {
         Objects.requireNonNull(message, "message");
-        Jdbc.exec(dataSource, conn -> Jdbc.exec(conn, INSERT_SQL, ps -> {
+        Jdbc.exec(dataSource, conn -> Jdbc.exec(conn, sqlFor(message), ps -> {
             bind(ps, message);
             ps.executeUpdate();
         }), e -> translate(e, message));
@@ -116,34 +128,60 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         // Mutated inside the lambda below and read from the exception mapper on failure — an array
         // (not a plain local) because the mapper closes over it after the lambda returns/throws.
         OutboxMessage[] current = new OutboxMessage[1];
-        Jdbc.exec(dataSource, conn -> Jdbc.exec(conn, INSERT_SQL, ps -> {
+        Jdbc.exec(dataSource, conn -> {
+            // The two modes need different column lists, so they cannot share one batch. Split on
+            // CONSECUTIVE runs rather than partitioning by mode: the tiers promise rows land in the
+            // collection's order, and grouping all managed messages together would reorder them.
+            List<OutboxMessage> run = new ArrayList<>();
             for (OutboxMessage message : messages) {
+                if (!run.isEmpty() && message.managedSeq() != run.get(0).managedSeq()) {
+                    insertBatch(conn, run, current);
+                    run.clear();
+                }
+                run.add(message);
+            }
+            insertBatch(conn, run, current);
+        }, e -> translate(e, current[0]));
+    }
+
+    private void insertBatch(Connection conn, List<OutboxMessage> batch, OutboxMessage[] current)
+            throws SQLException {
+        Jdbc.exec(conn, sqlFor(batch.get(0)), ps -> {
+            for (OutboxMessage message : batch) {
                 current[0] = message;
                 bind(ps, message);
                 ps.addBatch();
             }
             ps.executeBatch();
-        }), e -> translate(e, current[0]));
+        });
     }
 
+    private static String sqlFor(OutboxMessage message) {
+        return message.managedSeq() ? INSERT_MANAGED_SEQ_SQL : INSERT_SQL;
+    }
+
+    /** Parameter positions are walked rather than fixed: a managed-{@code seq} insert has one fewer. */
     private void bind(PreparedStatement ps, OutboxMessage message) throws SQLException {
-        ps.setString(1, message.aggregateId().value());
-        ps.setString(2, message.aggregateType());
+        int index = 1;
+        ps.setString(index++, message.aggregateId().value());
+        ps.setString(index++, message.aggregateType());
         if (message.type() == null) {
-            ps.setNull(3, Types.VARCHAR);
+            ps.setNull(index++, Types.VARCHAR);
         } else {
-            ps.setString(3, message.type());
+            ps.setString(index++, message.type());
         }
-        ps.setInt(4, BucketHash.bucketFor(message.aggregateId().value(), bucketCount));
-        ps.setLong(5, message.seq());
-        ps.setString(6, new String(message.payload(), StandardCharsets.UTF_8));
+        ps.setInt(index++, BucketHash.bucketFor(message.aggregateId().value(), bucketCount));
+        if (!message.managedSeq()) {
+            ps.setLong(index++, message.seq());
+        }
+        ps.setString(index++, new String(message.payload(), StandardCharsets.UTF_8));
         Map<String, String> headers = effectiveHeaders(message);
-        ps.setString(7, MiniJson.writeObject(headers));
+        ps.setString(index++, MiniJson.writeObject(headers));
         String correlationId = truncate(headers.get(TandemHeaders.CORRELATION_ID));
         if (correlationId == null) {
-            ps.setNull(8, Types.VARCHAR);
+            ps.setNull(index, Types.VARCHAR);
         } else {
-            ps.setString(8, correlationId);
+            ps.setString(index, correlationId);
         }
     }
 
@@ -180,7 +218,9 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
     private static OutboxInsertException translate(SQLException e, OutboxMessage message) {
         String aggregate = message == null ? "?" : message.aggregateId().toString();
-        long seq = message == null ? -1 : message.seq();
+        // Never a number for a managed message: it has none until this insert succeeds, and printing
+        // one would send whoever reads the failure looking for a row that does not exist.
+        String seq = message == null ? "?" : message.managedSeq() ? "managed" : Long.toString(message.seq());
         if (SQLSTATE_UNIQUE_VIOLATION.equals(e.getSQLState())) {
             return new DuplicateSeqException(
                     "duplicate (aggregate_id, seq) = (" + aggregate + ", " + seq + ')', e);

@@ -105,6 +105,25 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 - A `UNIQUE(aggregate_id, seq)` violation is translated to `DuplicateSeqException` (Q5).
 - `insertAll` batches multiple messages via JDBC batch in the same transaction.
 
+**A message built with `managedSeq()` uses the same INSERT with the `seq` column left out**
+([HLD-managed-seq](HLD-managed-seq.md) §4.1), so the `tandem_seq` default supplies the number:
+
+```sql
+INSERT INTO tandem_outbox (aggregate_id, aggregate_type, type, bucket, payload, headers, correlation_id)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+```
+
+Omitting the column *is* the whole mechanism — no extra statement, no round trip, no lock added to
+the caller's transaction. Two consequences the adapter carries:
+
+- **The mode is per message, so one `insertAll` can hold both.** They need different column lists and
+  therefore different batches, split on **consecutive runs** rather than partitioned by mode:
+  grouping all managed messages together would reorder the collection, and every write-side tier
+  promises rows land in the order they were collected.
+- **A failure on a managed message reports `seq` as `managed`, never a number.** There is none until
+  the insert succeeds, and printing `0` or `-1` would send whoever reads the failure looking for a
+  row that does not exist.
+
 **Optional Lamport advance — RESERVED, not implemented** ([HLD-causal-ordering.md](HLD-causal-ordering.md) §0;
 §3.1). No `tandem_aggregate_clock` table and no `lamport` column exist in the shipped DDL, and
 `JdbcOutboxRepository` contains none of the code below. It is specified here so that building the

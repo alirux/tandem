@@ -7,12 +7,14 @@ import com.codingful.tandem.core.BucketHash;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.TandemHeaders;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
+import com.codingful.tandem.core.exception.OutboxInsertException;
 import com.codingful.tandem.core.port.TracePropagator;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -210,6 +212,83 @@ class JdbcOutboxRepositoryIT extends AbstractPostgresIT {
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getLong(1);
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+    @Test
+    void GIVEN_an_aggregate_with_no_version_WHEN_its_events_are_inserted_THEN_tandem_numbers_them_in_write_order() {
+        repository.insert(OutboxMessage.builder()
+                .aggregateId("order-managed-1").aggregateType("Order").managedSeq().payload("{}".getBytes()).build());
+        repository.insert(OutboxMessage.builder()
+                .aggregateId("order-managed-1").aggregateType("Order").managedSeq().payload("{}".getBytes()).build());
+
+        assertThat(seqsOf("order-managed-1")).hasSize(2).isSorted().doesNotHaveDuplicates();
+    }
+
+    @Test
+    void GIVEN_a_batch_mixing_numbered_and_tandem_numbered_events_WHEN_inserted_THEN_the_rows_keep_the_collection_order() {
+        repository.insertAll(List.of(
+                OutboxMessage.builder().aggregateId("order-mixed-1").aggregateType("Order").seq(1).payload("{}".getBytes()).build(),
+                OutboxMessage.builder().aggregateId("order-mixed-2").aggregateType("Order").managedSeq().payload("{}".getBytes()).build(),
+                OutboxMessage.builder().aggregateId("order-mixed-3").aggregateType("Order").seq(1).payload("{}".getBytes()).build(),
+                OutboxMessage.builder().aggregateId("order-mixed-4").aggregateType("Order").managedSeq().payload("{}".getBytes()).build(),
+                OutboxMessage.builder().aggregateId("order-mixed-5").aggregateType("Order").managedSeq().payload("{}".getBytes()).build()));
+
+        assertThat(aggregateIdsInRowOrder())
+                .containsExactly("order-mixed-1", "order-mixed-2", "order-mixed-3", "order-mixed-4", "order-mixed-5");
+    }
+
+    @Test
+    void GIVEN_an_event_tandem_would_number_WHEN_the_insert_fails_THEN_the_failure_reports_no_number_rather_than_a_made_up_one() {
+        OutboxMessage notJson = OutboxMessage.builder()
+                .aggregateId("order-managed-2").aggregateType("Order").managedSeq()
+                .payload("not json".getBytes()).build();
+
+        assertThatThrownBy(() -> repository.insert(notJson))
+                .isInstanceOf(OutboxInsertException.class)
+                .hasMessageContaining("order-managed-2")
+                .hasMessageContaining("managed");
+    }
+
+    @Test
+    void GIVEN_a_batch_whose_last_event_repeats_a_number_already_used_WHEN_inserted_THEN_the_failure_names_that_event() {
+        repository.insert(OutboxMessage.builder()
+                .aggregateId("order-batch-fail").aggregateType("Order").seq(1).payload("{}".getBytes()).build());
+
+        assertThatThrownBy(() -> repository.insertAll(List.of(
+                OutboxMessage.builder().aggregateId("order-batch-ok").aggregateType("Order").managedSeq().payload("{}".getBytes()).build(),
+                OutboxMessage.builder().aggregateId("order-batch-fail").aggregateType("Order").seq(1).payload("{}".getBytes()).build())))
+                .isInstanceOf(DuplicateSeqException.class)
+                .hasMessageContaining("order-batch-fail");
+    }
+
+    private static List<Long> seqsOf(String aggregateId) {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT seq FROM tandem_outbox WHERE aggregate_id = ? ORDER BY id")) {
+            ps.setString(1, aggregateId);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Long> seqs = new ArrayList<>();
+                while (rs.next()) {
+                    seqs.add(rs.getLong(1));
+                }
+                return seqs;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static List<String> aggregateIdsInRowOrder() {
+        try (Connection conn = DATA_SOURCE.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT aggregate_id FROM tandem_outbox ORDER BY id");
+             ResultSet rs = ps.executeQuery()) {
+            List<String> ids = new ArrayList<>();
+            while (rs.next()) {
+                ids.add(rs.getString(1));
+            }
+            return ids;
         } catch (SQLException e) {
             throw new IllegalStateException(e);
         }
