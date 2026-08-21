@@ -81,6 +81,10 @@ public interface OutboxCollector {
 
     /** As record(...), with a String aggregate id. */
     void record(String aggregateType, String aggregateId, long seq, Object payload);
+
+    /** Same, for an aggregate with no version: Tandem assigns seq at insert (HLD-managed-seq §4.1). */
+    void record(String aggregateType, AggregateId aggregateId, Object payload);
+    void record(String aggregateType, String aggregateId, Object payload);
 }
 
 public interface TransactionalOutboxTemplate {
@@ -286,6 +290,13 @@ the aggregate built; the events tier reads it from the mapper's output (carried 
 generates or mutates `seq`. The `UNIQUE(aggregate_id, seq)` constraint remains the safety net (HLD §4.2),
 surfaced as `DuplicateSeqException` if a bug produces a collision.
 
+**The one way out is explicit at the call site**, for an aggregate that has no version to begin with:
+the `record(...)` overloads without `seq`, and `OutboxMessage.Builder.managedSeq()` on the two tiers
+that build messages themselves, hand the number to Tandem ([HLD-managed-seq](HLD-managed-seq.md) §4.1).
+It stays per message — one aggregate type can be managed while the rest keep their version — and it is
+never inferred from a missing argument, because a `seq` a caller merely *forgot* must keep failing
+loudly instead of silently changing what consumers read.
+
 > **With a JPA `@Version`, that source is stale by default — and it is not a per-tier bug, so no
 > choice of tier here avoids it.** Hibernate advances `@Version` at *flush*, and every tier in this
 > document runs inside the caller's already-open transaction, so `entity.getVersion()` (however it
@@ -297,7 +308,9 @@ surfaced as `DuplicateSeqException` if a bug produces a collision.
 > path, identically: [HLD.md](HLD.md#42-ordering-established-at-write-time) §4.2,
 > [HLD-managed-seq.md](HLD-managed-seq.md) §3.2. Two workarounds, neither tier-specific: build the
 > outbox row after an explicit flush, or take `seq` from a source that advances per *event* rather
-> than per entity state change (HLD-managed-seq.md §4 designs the latter — not yet built).
+> than per entity state change — which is what the `seq`-less `record(...)` overloads above do
+> ([HLD-managed-seq.md](HLD-managed-seq.md) §4.1), at the cost of `seq` no longer carrying the
+> aggregate's version to consumers.
 
 > **Of those two workarounds the flush is the stronger one, because it also fixes something else.**
 > HLD §4.2 makes per-aggregate write serialization a hard precondition, and the flush is what decides

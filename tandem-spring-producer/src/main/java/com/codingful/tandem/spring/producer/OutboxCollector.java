@@ -42,4 +42,27 @@ public interface OutboxCollector {
      * @param payload       the payload object to serialize
      */
     void record(String aggregateType, String aggregateId, long seq, Object payload);
+
+    /**
+     * Record a row whose sequence number <b>Tandem assigns</b>, for an aggregate with no version to
+     * take it from (HLD-managed-seq §4.1). The database supplies the number at insert, at no cost on
+     * this transaction; in exchange the {@code seq} a consumer reads is Tandem's counter rather than
+     * the aggregate's version, which is a contract change for a stream that already has consumers.
+     *
+     * @param aggregateType the aggregate type (topic routing, CloudEvents {@code type} fallback)
+     * @param aggregateId   the aggregate the row belongs to
+     * @param payload       the payload object to serialize
+     * @throws com.codingful.tandem.core.exception.PayloadSerializationException if no
+     *                      {@code PayloadSerializer} is configured, or serialization fails
+     */
+    void record(String aggregateType, AggregateId aggregateId, Object payload);
+
+    /**
+     * As {@link #record(String, AggregateId, Object)}, with a String aggregate id.
+     *
+     * @param aggregateType the aggregate type
+     * @param aggregateId   the aggregate id
+     * @param payload       the payload object to serialize
+     */
+    void record(String aggregateType, String aggregateId, Object payload);
 }

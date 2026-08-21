@@ -30,23 +30,35 @@ final class CollectingOutboxCollector implements OutboxCollector {
 
     @Override
     public void record(String aggregateType, AggregateId aggregateId, long seq, Object payload) {
-        if (payloadSerializer == null) {
-            throw new PayloadSerializationException(
-                    "No PayloadSerializer configured — add a JSON library, supply a PayloadSerializer bean,"
-                            + " or record a pre-built OutboxMessage via add(...)");
-        }
-        messages.add(OutboxMessage.builder()
-                .aggregateType(aggregateType)
-                .aggregateId(aggregateId)
-                .seq(seq)
-                .payload(payloadSerializer.serialize(payload))
-                .contentType(payloadSerializer.contentType())
-                .build());
+        messages.add(serialized(aggregateType, aggregateId, payload).seq(seq).build());
     }
 
     @Override
     public void record(String aggregateType, String aggregateId, long seq, Object payload) {
         record(aggregateType, AggregateId.of(aggregateId), seq, payload);
+    }
+
+    @Override
+    public void record(String aggregateType, AggregateId aggregateId, Object payload) {
+        messages.add(serialized(aggregateType, aggregateId, payload).managedSeq().build());
+    }
+
+    @Override
+    public void record(String aggregateType, String aggregateId, Object payload) {
+        record(aggregateType, AggregateId.of(aggregateId), payload);
+    }
+
+    private OutboxMessage.Builder serialized(String aggregateType, AggregateId aggregateId, Object payload) {
+        if (payloadSerializer == null) {
+            throw new PayloadSerializationException(
+                    "No PayloadSerializer configured — add a JSON library, supply a PayloadSerializer bean,"
+                            + " or record a pre-built OutboxMessage via add(...)");
+        }
+        return OutboxMessage.builder()
+                .aggregateType(aggregateType)
+                .aggregateId(aggregateId)
+                .payload(payloadSerializer.serialize(payload))
+                .contentType(payloadSerializer.contentType());
     }
 
     List<OutboxMessage> collected() {

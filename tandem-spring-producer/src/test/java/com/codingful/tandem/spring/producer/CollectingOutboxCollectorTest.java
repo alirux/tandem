@@ -64,4 +64,28 @@ class CollectingOutboxCollectorTest {
 
         assertThat(collector.collected()).extracting(OutboxMessage::seq).containsExactly(1L, 2L);
     }
+
+    @Test
+    void GIVEN_an_aggregate_with_no_version_WHEN_recorded_without_a_number_THEN_the_message_leaves_it_to_tandem()
+            throws Exception {
+        OrderPlaced payload = new OrderPlaced("order-5");
+        CollectingOutboxCollector collector = new CollectingOutboxCollector(serializer);
+
+        collector.record("Order", "order-5", payload);
+
+        assertThat(collector.collected()).singleElement().satisfies(message -> {
+            assertThat(message.managedSeq()).isTrue();
+            assertThat(message.aggregateId().value()).isEqualTo("order-5");
+            assertThat(message.contentType()).isEqualTo(serializer.contentType());
+            assertThat(objectMapper.readValue(message.payload(), OrderPlaced.class)).isEqualTo(payload);
+        });
+    }
+
+    @Test
+    void GIVEN_no_serializer_WHEN_an_object_payload_is_recorded_without_a_number_THEN_it_fails_fast() {
+        CollectingOutboxCollector collector = new CollectingOutboxCollector(null);
+
+        assertThatThrownBy(() -> collector.record("Order", "order-6", new OrderPlaced("order-6")))
+                .isInstanceOf(PayloadSerializationException.class);
+    }
 }
