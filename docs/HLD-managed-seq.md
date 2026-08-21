@@ -253,21 +253,21 @@ relay-restart causes already noted in [HLD.md](HLD.md) §7 — a zero reading is
 
 ---
 
-## 4. The design: two halves, delivered separately
+## 4. The design: two halves, both built
 
 §1 lists two costs. They are **separate problems** with separate mechanisms, separate audiences and
-separate cost profiles — so they are two deliveries, decided one at a time:
+separate cost profiles — so they are two independent flags, each opted into on its own:
 
 | | Problem it closes | Mechanism | Hot-path cost | Persistent state | Status |
 |---|---|---|---|---|---|
-| **4.1** | §1's first cost: the aggregate has no `version` to take `seq` from | a `SEQUENCE` as the column default | **none** | one catalog row, fixed | **the first delivery** |
-| **4.2** | §1's second cost: concurrent writers to one aggregate are not serialised | `pg_advisory_xact_lock` in the caller's transaction | one statement | **none** — released at commit | a separate decision, not taken |
+| **4.1** | §1's first cost: the aggregate has no `version` to take `seq` from | a `SEQUENCE` as the column default | **none** | one catalog row, fixed | **built** — `managedSeq()` |
+| **4.2** | §1's second cost: concurrent writers to one aggregate are not serialised | `pg_advisory_xact_lock` in the caller's transaction | one statement | **none** — released at commit | **built** — `lockedWrite()` |
 
 **§4.1 is the one that closes the adoption gap**, and it is nearly free: no extra statement, no lock,
 no behavioural change for concurrent writers, and every failure mode in §3.2 disappears by
 construction. **§4.2 changes how the application behaves** — concurrent writers to one aggregate
 become waiters — which is a decision an adopter has to make deliberately, and §4.3 explains why its
-audience is narrower than it looks. Shipping §4.1 does not commit to §4.2.
+audience is narrower than it looks. Opting into one does not opt into the other.
 
 > **§4.4 records the obvious alternative and why it is rejected** — a `tandem_aggregate_seq` table
 > holding one counter row per aggregate, solving both halves with a single `INSERT … ON CONFLICT`
