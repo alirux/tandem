@@ -276,11 +276,20 @@ to depend on.
 
 ## Commit messages
 
-- Describe **what** changed and why, not **how** it was implemented.
-- **State the end result, not the journey.** No chronicle of the bugs hit, dead
-  ends tried, or debugging steps taken to get there — that belongs in
-  `docs/IMPLEMENTATION-PLAN-*.md` or a PR description, not the commit message.
-  Keep it short: what changed and why, nothing else.
+- **Describe what changed and why — nothing else.** Three kinds of content stay
+  out, and all three are easy to write without noticing:
+  - **Implementation detail** — *how* it was done. The diff already says that.
+  - **Chronicle** — bugs hit, dead ends tried, debugging steps, what an earlier
+    version of the code or doc used to say, which earlier decision this revises.
+    That belongs in `docs/IMPLEMENTATION-PLAN-*.md`, the backlog, or a PR
+    description.
+  - **Commentary** — judging the previous state ("this was wrong", "the earlier
+    assessment overreached"), or narrating the reasoning that produced the
+    change. State the resulting design as if it had always been so.
+- **Write the end result, not the journey, and write it compactly.** A subject
+  line, and a body of a few lines at most — often none. The body reports the
+  change; it does not justify it, re-state context, or show how the conclusion
+  was reached.
 - Do **not** add a `Co-Authored-By` trailer.
 - **Before every commit, run the full test suite and make sure it is green**
   (`./gradlew test`, or `./gradlew check` to include the coverage gate). Never
