@@ -174,4 +174,36 @@ class OutboxMessageTest {
 
         assertThat(message.toString()).contains("seq=managed");
     }
+    @Test
+    void GIVEN_no_lockedWrite_WHEN_built_THEN_it_defaults_to_false() {
+        assertThat(validBuilder().build().lockedWrite()).isFalse();
+    }
+
+    @Test
+    void GIVEN_lockedWrite_WHEN_combined_with_either_seq_form_THEN_both_are_accepted() {
+        OutboxMessage appAssigned = validBuilder().lockedWrite().build();
+        OutboxMessage managed = OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").managedSeq().lockedWrite()
+                .payload(new byte[] {1}).build();
+
+        assertThat(appAssigned.lockedWrite()).isTrue();
+        assertThat(appAssigned.managedSeq()).isFalse();
+        assertThat(managed.lockedWrite()).isTrue();
+        assertThat(managed.managedSeq()).isTrue();
+    }
+
+    @Test
+    void GIVEN_two_messages_differing_only_in_lockedWrite_WHEN_compared_THEN_they_are_not_equal() {
+        OutboxMessage a = validBuilder().build();
+        OutboxMessage b = validBuilder().lockedWrite().build();
+
+        assertThat(a).isNotEqualTo(b);
+    }
+
+    @Test
+    void GIVEN_lockedWrite_WHEN_toString_THEN_it_is_reported() {
+        OutboxMessage message = validBuilder().lockedWrite().build();
+
+        assertThat(message.toString()).contains("lockedWrite=true");
+    }
 }

@@ -18,6 +18,10 @@ import java.util.Objects;
  *       message built with {@link Builder#managedSeq()} instead leaves the number to Tandem, for an
  *       aggregate that has no version to take it from (HLD-managed-seq §4.1); the write-side adapter
  *       then omits the column and the database supplies it.</li>
+ *   <li><b>{@code lockedWrite}</b> asks the write-side adapter to serialise concurrent writers to the
+ *       same aggregate with a transaction-scoped advisory lock, orthogonal to {@code seq}/
+ *       {@code managedSeq} (HLD-managed-seq §4.2): app-assigned and Tandem-assigned {@code seq} can
+ *       each be combined with or without it.</li>
  *   <li>{@code contentType} is the only typed convenience field that maps onto a header: the
  *       write-side serializes it into {@code headers["content-type"]} at insert (LLD-jdbc §2), the
  *       key the relay reads for the CloudEvents {@code datacontenttype} (LLD-kafka §3.2). There is no
@@ -35,6 +39,7 @@ public final class OutboxMessage {
     private final String type;            // CloudEvents `type`; nullable (Q20)
     private final long seq;               // app-assigned (HLD §4.2); unset when managedSeq
     private final boolean managedSeq;     // true = Tandem assigns the number at insert (HLD-managed-seq §4.1)
+    private final boolean lockedWrite;    // true = serialise concurrent writers via advisory lock (HLD-managed-seq §4.2)
     private final byte[] payload;         // already serialized (Q3)
     private final String contentType;     // nullable; persisted into headers["content-type"]
     private final Map<String, String> headers;  // immutable copy; may be empty
@@ -50,6 +55,7 @@ public final class OutboxMessage {
         }
         this.seq = b.seq;
         this.managedSeq = b.managedSeq;
+        this.lockedWrite = b.lockedWrite;
         this.payload = Objects.requireNonNull(b.payload, "payload").clone();
         this.contentType = b.contentType;
         this.headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
@@ -89,6 +95,15 @@ public final class OutboxMessage {
         return managedSeq;
     }
 
+    /**
+     * Whether the write-side adapter serialises concurrent writers to this aggregate with a
+     * transaction-scoped advisory lock (HLD-managed-seq §4.2). Independent of {@link #managedSeq()}:
+     * either form of {@code seq} can ask for the lock or not.
+     */
+    public boolean lockedWrite() {
+        return lockedWrite;
+    }
+
     /** The serialized payload bytes. Returns a defensive copy — the value is immutable. */
     public byte[] payload() {
         return payload.clone();
@@ -118,6 +133,7 @@ public final class OutboxMessage {
         }
         return seq == other.seq
                 && managedSeq == other.managedSeq
+                && lockedWrite == other.lockedWrite
                 && aggregateId.equals(other.aggregateId)
                 && aggregateType.equals(other.aggregateType)
                 && Objects.equals(type, other.type)
@@ -128,7 +144,7 @@ public final class OutboxMessage {
 
     @Override
     public int hashCode() {
-        int result = Objects.hash(aggregateId, aggregateType, type, seq, managedSeq, contentType, headers);
+        int result = Objects.hash(aggregateId, aggregateType, type, seq, managedSeq, lockedWrite, contentType, headers);
         result = 31 * result + Arrays.hashCode(payload);
         return result;
     }
@@ -139,6 +155,7 @@ public final class OutboxMessage {
                 + ", aggregateType=" + aggregateType
                 + ", type=" + type
                 + ", seq=" + (managedSeq ? "managed" : seq)
+                + ", lockedWrite=" + lockedWrite
                 + ", contentType=" + contentType
                 + ", payloadBytes=" + payload.length
                 + ", headerNames=" + headers.keySet() + '}';
@@ -159,6 +176,7 @@ public final class OutboxMessage {
         private long seq;
         private boolean seqAssigned;
         private boolean managedSeq;
+        private boolean lockedWrite;
         private byte[] payload;
         private String contentType;
         private final Map<String, String> headers = new LinkedHashMap<>();
@@ -211,6 +229,21 @@ public final class OutboxMessage {
          */
         public Builder managedSeq() {
             this.managedSeq = true;
+            return this;
+        }
+
+        /**
+         * Serialises concurrent writers to this aggregate with a transaction-scoped advisory lock,
+         * taken by the write-side adapter on the same connection right before its insert
+         * (HLD-managed-seq §4.2): a concurrent transaction writing the same aggregate blocks until
+         * this one commits, making commit order match insert order. Independent of {@code seq}/
+         * {@link #managedSeq()} — combine freely with either.
+         *
+         * <p>Costs one statement on the caller's hot path and turns concurrent writers to one
+         * aggregate into waiters; not the default (HLD-managed-seq §5).
+         */
+        public Builder lockedWrite() {
+            this.lockedWrite = true;
             return this;
         }
 
