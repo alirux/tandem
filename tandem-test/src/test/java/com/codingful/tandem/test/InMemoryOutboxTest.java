@@ -40,6 +40,16 @@ class InMemoryOutboxTest {
                 .build();
     }
 
+    /** An event of an aggregate with no version to number it — Tandem assigns the number instead. */
+    private static OutboxMessage unnumberedMessage(String aggregateId) {
+        return OutboxMessage.builder()
+                .aggregateId(aggregateId)
+                .aggregateType("Order")
+                .managedSeq()
+                .payload(("payload-" + aggregateId).getBytes())
+                .build();
+    }
+
     private List<OutboxRecord> claimAll(int batchSize) {
         return outbox.claimBatch(outbox.allBuckets(), WORKER, LEASE, batchSize);
     }
@@ -82,6 +92,34 @@ class InMemoryOutboxTest {
                 .payload(new byte[] {1}).contentType("application/json").build());
 
         assertThat(outbox.all().get(0).headers()).containsEntry("content-type", "application/json");
+    }
+
+    @Test
+    void GIVEN_an_aggregate_with_no_version_WHEN_its_events_are_inserted_THEN_tandem_numbers_them_in_write_order() {
+        outbox.insert(unnumberedMessage("order-1"));
+        outbox.insert(unnumberedMessage("order-1"));
+
+        assertThat(outbox.all()).extracting(OutboxRecord::seq).hasSize(2).isSorted().doesNotHaveDuplicates();
+    }
+
+    @Test
+    void GIVEN_an_event_tandem_numbers_that_also_carries_a_content_type_WHEN_inserted_THEN_it_gets_both_the_number_and_the_header() {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").managedSeq()
+                .payload(new byte[] {1}).contentType("application/json").build());
+
+        OutboxRecord stored = outbox.all().get(0);
+        assertThat(stored.seq()).isPositive();
+        assertThat(stored.headers()).containsEntry("content-type", "application/json");
+    }
+
+    @Test
+    void GIVEN_events_numbered_by_the_application_and_by_tandem_WHEN_inserted_together_THEN_both_are_stored_in_order() {
+        outbox.insertAll(List.of(
+                message("order-1", 1), unnumberedMessage("order-2"), message("order-1", 2)));
+
+        assertThat(outbox.all()).extracting(r -> r.aggregateId().value())
+                .containsExactly("order-1", "order-2", "order-1");
     }
 
     @Test

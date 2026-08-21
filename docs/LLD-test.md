@@ -18,7 +18,11 @@ A faithful in-memory implementation of **both** `OutboxRepository` (write-side) 
 
 - `insert` / `insertAll`: assign `id` (atomic counter), compute `bucket` via the **same core
   `BucketHash.bucketFor`** the JDBC adapter uses (LLD-core §4) so in-memory and real-DB buckets match,
-  store as `PENDING`; enforce `UNIQUE(aggregate_id, seq)` → `DuplicateSeqException`.
+  store as `PENDING`; enforce `UNIQUE(aggregate_id, seq)` → `DuplicateSeqException`. A message that
+  leaves `seq` to Tandem (`managedSeq()`, [HLD-managed-seq](HLD-managed-seq.md) §4.1) is numbered
+  from an **outbox-wide counter**, standing in for the `tandem_seq` sequence — one counter for the
+  whole outbox, not one per aggregate, so the numbers are sparse per aggregate exactly as the
+  database's are.
 - `claimBatch(buckets, worker, lease, n)`: return the **head of each aggregate's pending chain** in the
   given buckets (earliest not-DONE row, eligible by `next_attempt_at`), mark `IN_FLIGHT` — mirrors the
   SQL semantics of LLD-jdbc §3.3.

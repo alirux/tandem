@@ -43,7 +43,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * computed with the <b>same core {@link BucketHash}</b> the DB path uses, {@code claimBatch} returns
  * the <b>head of each aggregate's pending chain</b> (the head-of-chain predicate that subsumes the
  * poison gate), the lease reclaim <b>counts as an attempt</b> and quarantines to {@code FAILED} at
- * {@code maxAttempts}, and {@code content-type} is folded into {@code headers} at insert.
+ * {@code maxAttempts}, {@code content-type} is folded into {@code headers} at insert, and a message
+ * that leaves {@code seq} to Tandem ({@code managedSeq()}) is numbered from an outbox-wide counter,
+ * as the {@code tandem_seq} sequence numbers it in the database (HLD-managed-seq §4.1).
  *
  * <p>The {@link Clock} is injectable so backoff/lease/retention are deterministic.
  *
@@ -91,6 +93,10 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
 
     private final Object lock = new Object();
     private final AtomicLong idSeq = new AtomicLong();
+    // Stands in for the tandem_seq sequence the JDBC adapter's managed-seq insert reads (HLD-managed-seq
+    // §4.1): one counter for the whole outbox, not one per aggregate, so the numbers it hands out are
+    // sparse per aggregate exactly as the database's are.
+    private final AtomicLong managedSeq = new AtomicLong();
     // id -> entry, ordered by id so head-of-chain scans are deterministic.
     private final TreeMap<Long, Entry> rows = new TreeMap<>();
     // Enforces UNIQUE(aggregate_id, seq).
@@ -137,36 +143,45 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
     }
 
     private void doInsert(OutboxMessage message) {
-        String uniqueKey = message.aggregateId().value() + '\0' + message.seq();
+        OutboxMessage stored = asPersisted(message);
+        String uniqueKey = stored.aggregateId().value() + '\0' + stored.seq();
         if (!uniqueKeys.add(uniqueKey)) {
             throw new DuplicateSeqException(
-                    "duplicate (aggregate_id, seq) = (" + message.aggregateId() + ", " + message.seq() + ')');
+                    "duplicate (aggregate_id, seq) = (" + stored.aggregateId() + ", " + stored.seq() + ')');
         }
         long id = idSeq.incrementAndGet();
-        int bucket = BucketHash.bucketFor(message.aggregateId().value(), bucketCount);
+        int bucket = BucketHash.bucketFor(stored.aggregateId().value(), bucketCount);
         OutboxRecord record = OutboxRecord.builder()
                 .id(id)
-                .message(foldContentTypeIntoHeaders(message))
+                .message(stored)
                 .status(OutboxStatus.PENDING)
                 .createdAt(clock.instant())
                 .build();
         rows.put(id, new Entry(record, bucket));
     }
 
-    /** The write-side serializes {@code contentType} into {@code headers["content-type"]} at insert (LLD-jdbc §2). */
-    private static OutboxMessage foldContentTypeIntoHeaders(OutboxMessage message) {
-        if (message.contentType() == null || message.headers().containsKey("content-type")) {
+    /**
+     * The message as the row holds it: {@code contentType} serialized into
+     * {@code headers["content-type"]}, and a number in place of a request to assign one — the two
+     * things the write side does on the way to storage (LLD-jdbc §2, HLD-managed-seq §4.1).
+     */
+    private OutboxMessage asPersisted(OutboxMessage message) {
+        boolean foldContentType =
+                message.contentType() != null && !message.headers().containsKey("content-type");
+        if (!foldContentType && !message.managedSeq()) {
             return message;
         }
         OutboxMessage.Builder b = OutboxMessage.builder()
                 .aggregateId(message.aggregateId())
                 .aggregateType(message.aggregateType())
                 .type(message.type())
-                .seq(message.seq())
+                .seq(message.managedSeq() ? managedSeq.incrementAndGet() : message.seq())
                 .payload(message.payload())
                 .contentType(message.contentType())
                 .headers(message.headers());
-        b.header("content-type", message.contentType());
+        if (foldContentType) {
+            b.header("content-type", message.contentType());
+        }
         return b.build();
     }
 
