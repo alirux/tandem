@@ -164,6 +164,9 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
      * The message as the row holds it: {@code contentType} serialized into
      * {@code headers["content-type"]}, and a number in place of a request to assign one — the two
      * things the write side does on the way to storage (LLD-jdbc §2, HLD-managed-seq §4.1).
+     * {@code lockedWrite} carries no storage effect of its own (there is no column for it — a real
+     * insert only consumes it to decide whether to take the advisory lock, HLD-managed-seq §4.2), but
+     * this rebuild still copies it across so the stored message keeps every flag the caller set.
      *
      * <p>The typed field is the single source of truth for the media type, exactly as in the JDBC
      * adapter: when set it overrides a {@code content-type} the caller also put in {@code headers}
@@ -183,6 +186,9 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                 .headers(message.headers());
         if (message.contentType() != null) {
             b.header(TandemHeaders.CONTENT_TYPE, message.contentType());
+        }
+        if (message.lockedWrite()) {
+            b.lockedWrite();
         }
         return b.build();
     }

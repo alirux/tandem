@@ -135,6 +135,15 @@ class InMemoryOutboxTest {
     }
 
     @Test
+    void GIVEN_a_message_that_also_carries_a_content_type_and_lockedWrite_WHEN_inserted_THEN_lockedWrite_survives_the_content_type_rebuild() {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).lockedWrite()
+                .payload(new byte[] {1}).contentType("application/json").build());
+
+        assertThat(outbox.all().get(0).message().lockedWrite()).isTrue();
+    }
+
+    @Test
     void GIVEN_two_aggregates_with_chains_WHEN_claimed_THEN_only_the_head_of_each_chain_is_returned_and_locked() {
         outbox.insert(message("order-1", 1));   // id 1 — head of order-1
         outbox.insert(message("order-1", 2));   // id 2 — blocked behind id 1
