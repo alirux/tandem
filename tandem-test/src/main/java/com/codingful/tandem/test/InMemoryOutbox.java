@@ -164,11 +164,13 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
      * The message as the row holds it: {@code contentType} serialized into
      * {@code headers["content-type"]}, and a number in place of a request to assign one — the two
      * things the write side does on the way to storage (LLD-jdbc §2, HLD-managed-seq §4.1).
+     *
+     * <p>The typed field is the single source of truth for the media type, exactly as in the JDBC
+     * adapter: when set it overrides a {@code content-type} the caller also put in {@code headers}
+     * (LLD-jdbc §2).
      */
     private OutboxMessage asPersisted(OutboxMessage message) {
-        boolean foldContentType =
-                message.contentType() != null && !message.headers().containsKey("content-type");
-        if (!foldContentType && !message.managedSeq()) {
+        if (message.contentType() == null && !message.managedSeq()) {
             return message;
         }
         OutboxMessage.Builder b = OutboxMessage.builder()
@@ -179,8 +181,8 @@ public final class InMemoryOutbox implements OutboxRepository, OutboxStore, Outb
                 .payload(message.payload())
                 .contentType(message.contentType())
                 .headers(message.headers());
-        if (foldContentType) {
-            b.header("content-type", message.contentType());
+        if (message.contentType() != null) {
+            b.header(TandemHeaders.CONTENT_TYPE, message.contentType());
         }
         return b.build();
     }

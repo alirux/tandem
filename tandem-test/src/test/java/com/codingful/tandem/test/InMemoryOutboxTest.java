@@ -7,6 +7,7 @@ import com.codingful.tandem.core.BucketHash;
 import com.codingful.tandem.core.OutboxMessage;
 import com.codingful.tandem.core.OutboxRecord;
 import com.codingful.tandem.core.OutboxStatus;
+import com.codingful.tandem.core.TandemHeaders;
 import com.codingful.tandem.core.exception.DuplicateSeqException;
 import java.time.Duration;
 import java.time.Instant;
@@ -91,7 +92,18 @@ class InMemoryOutboxTest {
                 .aggregateId("order-1").aggregateType("Order").seq(1)
                 .payload(new byte[] {1}).contentType("application/json").build());
 
-        assertThat(outbox.all().get(0).headers()).containsEntry("content-type", "application/json");
+        assertThat(outbox.all().get(0).headers()).containsEntry(TandemHeaders.CONTENT_TYPE, "application/json");
+    }
+
+    @Test
+    void GIVEN_a_content_type_and_a_header_carrying_another_one_WHEN_inserted_THEN_the_typed_field_wins() {
+        outbox.insert(OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(1).payload(new byte[] {1})
+                .header(TandemHeaders.CONTENT_TYPE, "text/plain")   // should be overridden
+                .contentType("application/json").build());
+
+        assertThat(outbox.all().get(0).headers())
+                .containsEntry(TandemHeaders.CONTENT_TYPE, "application/json");
     }
 
     @Test
@@ -110,7 +122,7 @@ class InMemoryOutboxTest {
 
         OutboxRecord stored = outbox.all().get(0);
         assertThat(stored.seq()).isPositive();
-        assertThat(stored.headers()).containsEntry("content-type", "application/json");
+        assertThat(stored.headers()).containsEntry(TandemHeaders.CONTENT_TYPE, "application/json");
     }
 
     @Test
