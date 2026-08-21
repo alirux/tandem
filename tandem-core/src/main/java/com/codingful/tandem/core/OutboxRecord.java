@@ -30,6 +30,11 @@ public final class OutboxRecord {
     private OutboxRecord(Builder b) {
         this.id = b.id;
         this.message = Objects.requireNonNull(b.message, "message");
+        if (this.message.managedSeq()) {
+            throw new IllegalStateException(
+                    "a record describes a persisted row, so its seq is already assigned — resolve the "
+                            + "number the insert produced before building one");
+        }
         this.status = Objects.requireNonNull(b.status, "status");
         this.attempts = b.attempts;
         this.lockedBy = b.lockedBy;
@@ -226,6 +231,11 @@ public final class OutboxRecord {
             return this;
         }
 
+        /**
+         * @throws NullPointerException  if {@code message}, {@code status} or {@code createdAt} is unset
+         * @throws IllegalStateException if the message still leaves {@code seq} to Tandem
+         *                               ({@link OutboxMessage.Builder#managedSeq()})
+         */
         public OutboxRecord build() {
             return new OutboxRecord(this);
         }

@@ -126,4 +126,52 @@ class OutboxMessageTest {
                 .contains("headerNames=")
                 .contains("authorization");
     }
+
+    @Test
+    void GIVEN_an_aggregate_with_no_version_WHEN_the_number_is_left_to_tandem_THEN_reading_it_fails_instead_of_returning_a_fiction() {
+        OutboxMessage message = OutboxMessage.builder()
+                .aggregateId("order-1")
+                .aggregateType("Order")
+                .managedSeq()
+                .payload(new byte[] {1})
+                .build();
+
+        assertThat(message.managedSeq()).isTrue();
+        assertThatThrownBy(message::seq).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void GIVEN_a_number_both_supplied_and_left_to_tandem_WHEN_built_THEN_it_is_rejected_whichever_came_last() {
+        assertThatThrownBy(() -> validBuilder().managedSeq().build())
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> OutboxMessage.builder()
+                .aggregateId("order-1")
+                .aggregateType("Order")
+                .managedSeq()
+                .seq(1)
+                .payload(new byte[] {1})
+                .build())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void GIVEN_a_number_left_to_tandem_WHEN_compared_with_one_supplied_as_zero_THEN_they_are_not_equal() {
+        OutboxMessage managed = OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").managedSeq()
+                .payload(new byte[] {1, 2, 3}).build();
+        OutboxMessage supplied = OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").seq(0)
+                .payload(new byte[] {1, 2, 3}).build();
+
+        assertThat(managed).isNotEqualTo(supplied);
+    }
+
+    @Test
+    void GIVEN_a_number_left_to_tandem_WHEN_toString_THEN_it_says_so_rather_than_showing_a_number() {
+        OutboxMessage message = OutboxMessage.builder()
+                .aggregateId("order-1").aggregateType("Order").managedSeq()
+                .payload(new byte[] {1}).build();
+
+        assertThat(message.toString()).contains("seq=managed");
+    }
 }

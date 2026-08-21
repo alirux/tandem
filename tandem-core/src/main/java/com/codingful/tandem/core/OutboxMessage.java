@@ -14,8 +14,10 @@ import java.util.Objects;
  *   <li><b>Payload is {@code byte[]}</b>: the core never serializes, so it forces no JSON library on
  *       the client (§1.3). Higher tiers may offer an {@code Object}-accepting overload backed by a
  *       {@link com.codingful.tandem.core.port.PayloadSerializer}.</li>
- *   <li>{@code seq} is app-assigned, from the aggregate's version (HLD §4.2) — the core never
- *       generates it.</li>
+ *   <li><b>{@code seq} is app-assigned by default</b>, from the aggregate's version (HLD §4.2). A
+ *       message built with {@link Builder#managedSeq()} instead leaves the number to Tandem, for an
+ *       aggregate that has no version to take it from (HLD-managed-seq §4.1); the write-side adapter
+ *       then omits the column and the database supplies it.</li>
  *   <li>{@code contentType} is the only typed convenience field that maps onto a header: the
  *       write-side serializes it into {@code headers["content-type"]} at insert (LLD-jdbc §2), the
  *       key the relay reads for the CloudEvents {@code datacontenttype} (LLD-kafka §3.2). There is no
@@ -31,7 +33,8 @@ public final class OutboxMessage {
     private final AggregateId aggregateId;
     private final String aggregateType;
     private final String type;            // CloudEvents `type`; nullable (Q20)
-    private final long seq;               // app-assigned (HLD §4.2)
+    private final long seq;               // app-assigned (HLD §4.2); unset when managedSeq
+    private final boolean managedSeq;     // true = Tandem assigns the number at insert (HLD-managed-seq §4.1)
     private final byte[] payload;         // already serialized (Q3)
     private final String contentType;     // nullable; persisted into headers["content-type"]
     private final Map<String, String> headers;  // immutable copy; may be empty
@@ -40,7 +43,13 @@ public final class OutboxMessage {
         this.aggregateId = Objects.requireNonNull(b.aggregateId, "aggregateId");
         this.aggregateType = requireNonBlank(b.aggregateType, "aggregateType");
         this.type = b.type;
+        if (b.seqAssigned && b.managedSeq) {
+            throw new IllegalStateException(
+                    "seq(long) and managedSeq() are mutually exclusive — either the application "
+                            + "assigns the sequence number or Tandem does");
+        }
         this.seq = b.seq;
+        this.managedSeq = b.managedSeq;
         this.payload = Objects.requireNonNull(b.payload, "payload").clone();
         this.contentType = b.contentType;
         this.headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
@@ -59,8 +68,25 @@ public final class OutboxMessage {
         return type;
     }
 
+    /**
+     * The app-assigned sequence number.
+     *
+     * @throws IllegalStateException if this message leaves the number to Tandem
+     *                               ({@link Builder#managedSeq()}) — there is none until the row is
+     *                               inserted, so any value returned here would be a fiction. Guard
+     *                               with {@link #managedSeq()}.
+     */
     public long seq() {
+        if (managedSeq) {
+            throw new IllegalStateException(
+                    "seq is assigned by Tandem at insert and is not available on the message");
+        }
         return seq;
+    }
+
+    /** Whether Tandem assigns {@code seq} at insert instead of the application (HLD-managed-seq §4.1). */
+    public boolean managedSeq() {
+        return managedSeq;
     }
 
     /** The serialized payload bytes. Returns a defensive copy — the value is immutable. */
@@ -91,6 +117,7 @@ public final class OutboxMessage {
             return false;
         }
         return seq == other.seq
+                && managedSeq == other.managedSeq
                 && aggregateId.equals(other.aggregateId)
                 && aggregateType.equals(other.aggregateType)
                 && Objects.equals(type, other.type)
@@ -101,7 +128,7 @@ public final class OutboxMessage {
 
     @Override
     public int hashCode() {
-        int result = Objects.hash(aggregateId, aggregateType, type, seq, contentType, headers);
+        int result = Objects.hash(aggregateId, aggregateType, type, seq, managedSeq, contentType, headers);
         result = 31 * result + Arrays.hashCode(payload);
         return result;
     }
@@ -111,7 +138,7 @@ public final class OutboxMessage {
         return "OutboxMessage{aggregateId=" + aggregateId
                 + ", aggregateType=" + aggregateType
                 + ", type=" + type
-                + ", seq=" + seq
+                + ", seq=" + (managedSeq ? "managed" : seq)
                 + ", contentType=" + contentType
                 + ", payloadBytes=" + payload.length
                 + ", headerNames=" + headers.keySet() + '}';
@@ -130,6 +157,8 @@ public final class OutboxMessage {
         private String aggregateType;
         private String type;
         private long seq;
+        private boolean seqAssigned;
+        private boolean managedSeq;
         private byte[] payload;
         private String contentType;
         private final Map<String, String> headers = new LinkedHashMap<>();
@@ -158,9 +187,30 @@ public final class OutboxMessage {
             return this;
         }
 
-        /** The app-assigned, per-aggregate monotonically increasing sequence number (HLD §4.2). */
+        /**
+         * The app-assigned, per-aggregate monotonically increasing sequence number (HLD §4.2).
+         * Mutually exclusive with {@link #managedSeq()}.
+         */
         public Builder seq(long seq) {
             this.seq = seq;
+            this.seqAssigned = true;
+            return this;
+        }
+
+        /**
+         * Leaves the sequence number to Tandem, for an aggregate with no version to take it from
+         * (HLD-managed-seq §4.1): the write-side adapter omits the column and the database assigns
+         * the value, at no cost on the caller's transaction.
+         *
+         * <p>Opting in is per message, so one aggregate type can be managed while another stays
+         * app-assigned. It changes what a consumer reads in the {@code seq} CloudEvents extension —
+         * Tandem's own counter, large and not dense per aggregate, rather than the aggregate's
+         * version — so it is a contract change for an existing stream (HLD-managed-seq §5).
+         *
+         * <p>Mutually exclusive with {@link #seq(long)}: setting both fails in {@link #build()}.
+         */
+        public Builder managedSeq() {
+            this.managedSeq = true;
             return this;
         }
 
@@ -194,7 +244,10 @@ public final class OutboxMessage {
             return this;
         }
 
-        /** @throws NullPointerException if a required field ({@code aggregateId}, {@code payload}) is unset */
+        /**
+         * @throws NullPointerException  if a required field ({@code aggregateId}, {@code payload}) is unset
+         * @throws IllegalStateException if both {@link #seq(long)} and {@link #managedSeq()} were set
+         */
         public OutboxMessage build() {
             return new OutboxMessage(this);
         }
