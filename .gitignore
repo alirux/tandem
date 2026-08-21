@@ -20,5 +20,5 @@ schema/**/databasechangelog.csv
 # OS
 .DS_Store
 
-# Claude Code (machine-local permissions/config — never shared)
-.claude/settings.local.json
+# Claude Code (machine-local, never shared)
+.claude/
