@@ -1,8 +1,8 @@
 # Tandem — Managed `seq` (Design Note)
 
-**Version:** 1.2  
-**Status:** Draft — **not built.** Two deliveries, decided separately (§4.3): **§4.1 (the number) is
-agreed and is the next one**; §4.2 (the lock) is an open decision. Read §0 first.  
+**Version:** 1.3  
+**Status:** **§4.1 (the number) is designed to completion and agreed — ready to build, not built.**
+§4.2 (the lock) is a separate, open decision (§4.3). Read §0 first.  
 **Companion to:** [HLD.md](HLD.md) §4.2 (Ordering Established at Write Time)
 
 **This document is the design.** [HLD §4.2](HLD.md) states the shipped contract — `seq` is
@@ -22,8 +22,10 @@ wrong is rejected by `UNIQUE (aggregate_id, seq)` at insert.
 **§4 is two deliveries, not one, and they are at different stages** (§4.3 explains the split):
 
 - **§4.1 — Tandem assigns `seq`.** Closes §1's first cost, the adoption barrier for an aggregate with
-  no `version` field. Costs nothing on the hot path and changes no application behaviour. **Agreed;
-  this is the delivery to build.**
+  no `version` field. Costs nothing on the hot path and changes no application behaviour. **Agreed and
+  fully specified — this is the delivery to build.** Its two design questions are settled: the DDL
+  ships as an ordinary changelog version every adopter applies (§7), and a caller opts in with
+  `managedSeq()` rather than a sentinel `seq` value (§4.1).
 - **§4.2 — Tandem serialises the writers.** Closes §1's second cost. Adds a statement to every write
   and turns concurrent writers to one aggregate into waiters. **Open decision** — §6 explains why its
   case is weaker than it first appears.
@@ -277,15 +279,34 @@ per aggregate (`Order#42`'s first event might be `8347283`), which §5 addresses
 Purely additive: `seq` is `NOT NULL` with no default today, so **nothing can currently omit the
 column** — adding a default changes the behaviour of no existing writer.
 
+**How a caller asks for it: `OutboxMessage.Builder.managedSeq()`**, with `OutboxCollector.record(…)`
+overloads that take no `seq`. Not a sentinel value passed to `seq(long)`: a sentinel is exclusivity by
+*convention*, and this project prefers the structural form with the loud failure (HLD §4.3's reasoning
+for bucket sharding). It also has a specific hazard here — some persistence frameworks use `-1` as an
+unsaved version, so a malformed `entity.getVersion()` would opt an aggregate in silently. Setting both
+`seq(…)` and `managedSeq()` on one message is a caller error and fails at build time.
+
+Two consequences to carry through the implementation:
+
+- **`InMemoryOutbox` needs its own counter.** It reads `message.seq()` both for the
+  `UNIQUE (aggregate_id, seq)` key and to build the record, and it mirrors the adapter's semantics by
+  contract (it is a published module).
+- **`insertAll` cannot mix both modes in one JDBC batch** — it binds one `INSERT` statement for the
+  whole collection, and the two modes need different column lists. Batch consecutive runs of the same
+  mode rather than partitioning, so the collection order the tiers promise is preserved exactly.
+
 Two constraints on it:
 
 - **`CACHE` must stay 1.** With a per-session cache, session A pre-allocates 1–100 and session B
   101–200; if B inserts first, `seq` moves backwards for that aggregate and the §6 detector reports
   false regressions. PostgreSQL's default is `CACHE 1`; it must be pinned in the changelog, not left
   to whoever creates the sequence.
-- **Turning it on over existing data needs `START WITH` above the highest `seq` already emitted**,
-  or new values fall below history already published for the same aggregates. The app-assigned →
-  managed direction is safe once; the reverse is not.
+- **Switching an *existing* aggregate type over needs the sequence moved above the `seq` values that
+  type has already emitted**, or the next event collides with `UNIQUE (aggregate_id, seq)` — or, if
+  those rows were already retired by cleanup, publishes a `seq` below history consumers have seen.
+  This belongs to **enabling** the feature (`ALTER SEQUENCE tandem_seq RESTART WITH …`), not to the
+  migration, which cannot know which types will ever be converted. A *new* aggregate type needs
+  nothing. The app-assigned → managed direction is safe once; the reverse is not.
 
 > **Managed and app-assigned `seq` can coexist per aggregate, and this needs no mechanism to allow —
 > it is a property of the design.** The default fires only when an INSERT *omits* the column, so the
@@ -460,12 +481,13 @@ Additive throughout, per HLD §1.4:
 
 - **DDL:** a `CREATE SEQUENCE` plus a `DEFAULT` on an existing column (§4.1) — no new table. Strictly
   additive: `seq` is `NOT NULL` with no default today, so no existing writer can omit it, and adding a
-  default changes nothing for anyone already binding the column. **Where it lives needs deciding**: the
-  schema's source of truth is the Liquibase changelog (LLD-jdbc §6, append-only, with a generated flat
-  baseline under a CI drift gate), which leaves no clean place for an optional script outside it.
-  Either this becomes a changelog version every adopter applies (harmless: an unused sequence and a
-  default nothing triggers), or the changelog gains a genuinely optional context, which has no
-  precedent here.
+  default changes nothing for anyone already binding the column. It ships as **an ordinary changelog
+  version every adopter applies**, like `correlation_id`, `replays` and `discard_reason` before it —
+  not as an optional script, which the append-only changelog and its generated flat baseline (LLD-jdbc
+  §6) leave no clean place for, and not behind a Liquibase context, which would make the changelog and
+  the flat baseline disagree unless the generator were taught to exclude it too. An adopter who never
+  opts in carries a sequence that is never advanced and a default that never fires — lighter than the
+  non-partial index `correlation_id` already ships to everyone.
 - **Rows:** the `seq` column, its type and its `UNIQUE` constraint are unchanged. A managed `seq` is
   an ordinary `seq` as far as every reader is concerned — larger and sparser (§4.1), but readers
   treat it as opaque.
@@ -473,4 +495,5 @@ Additive throughout, per HLD §1.4:
   generator behind it. Consumers that treat it as an opaque monotonic counter are unaffected;
   consumers that join it against the aggregate's persisted version are not, which is why §5 lists it
   as a contract change for an existing stream.
-- **API:** no change.
+- **API:** additive — `OutboxMessage.Builder.managedSeq()` and `OutboxCollector.record(…)` overloads
+  without `seq` (§4.1). No existing signature changes, so no caller is affected.
