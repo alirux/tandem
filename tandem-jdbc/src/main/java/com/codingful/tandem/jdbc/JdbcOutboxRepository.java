@@ -18,6 +18,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import javax.sql.DataSource;
 
 /**
@@ -29,6 +31,14 @@ import javax.sql.DataSource;
  * <p>It depends only on {@code java.sql} (JDK): <b>no Kafka, no JSON library</b> (the {@code payload}
  * is the bytes the client already serialized; only {@code headers} is encoded, via {@link MiniJson}) —
  * the minimal client footprint (§1.3).
+ *
+ * <p><b>Optional write-side lock:</b> a message built with {@link OutboxMessage.Builder#lockedWrite()}
+ * makes {@link #insert}/{@link #insertAll} take a transaction-scoped {@code pg_advisory_xact_lock} on
+ * the aggregate, on the same connection, before the row's INSERT (HLD-managed-seq §4.2). Within one
+ * {@link #insertAll} batch this adapter takes every such lock the batch needs in <b>sorted aggregate id
+ * order</b> before inserting anything, which is the stated deadlock guard for a transaction that locks
+ * several aggregates. It cannot enforce that ordering across separate {@link #insert} calls in one
+ * caller transaction — a caller doing that is responsible for the same ordering itself.
  *
  * <p><b>Payload constraint:</b> the {@code payload} column is PostgreSQL {@code jsonb}, so this
  * adapter requires {@link OutboxMessage#payload()} to be valid UTF-8 JSON. A non-JSON payload is
@@ -58,6 +68,14 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
     /** PostgreSQL {@code unique_violation} SQLSTATE (LLD-jdbc §2 → DuplicateSeqException). */
     private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
+
+    /**
+     * Blocks until granted, serialising concurrent writers to the same aggregate (HLD-managed-seq
+     * §4.2); {@code hashtext} folds the id into the 32-bit key the single-argument form takes.
+     * PostgreSQL releases it automatically at commit or rollback of the caller's transaction — there
+     * is no corresponding unlock statement.
+     */
+    private static final String LOCK_AGGREGATE_SQL = "SELECT pg_advisory_xact_lock(hashtext(?))";
 
     /**
      * Width of the {@code correlation_id} column, which the value is truncated to at insert (LLD-jdbc §2).
@@ -113,10 +131,15 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     @Override
     public void insert(OutboxMessage message) {
         Objects.requireNonNull(message, "message");
-        Jdbc.exec(dataSource, conn -> Jdbc.exec(conn, sqlFor(message), ps -> {
-            bind(ps, message);
-            ps.executeUpdate();
-        }), e -> translate(e, message));
+        Jdbc.exec(dataSource, conn -> {
+            if (message.lockedWrite()) {
+                lockAggregate(conn, message.aggregateId().value());
+            }
+            Jdbc.exec(conn, sqlFor(message), ps -> {
+                bind(ps, message);
+                ps.executeUpdate();
+            });
+        }, e -> translate(e, message));
     }
 
     @Override
@@ -129,6 +152,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         // (not a plain local) because the mapper closes over it after the lambda returns/throws.
         OutboxMessage[] current = new OutboxMessage[1];
         Jdbc.exec(dataSource, conn -> {
+            lockAggregatesInOrder(conn, messages);
             // The two modes need different column lists, so they cannot share one batch. Split on
             // CONSECUTIVE runs rather than partitioning by mode: the tiers promise rows land in the
             // collection's order, and grouping all managed messages together would reorder them.
@@ -158,6 +182,30 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
     private static String sqlFor(OutboxMessage message) {
         return message.managedSeq() ? INSERT_MANAGED_SEQ_SQL : INSERT_SQL;
+    }
+
+    /**
+     * Takes every {@link OutboxMessage#lockedWrite()} lock the batch needs, in <b>sorted aggregate id
+     * order</b>, before any row in the batch is inserted — the ordering that avoids a deadlock between
+     * two transactions locking the same two aggregates in different order (HLD-managed-seq §5).
+     */
+    private static void lockAggregatesInOrder(Connection conn, Collection<OutboxMessage> messages) throws SQLException {
+        SortedSet<String> aggregateIds = new TreeSet<>();
+        for (OutboxMessage message : messages) {
+            if (message.lockedWrite()) {
+                aggregateIds.add(message.aggregateId().value());
+            }
+        }
+        for (String aggregateId : aggregateIds) {
+            lockAggregate(conn, aggregateId);
+        }
+    }
+
+    private static void lockAggregate(Connection conn, String aggregateId) throws SQLException {
+        Jdbc.exec(conn, LOCK_AGGREGATE_SQL, ps -> {
+            ps.setString(1, aggregateId);
+            ps.execute();
+        });
     }
 
     /** Parameter positions are walked rather than fixed: a managed-{@code seq} insert has one fewer. */
