@@ -29,6 +29,8 @@ class EndToEndIT {
     private static final int PER_AGGREGATE = 20;
     private static final int TOTAL = AGGREGATES * PER_AGGREGATE;
     private static final int BUCKETS = 256;
+    /** An aggregate with no version field — Tandem numbers its events (HLD-managed-seq §4.1). */
+    private static final String UNNUMBERED_AGGREGATE = "order-managed";
 
     @Test
     void GIVEN_events_inserted_across_aggregates_WHEN_the_relay_runs_THEN_each_aggregate_lands_on_the_topic_in_order_with_no_loss() {
@@ -66,6 +68,49 @@ class EndToEndIT {
         }
     }
 
+    @Test
+    void GIVEN_an_aggregate_with_no_version_WHEN_its_events_are_relayed_THEN_they_arrive_in_write_order_carrying_the_number_tandem_assigned() {
+        try (TandemTestContainer tandem = new TandemTestContainer()) {
+            tandem.start();
+            tandem.newRepository(BUCKETS).insertAll(buildUnnumberedMessages());
+            tandem.createTopic(TOPIC, 4);
+
+            try (KafkaConsumer<String, byte[]> consumer = tandem.newConsumer("e2e-managed", TOPIC)) {
+                consumer.poll(Duration.ofMillis(200));
+
+                WorkerPool relay = tandem.newRelay(
+                        RelayConfig.builder().bucketCount(BUCKETS).workersPerInstance(4)
+                                .pollInterval(Duration.ofMillis(50)).build(),
+                        TopicRouter.kebabWithSuffix("-topic"),
+                        KafkaRelayConfig.of("/tandem/orders"));
+                relay.start();
+                try {
+                    Map<String, List<Long>> delivered = consumeAll(consumer, PER_AGGREGATE);
+
+                    assertThat(delivered).containsOnlyKeys(UNNUMBERED_AGGREGATE);
+                    // The numbers are Tandem's, so nothing here knows what they are — only that every
+                    // event carries one and that they reach the consumer in the order they were written.
+                    assertThat(delivered.get(UNNUMBERED_AGGREGATE))
+                            .hasSize(PER_AGGREGATE).isSorted().doesNotHaveDuplicates();
+                } finally {
+                    relay.stop();
+                }
+            }
+        }
+    }
+
+    private static List<OutboxMessage> buildUnnumberedMessages() {
+        List<OutboxMessage> messages = new ArrayList<>(PER_AGGREGATE);
+        for (int event = 0; event < PER_AGGREGATE; event++) {
+            messages.add(OutboxMessage.builder()
+                    .aggregateId(UNNUMBERED_AGGREGATE).aggregateType("Order").type("com.acme.order.changed")
+                    .managedSeq()
+                    .payload(("{\"event\":" + event + '}').getBytes(StandardCharsets.UTF_8))
+                    .contentType("application/json").build());
+        }
+        return messages;
+    }
+
     private static List<OutboxMessage> buildMessages() {
         List<OutboxMessage> messages = new ArrayList<>(TOTAL);
         for (int a = 0; a < AGGREGATES; a++) {
@@ -88,12 +133,16 @@ class EndToEndIT {
         return expected;
     }
 
-    /** Poll until all events arrive (or time out), recording each aggregate's seqs in arrival order. */
     private static Map<String, List<Long>> consumeAll(KafkaConsumer<String, byte[]> consumer) {
+        return consumeAll(consumer, TOTAL);
+    }
+
+    /** Poll until {@code expected} events arrive (or time out), recording each aggregate's seqs in arrival order. */
+    private static Map<String, List<Long>> consumeAll(KafkaConsumer<String, byte[]> consumer, int expected) {
         Map<String, List<Long>> seqsByAggregate = new LinkedHashMap<>();
         long total = 0;
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-        while (total < TOTAL && System.nanoTime() < deadline) {
+        while (total < expected && System.nanoTime() < deadline) {
             ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(500));
             for (ConsumerRecord<String, byte[]> record : records) {
                 seqsByAggregate.computeIfAbsent(record.key(), k -> new ArrayList<>()).add(seqHeader(record));

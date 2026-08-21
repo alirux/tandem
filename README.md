@@ -342,7 +342,8 @@ public Order placeOrder(Order order) {
 advances at *flush*, and a write-side tier runs inside the caller's own transaction — so by default
 it reads the *pre-increment* value, and two mutations in one transaction collide on
 `UNIQUE(aggregate_id, seq)`. Either build the outbox row after an explicit flush, or take `seq` from
-a source that advances per event.
+a source that advances per event — `managedSeq()` in place of `seq(…)` hands the number to Tandem
+itself, for an aggregate that has no version to give ([HLD-managed-seq](docs/HLD-managed-seq.md) §4.1).
 
 Prefer the explicit flush, because it does a second job that is easy to miss: it is also what makes
 the aggregate's own write lock **serialize concurrent writers**. Without it the outbox row is
@@ -447,7 +448,7 @@ of the version you actually depend on.
 | [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
-| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — a Tandem-assigned sequence number whose counter also carries the per-aggregate write lock; designed, not implemented. Also records what the app-assigned `seq` contract costs today (measured) |
+| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — the opt-in Tandem-assigned sequence number (built), and the write-side lock that would serialize concurrent writers (designed, not built). Also records what the app-assigned `seq` contract costs today (measured) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
 | [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith, a hand-rolled outbox, and the stream processors (Kafka Streams, Flink) |
 | [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
@@ -523,7 +524,8 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
   two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
   second, the relay will already have published the later event. The contract is that writers to one
   aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, or an optimistic version
-  check — and that `seq` is that aggregate's version. See [HLD §4.2](docs/HLD.md).
+  check — and that `seq` is that aggregate's version, or Tandem's own if the aggregate has none
+  (`managedSeq()`). See [HLD §4.2](docs/HLD.md).
 
 - **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
   and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox

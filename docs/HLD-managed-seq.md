@@ -1,8 +1,8 @@
 # Tandem — Managed `seq` (Design Note)
 
-**Version:** 1.3  
-**Status:** **§4.1 (the number) is designed to completion and agreed — ready to build, not built.**
-§4.2 (the lock) is a separate, open decision (§4.3). Read §0 first.  
+**Version:** 1.4  
+**Status:** **§4.1 (the number) is built and shipped.** §4.2 (the lock) is a separate, open decision
+(§4.3). Read §0 first.  
 **Companion to:** [HLD.md](HLD.md) §4.2 (Ordering Established at Write Time)
 
 **This document is the design.** [HLD §4.2](HLD.md) states the shipped contract — `seq` is
@@ -15,20 +15,18 @@ assigns `seq` itself.
 
 ## 0. Implementation status — read this first
 
-**Nothing in §4 is built.** There is no sequence, no lock, no flag, no property, no port and no
-reserved surface. `seq` is always supplied by the caller, on every tier, and a message whose `seq` is
-wrong is rejected by `UNIQUE (aggregate_id, seq)` at insert.
+**§4 is two deliveries, not one** (§4.3 explains the split), and they are at different stages:
 
-**§4 is two deliveries, not one, and they are at different stages** (§4.3 explains the split):
-
-- **§4.1 — Tandem assigns `seq`.** Closes §1's first cost, the adoption barrier for an aggregate with
-  no `version` field. Costs nothing on the hot path and changes no application behaviour. **Agreed and
-  fully specified — this is the delivery to build.** Its two design questions are settled: the DDL
-  ships as an ordinary changelog version every adopter applies (§7), and a caller opts in with
-  `managedSeq()` rather than a sentinel `seq` value (§4.1).
-- **§4.2 — Tandem serialises the writers.** Closes §1's second cost. Adds a statement to every write
-  and turns concurrent writers to one aggregate into waiters. **Open decision** — §6 explains why its
-  case is weaker than it first appears.
+- **§4.1 — Tandem assigns `seq`. Built.** Schema v3 carries the `tandem_seq` sequence and the column
+  default; `OutboxMessage.Builder.managedSeq()` is how a caller opts in, per message, with
+  `OutboxCollector.record(…)` overloads without `seq` for the Template tier; `JdbcOutboxRepository`
+  omits the column for such a message and `InMemoryOutbox` numbers it from its own counter. It closes
+  §1's first cost, the adoption barrier for an aggregate with no `version` field, at no hot-path cost
+  and with no change to the default — a message that supplies `seq` behaves exactly as before.
+- **§4.2 — Tandem serialises the writers. Not built, and not decided.** There is no lock, no
+  property and no port. It would close §1's second cost, at the price of a statement on every write
+  and of turning concurrent writers to one aggregate into waiters — §6 explains why its case is
+  weaker than it first appears.
 
 Two sections describe the **shipped product**, not a design: §3 records measurements, and §6 the
 write-side ordering detector, which bears on §4.2 only.
@@ -286,14 +284,18 @@ for bucket sharding). It also has a specific hazard here — some persistence fr
 unsaved version, so a malformed `entity.getVersion()` would opt an aggregate in silently. Setting both
 `seq(…)` and `managedSeq()` on one message is a caller error and fails at build time.
 
-Two consequences to carry through the implementation:
+Two consequences the implementation carries:
 
-- **`InMemoryOutbox` needs its own counter.** It reads `message.seq()` both for the
+- **`InMemoryOutbox` keeps its own counter.** It reads `message.seq()` both for the
   `UNIQUE (aggregate_id, seq)` key and to build the record, and it mirrors the adapter's semantics by
   contract (it is a published module).
 - **`insertAll` cannot mix both modes in one JDBC batch** — it binds one `INSERT` statement for the
-  whole collection, and the two modes need different column lists. Batch consecutive runs of the same
-  mode rather than partitioning, so the collection order the tiers promise is preserved exactly.
+  whole collection, and the two modes need different column lists. It batches consecutive runs of the
+  same mode rather than partitioning, so the collection order the tiers promise is preserved exactly.
+- **`seq()` throws on a managed message rather than returning `0`.** The number does not exist until
+  the insert produces it, and a plausible zero would reach `ce_seq`, a log line or a failure message
+  looking authoritative. `managedSeq()` is the predicate to branch on; `OutboxRecord`, which
+  describes a *persisted* row, refuses such a message outright.
 
 Two constraints on it:
 
@@ -304,9 +306,18 @@ Two constraints on it:
 - **Switching an *existing* aggregate type over needs the sequence moved above the `seq` values that
   type has already emitted**, or the next event collides with `UNIQUE (aggregate_id, seq)` — or, if
   those rows were already retired by cleanup, publishes a `seq` below history consumers have seen.
-  This belongs to **enabling** the feature (`ALTER SEQUENCE tandem_seq RESTART WITH …`), not to the
-  migration, which cannot know which types will ever be converted. A *new* aggregate type needs
-  nothing. The app-assigned → managed direction is safe once; the reverse is not.
+  This belongs to **enabling** the feature, not to the migration, which cannot know which types will
+  ever be converted. A *new* aggregate type needs nothing; converting an existing one is:
+
+  ```sql
+  -- with writes to that aggregate type stopped, or at least none inserting a managed row yet
+  SELECT max(seq) FROM tandem_outbox WHERE aggregate_type = 'Order';   -- plus anything already retired
+  ALTER SEQUENCE tandem_seq RESTART WITH <that maximum + 1>;
+  ```
+
+  Take the maximum over what the *stream* has emitted, not over what the table still holds: cleanup
+  (HLD §4.7) deletes retired rows, so a `max(seq)` read after a retention pass can sit below numbers
+  consumers have already seen. The app-assigned → managed direction is safe once; the reverse is not.
 
 > **Managed and app-assigned `seq` can coexist per aggregate, and this needs no mechanism to allow —
 > it is a property of the design.** The default fires only when an INSERT *omits* the column, so the
@@ -480,9 +491,9 @@ own.
 Additive throughout, per HLD §1.4:
 
 - **DDL:** a `CREATE SEQUENCE` plus a `DEFAULT` on an existing column (§4.1) — no new table. Strictly
-  additive: `seq` is `NOT NULL` with no default today, so no existing writer can omit it, and adding a
-  default changes nothing for anyone already binding the column. It ships as **an ordinary changelog
-  version every adopter applies**, like `correlation_id`, `replays` and `discard_reason` before it —
+  additive: `seq` was `NOT NULL` with no default, so no existing writer could omit it, and adding a
+  default changes nothing for anyone already binding the column. It ships as **schema v3, an ordinary
+  changelog version every adopter applies**, like `correlation_id`, `replays` and `discard_reason` —
   not as an optional script, which the append-only changelog and its generated flat baseline (LLD-jdbc
   §6) leave no clean place for, and not behind a Liquibase context, which would make the changelog and
   the flat baseline disagree unless the generator were taught to exclude it too. An adopter who never

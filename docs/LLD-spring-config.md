@@ -586,7 +586,9 @@ the module's full bean list.
 
 None of these beans validate or generate `seq` — it arrives already set on the `OutboxMessage`/
 `TandemAggregate` the caller built, from whatever the domain used as its source (commonly a JPA
-`@Version`). That source has a flush-timing hazard this autoconfiguration cannot see or guard against
+`@Version`), or is left to the database when the caller asked for that at the call site
+(`managedSeq()`, [HLD-managed-seq.md](HLD-managed-seq.md) §4.1 — a property of the message, still not
+of any bean here). That source has a flush-timing hazard this autoconfiguration cannot see or guard against
 at wiring time — and the same flush timing decides whether the domain's own write lock serializes
 concurrent writers at all: [LLD-spring-producer.md](LLD-spring-producer.md) §7.
 

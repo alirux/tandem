@@ -129,10 +129,12 @@ depth + minimalism.** It keeps the per-aggregate ordering idea but:
 **The trade-off, in Eventuate's favour:** Eventuate provides **sagas / orchestration**;
 Tandem deliberately does **not**. If you need orchestration, choose Eventuate.
 
-One honest clarification: like every option here, write-side ordering is ultimately
-**app-assigned** — Tandem's added value is the in-library `seq` *contract* (the
+One honest clarification: like every option here, write-side *ordering* is ultimately
+**app-established** — Tandem's added value is the in-library `seq` *contract* (the
 `UNIQUE(aggregate_id, seq)` safety-net) and strong *relay* ordering, not generating the
-order for you (see [HLD §4.2](HLD.md)).
+order for you (see [HLD §4.2](HLD.md)). Tandem can assign the sequence *number* itself
+([HLD-managed-seq.md](HLD-managed-seq.md) §4.1), which is a different thing: it removes the
+need for a version field, not the need to serialize concurrent writers.
 
 ---
 
