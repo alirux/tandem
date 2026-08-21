@@ -330,7 +330,11 @@ INSERT INTO tandem_outbox (aggregate_id, seq = version + 1, ...)
 
 > **Hard precondition (not optional).** The per-aggregate write lock above must serialize writes so that, within an aggregate, **commit order = `seq` order = `id` order**. Without it, a lower-`seq` row can become *durable* after a higher-`seq` one (the relay polls committed rows, so it would publish them out of order — and no relay model can repair an ordering defect baked into the data). See [q8-worker-model-decision.md](q8-worker-model-decision.md) (E1).
 
-> **And a violation is silent.** Measured, and pinned by `CommitOrderReorderIT` (`tandem-jdbc`): two concurrent writers on one aggregate, the lower-`seq` row inserted first but committed second, publish as `[2, 1]`. Neither guard fires — `UNIQUE(aggregate_id, seq)` sees two *different* values, and the head-of-chain `NOT EXISTS` cannot see an uncommitted row at all. The result is **identical at `bucketCount` 1 and 256**: a single bucket serializes the *relay*, not the *writes*, and one aggregate always hashes to one bucket (§4.3), so `B` is structurally irrelevant here. Tandem emits no metric, log or counter for it today — see [HLD-managed-seq.md](HLD-managed-seq.md) §6.
+> **The lock only serializes if it is taken before the outbox insert — and with an ORM, by default, it is not.** Measured against a real Hibernate application: the domain `UPDATE` is deferred to **flush**, while every write-side tier runs earlier, inside the caller's transaction, so the outbox row is inserted **first** and the aggregate's row lock is taken too late to serialize anything. Two concurrent writers both insert, and the one that inserted first can still commit second — the reorder below, in an application whose locking looks correct. Flushing before the outbox row is built reverses the order and the lock does its job: the second writer blocks on the aggregate's row until the first commits (with `@Version` it then fails its optimistic check, which is a normal retryable outcome, not a reorder). **So the explicit flush of the first blockquote above is not only about the `seq` value — it is also what makes the write lock real.** Without it `@Version` does not protect the order either; it merely fails the *earlier* writer at commit, discarding that transaction's outbox row along with it.
+
+> **No flush helps when concurrent writers never touch the same row.** Two transactions that only insert *children* of the aggregate — order lines, an appended collection — share no row to lock, so they reorder even with an explicit flush. There the serialization has to come from somewhere else: an explicit `SELECT … FOR UPDATE` on the aggregate row, or an aggregate boundary drawn so that concurrent writers do meet on one row.
+
+> **And the table never shows it.** Measured, and pinned by `CommitOrderReorderIT` (`tandem-jdbc`): two concurrent writers on one aggregate, the lower-`seq` row inserted first but committed second, publish as `[2, 1]`. Neither guard fires — `UNIQUE(aggregate_id, seq)` sees two *different* values, and the head-of-chain `NOT EXISTS` cannot see an uncommitted row at all. The result is **identical at `bucketCount` 1 and 256**: a single bucket serializes the *relay*, not the *writes*, and one aggregate always hashes to one bucket (§4.3), so `B` is structurally irrelevant here. Silent *in the data*, that is: the relay witnesses the publication order and reports it as `tandem.outbox.seq_regression.count` (§7, §8). That signal under-reports and never over-reports — a relay restart or an LRU eviction loses the watermark — so a non-zero value is always a real violation, while zero is not proof of absence.
 
 ### 4.3 Bucket-Sharded Relay Preserves Ordering
 
@@ -657,13 +661,35 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
 | `tandem.outbox.publish.latency` | Timer (histogram) | Time from a row's `created_at` to its Kafka ack, one sample per successfully published row — the runtime-verifiable approximation of the §10 NFR "relay latency" KPI (`COMMIT` → ack, p50 < 200 ms / p99 < 1 s at normal load). Approximation, not exact: `created_at` is set at `INSERT`, not `COMMIT` (a caller transaction that does more work after the outbox insert makes this an upper bound, never an underestimate), and the two ends are read from different clocks — the database's and the relay's — so a persistent skew between them shows up as a constant offset, not noise. Published as a **percentile histogram**, not a client-computed percentile: percentiles cannot be averaged across relay instances, but a TSDB (e.g. Prometheus `histogram_quantile()`) derives a correct multi-instance p95/p99 from the published buckets | **Critical** |
 | `tandem.outbox.failed.count` | Gauge | Rows with `status=FAILED` **right now** — a live count, read the same way as `lag.count`, not a tally of failure events (a row can leave `FAILED` via an operator's `DISCARDED` transition, and this must reflect that) | High |
 | `tandem.outbox.blocked.count` | Gauge | PENDING rows sitting behind a `FAILED` row of the same aggregate — waiting, but unclaimable until an operator resolves the head. Counted by `lag.count` as well, deliberately: they are undelivered events, and a backlog gauge that hid them would read healthy while an aggregate is entirely stalled. Reported separately because the two situations demand opposite responses — see the alerting rules below | High |
-| `tandem.outbox.seq_regression.count` | Counter | Cumulative events published with a `seq` **lower** than one already published for the same aggregate — the only observable symptom of a violated write-side ordering precondition (§4.2, §8). Operator replays are excluded at the source (the relay checks the row's `replays`), so a non-zero value means writers to one aggregate are not serialised, never that someone ran a recovery action. Detected in-process at publish time because it is undetectable afterwards: the rows are left in the table in perfect order, `id` ascending with `seq`, so no query over `tandem_outbox` can find it. Detection is bounded and therefore partial — a relay restart, or eviction past the 4096 most-recently-published aggregates of a worker, loses the watermark — so it under-reports and never over-reports. Opt out with `seqRegressionDetection = false` | **Critical** |
+| `tandem.outbox.seq_regression.count` | Counter | Cumulative events published with a `seq` **lower** than one already published for the same aggregate — the symptom of a violated write-side ordering precondition (§4.2, §8). Operator replays are excluded at the source (the relay checks the row's `replays`), so a non-zero value always means writers to one aggregate are not serialised, never that someone ran a recovery action. **It under-reports heavily: a zero reading is not evidence the precondition held** — see the note below the table before relying on it. Opt out with `seqRegressionDetection = false` | **Critical** |
 | `tandem.outbox.retry.count` | Counter | Cumulative retry attempts | Medium |
 | `tandem.outbox.lease_expired.count` | Counter | Rows reclaimed from expired leases (proxy for worker crashes) | Medium |
 | `tandem.outbox.workers.active` | Gauge | Number of active relay workers (thread alive; does **not** imply making progress — pair with `workers.cycle_age_seconds`) | Medium |
 | `tandem.outbox.workers.cycle_age_seconds` | Gauge | Seconds since the least-recently-progressed live worker last completed a claim cycle, 0 when no worker is alive (LLD-jdbc §3.8). Read in-process from the worker pool itself, never the database — the direct signal for "running but not making progress": `workers.active` alone cannot distinguish a working worker from one merely alive but stuck (e.g. blocked in a database call that never returns) | High |
 | `tandem.outbox.bucket.uncovered` | Gauge | Buckets with PENDING rows but no live owner (coverage stall); derived from `tandem_bucket_lease`, so reported under the **`LEASE`** coordination mode (§3.2) — standalone, or embedded-with-`LEASE`. Under `SINGLE` there is no lease table; supervised worker-thread restart (LLD-jdbc §3.1) keeps coverage and `lag.age_seconds` is the backstop | High |
 | `tandem.relay.config.invalid` | Gauge | Set to 1 (tagged `check`) when a startup config invariant is violated — e.g. `rowLease ≤ delivery.timeout.ms`; the relay then fail-fasts (§12, LLD-jdbc §3.5). Registered like any other gauge, with one accepted gap: it is set once, immediately before the process aborts, so a pull-based scraper (Prometheus) can race the process exit and never read it. The relay's own `ERROR` log line at the same call site is the durable channel for this specific case; the metric still helps a continuous-poll backend or a sidecar that reads the registry directly | High |
+
+> **What `seq_regression.count` can and cannot tell an operator.** It is detected in-process at
+> publish time because it is undetectable afterwards: a violation leaves the rows in the table in
+> perfect order, `id` ascending with `seq`, so no query over `tandem_outbox` can find it later. That
+> also bounds what the counter sees, in three ways — the first of which is the most common and is not
+> a matter of lost state:
+> 1. **Both commits inside one poll cycle → invisible by construction.** If the next claim finds both
+>    rows already committed, the head-of-chain gate publishes them in ascending `id` order regardless
+>    of which committed first, so nothing ever reaches a claim result to flag. The identical write-side
+>    race is *visible* only when a claim happens to run inside the window between the two commits —
+>    narrower than one `pollInterval` (default 100 ms). Faster transactions are therefore *more* likely
+>    to hide the defect, not less. [HLD-managed-seq.md](HLD-managed-seq.md) §3.3 works the example.
+> 2. **A relay restart** loses every watermark, since they live only in memory.
+> 3. **LRU eviction** past the 4096 most-recently-published aggregates of a worker loses that
+>    aggregate's watermark.
+>
+> So the counter **under-reports and never over-reports**: a non-zero reading is always a real
+> violation, worth an incident; a zero reading proves nothing. **There is no runtime signal that
+> confirms the precondition holds** — that has to be established statically, by checking that
+> concurrent writers to one aggregate actually serialise: that the domain write is flushed *before* the
+> outbox insert (§4.2), and that concurrent writers contend on a shared row at all rather than only on
+> children of the aggregate. Do not treat a long-running zero as verification.
 
 **Alerting guidance:**
 - `lag.age_seconds` > threshold (e.g. 60s) **and `blocked.count` == 0** → relay is stalled or
@@ -700,7 +726,9 @@ the client write-side never inherits Micrometer (§1.3). The measurements below 
   out of order. Alert on any increase, and note that the counter is cumulative for the life of the process,
   so the actionable rule is on `increase(...)` over a window rather than on the absolute value. The
   identifiers needed to find the aggregate are in the `ERROR` the relay logs alongside it; the metric
-  alone says only that it happened.
+  alone says only that it happened. **This rule catches violations, it does not rule them out** — per
+  the note above the counter under-reports by construction, so a quiet alert is not a green light on
+  the write side.
 - `failed.count` > 0 → manual intervention required
 - `lease_expired.count` growing rapidly → workers are crashing; investigate JVM health
 - `workers.cycle_age_seconds` > threshold (e.g. 60s) → a worker is alive but not progressing (stuck

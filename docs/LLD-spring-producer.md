@@ -299,6 +299,22 @@ surfaced as `DuplicateSeqException` if a bug produces a collision.
 > outbox row after an explicit flush, or take `seq` from a source that advances per *event* rather
 > than per entity state change (HLD-managed-seq.md §4 designs the latter — not yet built).
 
+> **Of those two workarounds the flush is the stronger one, because it also fixes something else.**
+> HLD §4.2 makes per-aggregate write serialization a hard precondition, and the flush is what decides
+> whether the domain's own lock delivers it. Hibernate defers the aggregate's `UPDATE` to flush while
+> every tier in this document runs earlier, so **by default the outbox row is inserted first and the
+> row lock is taken too late to serialize anything**: two concurrent writers both insert, and the one
+> that inserted first can commit second — publishing out of order in an application whose locking
+> looks correct. Flushing before the tier builds the message reverses that order, and the second
+> writer blocks on the aggregate row until the first commits (with `@Version` it then fails its
+> optimistic check — a normal retryable outcome, not a reorder). Measured against a real Hibernate
+> domain; HLD §4.2 carries the result.
+>
+> **Neither workaround covers writers that never touch the same row.** Two transactions inserting only
+> *children* of the aggregate — order lines, an appended collection — have no shared row to lock and
+> reorder even with an explicit flush. That case needs an explicit `SELECT … FOR UPDATE` on the
+> aggregate row, or a different aggregate boundary; no tier and no `seq` source substitutes for it.
+
 ---
 
 ## 8. Compatibility & open points

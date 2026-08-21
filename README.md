@@ -342,7 +342,14 @@ public Order placeOrder(Order order) {
 advances at *flush*, and a write-side tier runs inside the caller's own transaction — so by default
 it reads the *pre-increment* value, and two mutations in one transaction collide on
 `UNIQUE(aggregate_id, seq)`. Either build the outbox row after an explicit flush, or take `seq` from
-a source that advances per event. Details and measurements:
+a source that advances per event.
+
+Prefer the explicit flush, because it does a second job that is easy to miss: it is also what makes
+the aggregate's own write lock **serialize concurrent writers**. Without it the outbox row is
+inserted before the domain `UPDATE`, so the lock is taken too late to order anything, and two
+writers to one aggregate can publish out of order even though the code looks correctly locked. It
+does not cover writers that only insert *children* of the aggregate — they share no row to lock.
+Details and measurements:
 [docs/HLD.md](docs/HLD.md#42-ordering-established-at-write-time) §4.2,
 [docs/HLD-managed-seq.md](docs/HLD-managed-seq.md).
 
