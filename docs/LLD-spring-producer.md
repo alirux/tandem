@@ -297,6 +297,13 @@ It stays per message — one aggregate type can be managed while the rest keep t
 never inferred from a missing argument, because a `seq` a caller merely *forgot* must keep failing
 loudly instead of silently changing what consumers read.
 
+**A caller can also ask Tandem to serialise concurrent writers, independent of where `seq` comes
+from** ([HLD-managed-seq](HLD-managed-seq.md) §4.2): `OutboxMessage.Builder.lockedWrite()`. The
+annotation and application-events tiers reach it with no new API — both already carry a whole
+`OutboxMessage` the caller built. The Template tier reaches it only through `OutboxCollector.add(...)`,
+not a `record(...)` argument: combined with the two `seq` forms that would double an already-doubled
+method surface for a mechanism most callers, per §3.3 below, do not need.
+
 > **With a JPA `@Version`, that source is stale by default — and it is not a per-tier bug, so no
 > choice of tier here avoids it.** Hibernate advances `@Version` at *flush*, and every tier in this
 > document runs inside the caller's already-open transaction, so `entity.getVersion()` (however it
@@ -326,7 +333,8 @@ loudly instead of silently changing what consumers read.
 > **Neither workaround covers writers that never touch the same row.** Two transactions inserting only
 > *children* of the aggregate — order lines, an appended collection — have no shared row to lock and
 > reorder even with an explicit flush. That case needs an explicit `SELECT … FOR UPDATE` on the
-> aggregate row, or a different aggregate boundary; no tier and no `seq` source substitutes for it.
+> aggregate row, a different aggregate boundary, or `lockedWrite()` above — the one option that needs
+> no shared domain row at all, since the lock it takes is keyed on the aggregate id, not on any table.
 
 ---
 

@@ -22,7 +22,9 @@ A faithful in-memory implementation of **both** `OutboxRepository` (write-side) 
   leaves `seq` to Tandem (`managedSeq()`, [HLD-managed-seq](HLD-managed-seq.md) §4.1) is numbered
   from an **outbox-wide counter**, standing in for the `tandem_seq` sequence — one counter for the
   whole outbox, not one per aggregate, so the numbers are sparse per aggregate exactly as the
-  database's are.
+  database's are. `lockedWrite()` (`HLD-managed-seq` §4.2) needs no mechanism here: every insert
+  already serialises under one internal lock, stricter than the advisory lock asks for — the flag is
+  carried through onto the stored message rather than acted on.
 - `claimBatch(buckets, worker, lease, n)`: return the **head of each aggregate's pending chain** in the
   given buckets (earliest not-DONE row, eligible by `next_attempt_at`), mark `IN_FLIGHT` — mirrors the
   SQL semantics of LLD-jdbc §3.3.

@@ -349,8 +349,10 @@ Prefer the explicit flush, because it does a second job that is easy to miss: it
 the aggregate's own write lock **serialize concurrent writers**. Without it the outbox row is
 inserted before the domain `UPDATE`, so the lock is taken too late to order anything, and two
 writers to one aggregate can publish out of order even though the code looks correctly locked. It
-does not cover writers that only insert *children* of the aggregate — they share no row to lock.
-Details and measurements:
+does not cover writers that only insert *children* of the aggregate — they share no row to lock; for
+those, `lockedWrite()` asks Tandem to take its own advisory lock on the aggregate instead, keyed on
+the aggregate id rather than on any domain row
+([HLD-managed-seq](docs/HLD-managed-seq.md) §4.2). Details and measurements:
 [docs/HLD.md](docs/HLD.md#42-ordering-established-at-write-time) §4.2,
 [docs/HLD-managed-seq.md](docs/HLD-managed-seq.md).
 
@@ -448,7 +450,7 @@ of the version you actually depend on.
 | [LLD-relay.md](docs/LLD-relay.md) | `tandem-relay` — the prebuilt standalone relay deployable (image + jar); designed, not implemented |
 | [HLD-load-testing.md](docs/HLD-load-testing.md) · [LLD-benchmark.md](docs/LLD-benchmark.md) | Throughput/latency verification plan + the `tandem-benchmark` harness that implements it |
 | [HLD-causal-ordering.md](docs/HLD-causal-ordering.md) | Cross-aggregate causal ordering (deep-dive) |
-| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — the opt-in Tandem-assigned sequence number (built), and the write-side lock that would serialize concurrent writers (designed, not built). Also records what the app-assigned `seq` contract costs today (measured) |
+| [HLD-managed-seq.md](docs/HLD-managed-seq.md) | Managed `seq` — the opt-in Tandem-assigned sequence number (`managedSeq()`) and the opt-in write-side advisory lock that serializes concurrent writers (`lockedWrite()`), independent of each other. Also records what the app-assigned `seq` default costs today (measured) |
 | [dispatch-latency.md](docs/dispatch-latency.md) | Commit-to-publish latency: where it comes from, and the post-commit wakeup options (analysis) |
 | [comparison.md](docs/comparison.md) | Comparison with Debezium, Eventuate Tram, Spring Modulith, a hand-rolled outbox, and the stream processors (Kafka Streams, Flink) |
 | [open-questions-lld.md](docs/open-questions-lld.md) | Tracked gaps to resolve before the LLDs |
@@ -523,9 +525,9 @@ trade-off or a tracked gap — none is a bug report. (For what is *not yet* ship
   order and `UNIQUE (aggregate_id, seq)` rejects a duplicate `seq`, but neither *creates* order: if
   two transactions insert for the same aggregate concurrently and the one with the lower `id` commits
   second, the relay will already have published the later event. The contract is that writers to one
-  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, or an optimistic version
-  check — and that `seq` is that aggregate's version, or Tandem's own if the aggregate has none
-  (`managedSeq()`). See [HLD §4.2](docs/HLD.md).
+  aggregate are serialized — a `SELECT … FOR UPDATE` on the aggregate row, an optimistic version
+  check, or Tandem's own `lockedWrite()` — and that `seq` is that aggregate's version, or Tandem's own
+  if the aggregate has none (`managedSeq()`). See [HLD §4.2](docs/HLD.md).
 
 - **Duplicates are expected, reordering is not.** At-least-once means a crash between the Kafka ack
   and the mark-DONE republishes the event. Consumers must be idempotent; this is the price the outbox

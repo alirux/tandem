@@ -124,6 +124,25 @@ the caller's transaction. Two consequences the adapter carries:
   the insert succeeds, and printing `0` or `-1` would send whoever reads the failure looking for a
   row that does not exist.
 
+**A message built with `lockedWrite()` makes `insert`/`insertAll` take `pg_advisory_xact_lock(hashtext(aggregate_id))`
+on the same connection, right before the row's INSERT** ([HLD-managed-seq](HLD-managed-seq.md) §4.2):
+
+```sql
+SELECT pg_advisory_xact_lock(hashtext(?));
+```
+
+Transaction-scoped — PostgreSQL releases it automatically at commit or rollback, so there is no
+corresponding unlock statement. Independent of `seq`/`managedSeq()`: either combines with it or not.
+Two consequences the adapter carries:
+
+- **`insertAll` locks every aggregate the batch needs once each, in sorted aggregate id order,
+  before inserting anything.** That is the deadlock guard a transaction taking several advisory locks
+  needs (two transactions locking the same two aggregates in reverse order deadlock otherwise); within
+  one batch the adapter can enforce it, since it sees the whole batch before issuing any statement.
+- **It cannot enforce that ordering across separate `insert` calls in one caller transaction.** A
+  caller issuing several such calls across aggregates within its own `@Transactional` is responsible
+  for the same sorted-order rule itself.
+
 **Optional Lamport advance — RESERVED, not implemented** ([HLD-causal-ordering.md](HLD-causal-ordering.md) §0;
 §3.1). No `tandem_aggregate_clock` table and no `lamport` column exist in the shipped DDL, and
 `JdbcOutboxRepository` contains none of the code below. It is specified here so that building the

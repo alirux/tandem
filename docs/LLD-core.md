@@ -57,6 +57,7 @@ public final class OutboxMessage {
     private final String type;            // CloudEvents `type` (nullable; see Q20)
     private final long   seq;             // app-assigned, from the aggregate's version (HLD §4.2)
     private final boolean managedSeq;     // opted in via managedSeq(): Tandem assigns it at insert (HLD-managed-seq §4.1)
+    private final boolean lockedWrite;    // opted in via lockedWrite(): an advisory lock serialises writers (HLD-managed-seq §4.2)
     private final byte[] payload;         // already serialized (Q3)
     private final String contentType;     // e.g. "application/json"; persisted into headers["content-type"] (LLD-jdbc §2)
     private final Map<String,String> headers;     // immutable copy; may be empty
@@ -80,6 +81,10 @@ public final class OutboxMessage {
   the logs as if it were real. Callers that must handle both forms branch on `managedSeq()`. For the
   same reason `OutboxRecord` — which describes a *persisted* row — refuses a message still in that
   state.
+- **`lockedWrite`** asks the write-side adapter to serialise concurrent writers to the aggregate with
+  a transaction-scoped advisory lock ([HLD-managed-seq](HLD-managed-seq.md) §4.2) — independent of
+  `seq`/`managedSeq()`, combines with either. Unlike `managedSeq()` it changes no readable value on
+  the message; it is consumed only by the adapter at insert.
 - **`contentType`** is the only typed convenience field that maps onto a header: the write-side
   serializes it into `headers["content-type"]` at insert (LLD-jdbc §2), the key the relay reads for
   the CloudEvents `datacontenttype` (LLD-kafka §3.2). No dedicated column — reuse `headers` (Pareto).

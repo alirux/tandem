@@ -1,21 +1,22 @@
 # Tandem — Managed `seq` (Design Note)
 
-**Version:** 1.4  
-**Status:** **§4.1 (the number) is built and shipped.** §4.2 (the lock) is a separate, open decision
-(§4.3). Read §0 first.  
+**Version:** 1.5  
+**Status:** **Both halves are built and shipped.** §4.1 (the number) and §4.2 (the lock) are
+independent, opt-in per message, and combine freely. Read §0 first.  
 **Companion to:** [HLD.md](HLD.md) §4.2 (Ordering Established at Write Time)
 
-**This document is the design.** [HLD §4.2](HLD.md) states the shipped contract — `seq` is
-app-assigned, from the aggregate's `version`, and Tandem never generates it — and that contract is
-unchanged by anything written here. This note records what that contract costs an existing
-application, the measurements behind that claim, and an **opt-in** alternative in which Tandem
-assigns `seq` itself.
+**This document is the design.** [HLD §4.2](HLD.md) states the shipped **default** — `seq` is
+app-assigned, from the aggregate's `version`, and per-aggregate writes are the caller's own
+responsibility to serialise — and that default is unchanged by anything written here. This note
+records what that default costs an existing application, the measurements behind that claim, and the
+two **opt-in** mechanisms this design adds on top: Tandem assigns `seq` itself (§4.1), and/or Tandem
+serialises concurrent writers to one aggregate (§4.2).
 
 ---
 
 ## 0. Implementation status — read this first
 
-**§4 is two deliveries, not one** (§4.3 explains the split), and they are at different stages:
+**§4 is two deliveries** (§4.3 explains the split), and both are built:
 
 - **§4.1 — Tandem assigns `seq`. Built.** Schema v3 carries the `tandem_seq` sequence and the column
   default; `OutboxMessage.Builder.managedSeq()` is how a caller opts in, per message, with
@@ -23,13 +24,23 @@ assigns `seq` itself.
   omits the column for such a message and `InMemoryOutbox` numbers it from its own counter. It closes
   §1's first cost, the adoption barrier for an aggregate with no `version` field, at no hot-path cost
   and with no change to the default — a message that supplies `seq` behaves exactly as before.
-- **§4.2 — Tandem serialises the writers. Not built, and not decided.** There is no lock, no
-  property and no port. It would close §1's second cost, at the price of a statement on every write
-  and of turning concurrent writers to one aggregate into waiters — §6 explains why its case is
-  weaker than it first appears.
+- **§4.2 — Tandem serialises the writers. Built.** `OutboxMessage.Builder.lockedWrite()` is how a
+  caller opts in, per message, orthogonal to `seq`/`managedSeq()` — either form of `seq` combines with
+  it or not. `JdbcOutboxRepository` takes a `pg_advisory_xact_lock` on the aggregate, on the same
+  connection, right before the row's INSERT; a batch touching several such aggregates locks them in
+  sorted id order (the deadlock guard §5 states). It closes §1's second cost, at the price of one
+  statement on the write and of turning concurrent writers to one aggregate into waiters — a
+  behavioural change the caller opts into explicitly, never inherited from a decision about `seq`.
+  Reachable on every write-side tier: the Template tier only through `add(OutboxMessage)` (no
+  `record(…)` overload — combined with the two `seq` forms it would quadruple that method's already
+  doubled surface for a mechanism most callers will never need, Pareto), the annotation and
+  application-events tiers automatically, since both already carry a caller-built `OutboxMessage`
+  through unchanged. `InMemoryOutbox` has no need for the lock itself — every insert already
+  serialises under one internal lock — but keeps the flag on the stored message rather than silently
+  dropping it, matching what a caller who reads it back would expect.
 
-Two sections describe the **shipped product**, not a design: §3 records measurements, and §6 the
-write-side ordering detector, which bears on §4.2 only.
+Two sections describe measurements informing the design rather than the mechanisms themselves: §3
+records measurements, and §6 the write-side ordering detector, which bears on §4.2 only.
 
 ---
 
@@ -341,7 +352,7 @@ Two constraints on it:
 > selects the mode has to be explicit at the call site, and per-aggregate-type configuration would be a
 > second place to state what the call site already decides — a source of drift, not of control.
 
-### 4.2 The order: a transaction-scoped advisory lock — a separate decision, not taken
+### 4.2 The order: a transaction-scoped advisory lock
 
 ```sql
 SELECT pg_advisory_xact_lock(hashtext(?));   -- ? = aggregate_id, before the outbox insert
@@ -360,7 +371,21 @@ One property to state rather than discover: `hashtext` collisions make two unrel
 occasionally serialise — a throughput effect, never a correctness one; narrow it with the two-key
 `pg_advisory_xact_lock(int4, int4)` form if it matters.
 
-### 4.3 Why §4.1 ships first, and why §4.2 is its own decision
+**Built as `OutboxMessage.Builder.lockedWrite()`**, a flag independent of `seq`/`managedSeq()` rather
+than riding either — resolving the question §4.3 originally left open. Independence covers the
+audience that motivates §4.2 in the first place (§4.3): a writer with app-assigned `seq` who wants
+the lock alone, and a writer with `managedSeq()` who does not (the number needs no version, but
+nothing requires the caller to also want serialisation). `JdbcOutboxRepository` takes the lock on the
+same connection right before the row's INSERT, in `insert` and in `insertAll`; a batch touching
+several such aggregates takes every lock it needs, once each, in **sorted aggregate id order**, before
+inserting anything — the deadlock guard below, enforced rather than left to the caller for the one
+case Tandem controls end to end. A caller issuing separate `insert` calls across aggregates within one
+transaction is responsible for that ordering itself; nothing here can see across separate calls.
+Reachable on the annotation and application-events tiers with no new API, since both already carry a
+caller-built `OutboxMessage` through unchanged; the Template tier only via `add(OutboxMessage)`, not a
+`record(…)` overload (§4.3).
+
+### 4.3 Why the two halves stay independent
 
 **They close different costs for different people.** §4.1 removes an *adoption* barrier — an aggregate
 with no version field has no `seq` source, so adopting Tandem reaches into the domain schema rather
@@ -375,16 +400,21 @@ no waiting: an application that switches to it sees identical concurrency to bef
 concurrent writers to one aggregate into waiters — the point of the mechanism, but a real behavioural
 change that has to be chosen, not inherited from a decision about where `seq` comes from.
 
-**Who is left after the flush, and why §4.2 remains worth having.** §3.3's third row: writers that only
-insert *children* of the aggregate reorder even with an explicit flush, because there is no shared row
-to lock. That population overlaps heavily with §4.1's — nothing bumps a version on the root, so they
-have no `seq` source either — which is why the two halves belong in the same design note. But overlap is
-not identity, and §6 explains why the case for §4.2 specifically is weaker than it was.
+**Who is left after the flush, and why §4.2 is worth having on its own.** §3.3's third row: writers
+that only insert *children* of the aggregate reorder even with an explicit flush, because there is no
+shared row to lock. That population overlaps heavily with §4.1's — nothing bumps a version on the
+root, so they have no `seq` source either — which is why the two halves belong in the same design
+note. But overlap is not identity: an aggregate with a perfectly good `@Version` can still have
+writers that never touch the root, and those writers want §4.2 with `seq` staying app-assigned. §6
+records what shipping item 25's detector already changed about the case for §4.2 specifically.
 
-**Whether §4.2, if built, rides §4.1's switch or gets its own is left open** — deliberately, since it
-depends on whether an adopter with app-assigned `seq` ever wants the lock alone. Note that §4.1's
-granularity is already per write (see its blockquote), so either answer can still be applied to one
-aggregate type and not another.
+**`lockedWrite()` rides neither switch — it is its own flag** (§4.2), settling what the earlier
+version of this note left open. Riding `managedSeq()` would have forced a caller who only wants a
+`version`-free number, with no concurrency problem, to also pay for a lock it does not need; riding
+`seq(long)` inversely would have left no way to ask for the lock without giving up app-assigned `seq`.
+Independent flags, freely combined, cover all four cells. Note that §4.1's granularity is already per
+write (see its blockquote) — so is §4.2's, for the same reason: the mechanism reads one message's
+flags, not a table-wide switch.
 
 ### 4.4 Rejected: a counter table (`tandem_aggregate_seq`)
 
@@ -417,7 +447,7 @@ table is dominated: it costs a permanent unprunable table and buys only the dens
 ## 5. Costs
 
 Stated in full, because they are the reason this is opt-in rather than the default — and separated by
-delivery, because the two halves are decided independently (§4.3).
+delivery, because a caller chooses each independently (§4.3).
 
 **§4.1, the number — one cost, and it is contractual rather than technical:**
 
@@ -439,9 +469,11 @@ writers, and the DDL is strictly additive.
   concurrent writes on an aggregate, this is a real behavioural change, not a transparent addition.
   It is the *point* of the mechanism, but it must be a decision rather than a surprise.
 - **Deadlock risk across aggregates.** A transaction touching several aggregates takes several
-  advisory locks; two transactions taking them in different orders deadlock. This requires a stated
-  lock-ordering rule — take them in sorted `aggregate_id` order — as part of the contract, not as
-  folklore. (PostgreSQL detects and breaks the deadlock, so the failure is loud, not a hang.)
+  advisory locks; two transactions taking them in different orders deadlock. Within one `insertAll`
+  batch `JdbcOutboxRepository` enforces the guard itself — sorted `aggregate_id` order — so this cost
+  applies only to a caller issuing several separate `insert` calls across aggregates in one
+  transaction, who is responsible for the same ordering. (PostgreSQL detects and breaks a deadlock
+  that does occur, so the failure is loud, not a hang.)
 
 **Not on either list, deliberately:** unbounded storage growth. §4.1 holds one catalog row and §4.2
 holds nothing at all — which is the whole reason the counter table is rejected (§4.4).
@@ -468,13 +500,14 @@ value always means writers to one aggregate are not serialised.
 only in memory, so a relay restart or an eviction loses them. A non-zero reading is therefore always
 a real violation, while zero is not proof of absence.
 
-**This weakens the case for §4.2, and only for §4.2.** The strongest argument for the lock would be
+**This weakens one argument for §4.2, and only one.** The strongest argument for the lock would be
 §1's — that the second cost is severe *because its failure mode is silent*. That argument is not
 available: the failure mode is reported, imperfectly but alertably. What §4.2 still offers is the
 difference between detecting a violated precondition and enforcing it — a real difference, but a much
-smaller one than "the only way to know", so §4.2 has to be justified on prevention alone. Combined
-with §3.3's measurement that an explicit flush already delivers the serialisation for anyone updating
-the aggregate root, that is why §4.2 is a separate, unmade decision (§4.3).
+smaller one than "the only way to know", so on the silence argument alone §4.2 would be the harder
+case to justify. It was built anyway, on a different argument: §4.3's audience — writers that only
+insert children of an aggregate, which an explicit flush cannot help either (§3.3) — is real
+regardless of whether the violation it causes is later reported.
 
 **It says nothing about §4.1.** §1's *first* cost — an aggregate with no `version` has no `seq` source,
 so adoption reaches into the domain schema — is an adoption barrier, not a silent failure mode. No
@@ -507,4 +540,9 @@ Additive throughout, per HLD §1.4:
   consumers that join it against the aggregate's persisted version are not, which is why §5 lists it
   as a contract change for an existing stream.
 - **API:** additive — `OutboxMessage.Builder.managedSeq()` and `OutboxCollector.record(…)` overloads
-  without `seq` (§4.1). No existing signature changes, so no caller is affected.
+  without `seq` (§4.1), plus `OutboxMessage.Builder.lockedWrite()` (§4.2). No existing signature
+  changes, so no caller is affected.
+- **§4.2 needs no DDL and touches no row.** `pg_advisory_xact_lock` is session-scoped state, not a
+  table — no new column, no new table, nothing for `generateBaselineSql`/`checkBaselineSql` (LLD-jdbc
+  §6) to render. An adopter who never opts in issues one fewer statement per write than one who does;
+  there is nothing else to be compatible with.
