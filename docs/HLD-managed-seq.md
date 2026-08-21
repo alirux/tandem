@@ -1,8 +1,8 @@
 # Tandem — Managed `seq` (Design Note)
 
-**Version:** 1.1  
-**Status:** Draft — **not built, not decided.** §6 records shipped behaviour that weakens the case for
-building §4 at all; read §0 first.  
+**Version:** 1.2  
+**Status:** Draft — **not built.** Two deliveries, decided separately (§4.3): **§4.1 (the number) is
+agreed and is the next one**; §4.2 (the lock) is an open decision. Read §0 first.  
 **Companion to:** [HLD.md](HLD.md) §4.2 (Ordering Established at Write Time)
 
 **This document is the design.** [HLD §4.2](HLD.md) states the shipped contract — `seq` is
@@ -15,13 +15,21 @@ assigns `seq` itself.
 
 ## 0. Implementation status — read this first
 
-**The design in §4 is not built.** There is no sequence, no lock, no flag, no property, no port and no
+**Nothing in §4 is built.** There is no sequence, no lock, no flag, no property, no port and no
 reserved surface. `seq` is always supplied by the caller, on every tier, and a message whose `seq` is
 wrong is rejected by `UNIQUE (aggregate_id, seq)` at insert.
 
-Two sections are different in kind and describe the **shipped product**, not a design: §3 records
-measurements, and §6 the write-side ordering detector — which materially weakens the case for §4.
-Read §6 before acting on anything in §4.
+**§4 is two deliveries, not one, and they are at different stages** (§4.3 explains the split):
+
+- **§4.1 — Tandem assigns `seq`.** Closes §1's first cost, the adoption barrier for an aggregate with
+  no `version` field. Costs nothing on the hot path and changes no application behaviour. **Agreed;
+  this is the delivery to build.**
+- **§4.2 — Tandem serialises the writers.** Closes §1's second cost. Adds a statement to every write
+  and turns concurrent writers to one aggregate into waiters. **Open decision** — §6 explains why its
+  case is weaker than it first appears.
+
+Two sections describe the **shipped product**, not a design: §3 records measurements, and §6 the
+write-side ordering detector, which bears on §4.2 only.
 
 ---
 
@@ -234,17 +242,21 @@ relay-restart causes already noted in [HLD.md](HLD.md) §7 — a zero reading is
 
 ---
 
-## 4. The design: two independent halves, neither of which persists state per aggregate
+## 4. The design: two halves, delivered separately
 
-§1 lists two costs and they are **separate problems**, solved by separate mechanisms:
+§1 lists two costs. They are **separate problems** with separate mechanisms, separate audiences and
+separate cost profiles — so they are two deliveries, decided one at a time:
 
-| | Problem | Mechanism | Persistent state |
-|---|---|---|---|
-| **4.1** | The aggregate has no `version` to take `seq` from | a `SEQUENCE` as the column default | one catalog row, fixed |
-| **4.2** | Concurrent writers to one aggregate are not serialised | `pg_advisory_xact_lock` in the caller's transaction | **none** — shared memory, released at commit |
+| | Problem it closes | Mechanism | Hot-path cost | Persistent state | Status |
+|---|---|---|---|---|---|
+| **4.1** | §1's first cost: the aggregate has no `version` to take `seq` from | a `SEQUENCE` as the column default | **none** | one catalog row, fixed | **the first delivery** |
+| **4.2** | §1's second cost: concurrent writers to one aggregate are not serialised | `pg_advisory_xact_lock` in the caller's transaction | one statement | **none** — released at commit | a separate decision, not taken |
 
-They ship behind one opt-in switch (§4.3 says why one and not two), but they are independent: either
-can be reasoned about, and if necessary built, without the other.
+**§4.1 is the one that closes the adoption gap**, and it is nearly free: no extra statement, no lock,
+no behavioural change for concurrent writers, and every failure mode in §3.2 disappears by
+construction. **§4.2 changes how the application behaves** — concurrent writers to one aggregate
+become waiters — which is a decision an adopter has to make deliberately, and §4.3 explains why its
+audience is narrower than it looks. Shipping §4.1 does not commit to §4.2.
 
 > **§4.4 records the obvious alternative and why it is rejected** — a `tandem_aggregate_seq` table
 > holding one counter row per aggregate, solving both halves with a single `INSERT … ON CONFLICT`
@@ -265,7 +277,7 @@ per aggregate (`Order#42`'s first event might be `8347283`), which §5 addresses
 Purely additive: `seq` is `NOT NULL` with no default today, so **nothing can currently omit the
 column** — adding a default changes the behaviour of no existing writer.
 
-Three constraints on it:
+Two constraints on it:
 
 - **`CACHE` must stay 1.** With a per-session cache, session A pre-allocates 1–100 and session B
   101–200; if B inserts first, `seq` moves backwards for that aggregate and the §6 detector reports
@@ -274,8 +286,6 @@ Three constraints on it:
 - **Turning it on over existing data needs `START WITH` above the highest `seq` already emitted**,
   or new values fall below history already published for the same aggregates. The app-assigned →
   managed direction is safe once; the reverse is not.
-- **PostgreSQL only.** MySQL has no `SEQUENCE` object (MariaDB does), so the MySQL port (backlog
-  item 7) needs its own answer here. Acceptable while this is opt-in.
 
 > **Managed and app-assigned `seq` can coexist per aggregate, and this needs no mechanism to allow —
 > it is a property of the design.** The default fires only when an INSERT *omits* the column, so the
@@ -299,7 +309,7 @@ Three constraints on it:
 > selects the mode has to be explicit at the call site, and per-aggregate-type configuration would be a
 > second place to state what the call site already decides — a source of drift, not of control.
 
-### 4.2 The order: a transaction-scoped advisory lock
+### 4.2 The order: a transaction-scoped advisory lock — a separate decision, not taken
 
 ```sql
 SELECT pg_advisory_xact_lock(hashtext(?));   -- ? = aggregate_id, before the outbox insert
@@ -314,24 +324,35 @@ application is asked to satisfy and given no way to verify.
 commit; the difference is only where the lock lives — a table row that must exist forever, versus
 shared memory that cleans itself up.
 
-Two properties to state rather than discover: `hashtext` collisions make two unrelated aggregates
-occasionally serialise (a throughput effect, never a correctness one — narrow it with the two-key
-`pg_advisory_xact_lock(int4, int4)` form if it matters), and this is PostgreSQL-specific in a stronger
-sense than §4.1 — MySQL's `GET_LOCK` is **session**-scoped, not transaction-scoped, so it does not
-transfer.
+One property to state rather than discover: `hashtext` collisions make two unrelated aggregates
+occasionally serialise — a throughput effect, never a correctness one; narrow it with the two-key
+`pg_advisory_xact_lock(int4, int4)` form if it matters.
 
-### 4.3 Why one switch and not two
+### 4.3 Why §4.1 ships first, and why §4.2 is its own decision
 
-The two halves look independently useful, and §3.3 shows the audience for §4.2 is narrower than it
-first appears: an application that updates the aggregate root gets the serialisation **for free** from
-an explicit flush, no Tandem lock required. But §3.3 also shows who is left — writers that only touch
-*children* of the aggregate, who reorder even with a flush — and that is the same population that has
-**no aggregate `version` to take `seq` from**, since nothing is bumping a version on the root. The two
-audiences largely coincide, so splitting them into two knobs would ask adopters to reason about a
-distinction that mostly does not exist for them. One switch, both halves.
+**They close different costs for different people.** §4.1 removes an *adoption* barrier — an aggregate
+with no version field has no `seq` source, so adopting Tandem reaches into the domain schema rather
+than only adding the `tandem_*` tables. That barrier is unconditional: it applies to every candidate
+adopter without a version, whatever their concurrency looks like. §4.2 removes a *correctness*
+precondition, and §3.3 measured that a large part of the audience already satisfies it — an application
+that updates the aggregate root gets the serialisation **for free** from an explicit flush, no Tandem
+lock required.
 
-"One switch" is about the two halves travelling together, not about its granularity: per §4.1 the
-choice is made per write, so it can be applied to one aggregate type and not another.
+**They cost differently, and only one of them changes behaviour.** §4.1 adds no statement, no lock and
+no waiting: an application that switches to it sees identical concurrency to before. §4.2 turns
+concurrent writers to one aggregate into waiters — the point of the mechanism, but a real behavioural
+change that has to be chosen, not inherited from a decision about where `seq` comes from.
+
+**Who is left after the flush, and why §4.2 remains worth having.** §3.3's third row: writers that only
+insert *children* of the aggregate reorder even with an explicit flush, because there is no shared row
+to lock. That population overlaps heavily with §4.1's — nothing bumps a version on the root, so they
+have no `seq` source either — which is why the two halves belong in the same design note. But overlap is
+not identity, and §6 explains why the case for §4.2 specifically is weaker than it was.
+
+**Whether §4.2, if built, rides §4.1's switch or gets its own is left open** — deliberately, since it
+depends on whether an adopter with app-assigned `seq` ever wants the lock alone. Note that §4.1's
+granularity is already per write (see its blockquote), so either answer can still be applied to one
+aggregate type and not another.
 
 ### 4.4 Rejected: a counter table (`tandem_aggregate_seq`)
 
@@ -363,34 +384,41 @@ table is dominated: it costs a permanent unprunable table and buys only the dens
 
 ## 5. Costs
 
-Stated in full, because they are the reason this is opt-in rather than the default:
+Stated in full, because they are the reason this is opt-in rather than the default — and separated by
+delivery, because the two halves are decided independently (§4.3).
 
-- **One extra statement on the client's hot path — the lock (§4.2), not the number.** §4.1 costs
-  nothing: the default is evaluated inside the INSERT that already happens. Only §4.2 adds a round
-  trip, inside the business transaction, so the latency lands on every write rather than on the relay.
+**§4.1, the number — one cost, and it is contractual rather than technical:**
+
+- **`seq` loses its domain meaning, and its denseness.** It becomes Tandem's counter, not the
+  aggregate's version, so a consumer can no longer read `ce_seq` as "version 7 of `Order#42`" — and it
+  is not even `7`, it is a large global number with gaps. Acceptable for the intended audience, which
+  has no such version to begin with, but it is a contract change for consumers and **must not be
+  switched on silently under an existing stream**. §4.1's per-write granularity is what makes this
+  manageable: turn it on for a new aggregate type rather than for everything at once.
+
+Nothing else. No extra statement, no lock, no added latency, no behavioural change for concurrent
+writers, and the DDL is strictly additive.
+
+**§4.2, the lock — three costs, all of them real:**
+
+- **One extra statement on the client's hot path**, inside the business transaction, so the latency
+  lands on every write rather than on the relay.
 - **Concurrent writers to one aggregate become waiters.** For an application that currently tolerates
   concurrent writes on an aggregate, this is a real behavioural change, not a transparent addition.
-  It is the *point* of §4.2, but it must be a decision rather than a surprise.
+  It is the *point* of the mechanism, but it must be a decision rather than a surprise.
 - **Deadlock risk across aggregates.** A transaction touching several aggregates takes several
   advisory locks; two transactions taking them in different orders deadlock. This requires a stated
   lock-ordering rule — take them in sorted `aggregate_id` order — as part of the contract, not as
   folklore. (PostgreSQL detects and breaks the deadlock, so the failure is loud, not a hang.)
-- **`seq` loses its domain meaning, and its denseness.** It becomes Tandem's counter, not the
-  aggregate's version, so a consumer can no longer read `ce_seq` as "version 7 of `Order#42`" — and
-  with §4.1 it is not even `7`, it is a large global number with gaps. Acceptable for the intended
-  audience, which has no such version to begin with, but it is a contract change for consumers and
-  must not be switched on silently under an existing stream.
-- **PostgreSQL only**, both halves, for different reasons (§4.1, §4.2). The MySQL port (backlog
-  item 7) would need its own mechanism for each.
 
-**Not on this list, deliberately:** unbounded storage growth. §4.1 holds one catalog row and §4.2
+**Not on either list, deliberately:** unbounded storage growth. §4.1 holds one catalog row and §4.2
 holds nothing at all — which is the whole reason the counter table is rejected (§4.4).
 
 The default stays app-assigned `seq`: no sequence, no lock, no added latency — Pareto (HLD §1.1).
 
 ---
 
-## 6. Detection is shipped, and it is why §4 is a weak proposition
+## 6. Detection is shipped, and it bears on §4.2 only
 
 Managed `seq` would *prevent* the §3.1 defect for applications that adopt it. **Detecting** the same
 defect is cheap, independent of everything above, and helps every deployment rather than only adopters
@@ -408,11 +436,21 @@ value always means writers to one aggregate are not serialised.
 only in memory, so a relay restart or an eviction loses them. A non-zero reading is therefore always
 a real violation, while zero is not proof of absence.
 
-**This is what makes §4 a weak proposition.** The strongest argument for it would be §1's — that the
-second cost is severe *because its failure mode is silent*. That argument is not available: the
-failure mode is reported, imperfectly but alertably. What §4 still offers is the difference between
-detecting a violated precondition and enforcing it — a real difference, but a much smaller one than
-"the only way to know". §4 has to be justified on prevention alone.
+**This weakens the case for §4.2, and only for §4.2.** The strongest argument for the lock would be
+§1's — that the second cost is severe *because its failure mode is silent*. That argument is not
+available: the failure mode is reported, imperfectly but alertably. What §4.2 still offers is the
+difference between detecting a violated precondition and enforcing it — a real difference, but a much
+smaller one than "the only way to know", so §4.2 has to be justified on prevention alone. Combined
+with §3.3's measurement that an explicit flush already delivers the serialisation for anyone updating
+the aggregate root, that is why §4.2 is a separate, unmade decision (§4.3).
+
+**It says nothing about §4.1.** §1's *first* cost — an aggregate with no `version` has no `seq` source,
+so adoption reaches into the domain schema — is an adoption barrier, not a silent failure mode. No
+amount of detection removes it, and §3.2 measures that it is not hypothetical: every write-side tier
+observes a pre-flush `@Version`, one of the three resulting failures is data-dependent enough to
+survive a test suite and surface in production, and the shipped mitigation is a warning repeated across
+four documents. §4.1 removes all of it by construction, at no hot-path cost. That case stands on its
+own.
 
 ---
 
